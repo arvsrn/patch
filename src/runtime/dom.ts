@@ -108,11 +108,16 @@ const moveRange = (start: Node, end: Node, before: Node) => {
 
 /**
  * Mounts `program` into `target`. Returns a function that disposes it.
- * `options` start it from overridden state, without effects (snapshots).
+ * `options` start it from overridden state (snapshots); with `design`, its
+ * `$effect`s start at the first interaction, so the initial view is exactly
+ * that state and the app behaves as usual from then on.
  */
 export function mount(program: Program, target: HTMLElement, options: ApiOptions = {}): () => void {
 	const r = createReactive();
 	const { effect, newOwner, dispose, within, untrack, batch, cell } = r;
+	const root = newOwner();
+	const { api, startEffects } = createApi(r, options);
+	const interact = () => batch(() => within(root, null, startEffects));
 
 	// Sizing depends on parents and siblings, so it is resolved in one pass
 	// after styles or structure change, before the browser paints.
@@ -153,13 +158,14 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 		if (d.t === 'el') {
 			for (const [name, value] of Object.entries(d.attrs)) effect(() => setAttribute(el, name, withId(d.id, value)));
 			for (const [name, handler] of Object.entries(d.on))
-				el.addEventListener(name, (event: Event) =>
+				el.addEventListener(name, (event: Event) => {
+					interact();
 					batch(() => {
 						const fn = untrack(handler);
 						if (typeof fn === 'function') fn(event);
 						else if (fn != null) throw new Error(`on${name} must be a function (at ${d.id})`);
-					})
-				);
+					});
+				});
 		}
 		return el;
 	};
@@ -285,8 +291,6 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 	target.setAttribute('data-p', 'frame');
 	target.setAttribute('data-dir', 'column');
 	target.setAttribute('data-host', '');
-	const root = newOwner();
-	const api = createApi(r, options);
 	batch(() => within(root, null, () => mountNodes(program(api), target, null)));
 	return () => dispose(root);
 }

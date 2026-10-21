@@ -14,7 +14,8 @@ build bundles the app and its imports into one standalone HTML file (compile is 
 snapshot renders the app at its initial state, without running $effects:
   figma  copies it to the clipboard as editable Figma layers; paste it into Figma.
   html   writes the app as one standalone HTML file starting from that state
-         (default <name>.snapshot.html); event handlers still work.
+         (default <name>.snapshot.html). It stays interactive: $effects
+         start at the first interaction.
 --state replaces a $state's initial value: JSON, else a plain string, checked
 against the variable's type.
 Type errors fail build and snapshot; dev shows them in the browser overlay.

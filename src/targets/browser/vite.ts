@@ -66,7 +66,8 @@ export async function startDevServer(input: string, port = 5173) {
 
 /**
  * Bundles the app and its imports with Vite into one self-contained HTML
- * document. `mount` starts it from overridden state, without effects.
+ * document. `mount` starts it from overridden state; with `design`, its
+ * effects start at the first interaction.
  */
 export async function buildStandalone(input: string, mount: ApiOptions = {}): Promise<string> {
 	const file = resolve(input);

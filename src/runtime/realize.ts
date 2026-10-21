@@ -79,6 +79,6 @@ function realizeNodes(nodes: ProgramNode[], suffix: string, font: Font): Concret
 
 /** Runs the program without effects and evaluates the template once. */
 export function realize(program: Program, overrides: Record<string, unknown> = {}): Concrete[] {
-	const api = createApi(createReactive(), { overrides, design: true });
+	const { api } = createApi(createReactive(), { overrides, design: true });
 	return realizeNodes(program(api), '', DEFAULT_FONT);
 }
