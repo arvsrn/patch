@@ -1,17 +1,32 @@
 // Name resolution: the one scope-aware walk over the script and template.
 //
 // It records what every identifier reference resolves to (and whether it is
-// read or written), every assignment through a member (`a.b = c`), and every
-// rune call. Checks and code generation read these lists; neither tracks
-// scopes itself.
+// read or written), what values every name is given (its definitions), every
+// change through a member (`a.b = c`, `delete a.b`), and every rune call.
+// Checks and code generation read these; none of them tracks scopes itself.
 
 import { children, isTypeNode, patternNames, rootOf, unwrap, type Estree } from './ast';
 import type { Component, Inline, TemplateNode } from './ir';
 
 export type SymbolKind = 'state' | 'derived' | 'item' | 'local';
 
+/**
+ * A value a name is given. `whole`: the name holds `value` itself
+ * (`const b = a`, `b = a`); otherwise a part of it (`const { x } = a`,
+ * `for (const x of a)`, the element parameter of `a.forEach((x) => …)`).
+ */
+export type Def = { value: Estree; whole: boolean };
+
 /** A declared name. `style` is the object of a top-level `const x = $style({...})`. */
-export type Symbol = { name: string; kind: SymbolKind; style?: Estree };
+export type Symbol = {
+	name: string;
+	kind: SymbolKind;
+	style?: Estree;
+	/** Values given to it by its declaration and assignments. */
+	defs: Def[];
+	/** Assigned or updated after its declaration. */
+	reassigned: boolean;
+};
 
 /** Reactive symbols: reads become `.v`. */
 export const isSignal = (symbol: Symbol | null | undefined) => !!symbol && symbol.kind !== 'local';
@@ -27,7 +42,7 @@ export type Reference = {
 	destructured: Estree | null;
 };
 
-/** An assignment or update through a member: `a.b = c`, `a[i]++`, or `[a.b] = …` (`inPattern`). */
+/** An assignment, update or delete through a member: `a.b = c`, `a[i]++`, `delete a.b`, or `[a.b] = …` (`inPattern`). */
 export type MemberWrite = { node: Estree; target: Estree; root: Reference | null; inPattern: boolean };
 
 /** A call to a `$`-name that resolves to nothing: `$state(…)`, `$derived.by(…)`, `$foo(…)`. */
@@ -53,7 +68,7 @@ class Scope {
 		return null;
 	}
 	declare(name: string, kind: SymbolKind, extra: Partial<Symbol> = {}) {
-		if (!this.vars.has(name)) this.vars.set(name, { name, kind, ...extra });
+		if (!this.vars.has(name)) this.vars.set(name, { name, kind, defs: [], reassigned: false, ...extra });
 	}
 }
 
@@ -81,10 +96,14 @@ export function bind(component: Component): Bindings {
 	};
 }
 
+const isFunction = (node: Estree) => node?.type === 'ArrowFunctionExpression' || node?.type === 'FunctionExpression';
+
 class Binder {
 	references: Reference[] = [];
 	memberWrites: MemberWrite[] = [];
 	runeCalls: RuneCall[] = [];
+	/** The scope holding each function's parameters. */
+	private paramScopes = new Map<Estree, Scope>();
 
 	private reference(node: Estree, scope: Scope, access: Reference['access'], extra: Partial<Reference> = {}) {
 		this.references.push({ node, symbol: scope.get(node.name), access, shorthand: false, destructured: null, ...extra });
@@ -131,10 +150,12 @@ class Binder {
 			case 'FunctionExpression':
 			case 'ArrowFunctionExpression': {
 				const inner = new Scope(scope);
+				this.paramScopes.set(node, inner);
 				if (node.type === 'FunctionExpression' && node.id) inner.declare(node.id.name, 'local');
 				for (const param of node.params) {
 					for (const name of patternNames(param)) inner.declare(name, 'local');
 					this.pattern(param, inner, false);
+					this.define(param, inner, null, true);
 				}
 				if (node.body.type === 'BlockStatement') this.block(node.body.body, inner);
 				else this.visit(node.body, inner);
@@ -156,6 +177,10 @@ class Binder {
 				else if (head && node.type !== 'ForStatement') this.pattern(head, scope, true);
 				for (const key of ['init', 'test', 'update', 'right', 'body']) this.visit(node[key], inner);
 				if (head?.type === 'VariableDeclaration' && node.type !== 'ForStatement') this.visit(head, inner);
+				// `for (x of list)`: x holds the elements of list.
+				if (node.type === 'ForOfStatement')
+					if (head.type === 'VariableDeclaration') this.define(head.declarations[0].id, inner, node.right, false);
+					else this.define(head, scope, node.right, false, true);
 				return;
 			}
 			case 'CatchClause': {
@@ -168,8 +193,16 @@ class Binder {
 				for (const d of node.declarations) {
 					this.pattern(d.id, scope, false);
 					this.visit(d.init, scope);
+					this.define(d.id, scope, d.init, true);
 				}
 				return;
+			case 'UnaryExpression': {
+				const target = unwrap(node.argument);
+				if (node.operator !== 'delete' || target.type !== 'MemberExpression') break;
+				this.visit(target, scope);
+				this.memberWrites.push({ node, target, root: this.rootReference(target), inPattern: false });
+				return;
+			}
 			case 'LabeledStatement':
 				return this.visit(node.body, scope);
 			case 'BreakStatement':
@@ -196,7 +229,17 @@ class Binder {
 					: null;
 		if (name) this.runeCalls.push({ node, name });
 		else this.visit(callee, scope);
-		for (const arg of node.arguments) this.visit(arg, scope);
+		for (const arg of node.arguments) {
+			this.visit(arg, scope);
+			// `list.forEach((item, i, list) => …)`: the callback's parameters hold
+			// parts of the receiver (a reducer's accumulator does not).
+			const fn = unwrap(arg);
+			if (!isFunction(fn) || callee.type !== 'MemberExpression') continue;
+			const reducer = !callee.computed && /^reduce(Right)?$/.test(callee.property.name);
+			fn.params.forEach((param: Estree, i: number) => {
+				if (!(reducer && i === 0)) this.define(param, this.paramScopes.get(fn)!, callee.object, false);
+			});
+		}
 	}
 
 	private assignment(node: Estree, scope: Scope) {
@@ -209,6 +252,40 @@ class Binder {
 		}
 		this.pattern(target, scope, true);
 		this.visit(node.right, scope);
+		// `=`, `||=`, `&&=`, `??=` may give the target the right side's value;
+		// arithmetic operators and updates give it a new primitive.
+		const gives = node.type === 'AssignmentExpression' && /^(=|\|\|=|&&=|\?\?=)$/.test(node.operator);
+		this.define(target, scope, gives ? node.right : null, true, true);
+	}
+
+	/**
+	 * Records that the names `pattern` binds are given `value` (whole when the
+	 * pattern is a plain name; `value` null: a value that is not tracked).
+	 * Defaults are values too. `assigned`: not the declaration.
+	 */
+	private define(pattern: Estree, scope: Scope, value: Estree | null, whole: boolean, assigned = false): void {
+		const p = unwrap(pattern);
+		if (!p) return;
+		switch (p.type) {
+			case 'Identifier': {
+				const symbol = scope.get(p.name);
+				if (!symbol) return;
+				if (value) symbol.defs.push({ value, whole });
+				if (assigned) symbol.reassigned = true;
+				return;
+			}
+			case 'ObjectPattern':
+				for (const q of p.properties) this.define(q.type === 'RestElement' ? q.argument : q.value, scope, value, false, assigned);
+				return;
+			case 'ArrayPattern':
+				for (const q of p.elements) this.define(q, scope, value, false, assigned);
+				return;
+			case 'AssignmentPattern':
+				this.define(p.left, scope, value, whole, assigned);
+				return this.define(p.left, scope, p.right, true, assigned);
+			case 'RestElement':
+				return this.define(p.argument, scope, value, false, assigned);
+		}
 	}
 
 	private rootReference(target: Estree): Reference | null {

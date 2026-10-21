@@ -2,12 +2,19 @@
 // reactivity (what may be written, mutated, or called as a rune) and escape
 // hatches around the visual model.
 
-import { children, forEachNode, isTypeNode, rootOf, type Estree } from '../ast';
+import { children, forEachNode, isTypeNode, rootOf, unwrap, type Estree } from '../ast';
 import { isSignal, type Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
+import { sharedWith } from '../flow';
 import { expressions, type Component } from '../ir';
 
+// Built-in methods that change their receiver, and functions that change their first argument.
 const ARRAY_MUTATORS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin']);
+const MUTATORS = new Set([...ARRAY_MUTATORS, 'set', 'add', 'delete', 'clear']);
+const STATIC_MUTATORS: Record<string, string[]> = {
+	Object: ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf'],
+	Reflect: ['set', 'deleteProperty', 'defineProperty', 'setPrototypeOf']
+};
 
 // Straightforward attempts to bypass the template/style model.
 const VISUAL_ESCAPES = new Set([
@@ -56,16 +63,33 @@ function references(bindings: Bindings, reporter: Reporter) {
 	}
 }
 
+/**
+ * Why changing `object` in place is not allowed, if it is not: it holds
+ * objects of a reactive variable, and the change is not a member write
+ * rooted at a `$state` variable (the one tracked form).
+ */
+function untrackedChange(bindings: Bindings, object: Estree): string | null {
+	const shared = sharedWith(bindings, object);
+	if (!shared) return null;
+	const root = rootOf(object);
+	const via = root?.type === 'Identifier' && root.name !== shared.name ? ` through "${root.name}"` : '';
+	if (shared.kind === 'derived') return `"${shared.name}" is $derived and read-only${via ? ` (changed${via})` : ''}`;
+	if (shared.kind === 'item') return `"${shared.name}" is an {#each} binding and cannot be mutated${via ? ` (changed${via})` : ''}; reassign the source array instead`;
+	return `this changes reactive "${shared.name}"${via} in place, which is not tracked; assign through "${shared.name}" itself or assign a new value`;
+}
+
 function memberWrites(bindings: Bindings, reporter: Reporter) {
 	for (const write of bindings.memberWrites) {
 		const symbol = write.root?.symbol;
-		const name = write.root?.node.name;
 		if (write.inPattern) {
-			if (isSignal(symbol)) reporter.report(write.node, 'destructuring into a member of a reactive variable is not supported');
+			if (isSignal(symbol) || sharedWith(bindings, write.target.object)) reporter.report(write.node, 'destructuring into a member of a reactive variable is not supported');
 			continue;
 		}
-		if (symbol?.kind === 'derived') reporter.report(write.node, `"${name}" is $derived and read-only`);
-		if (symbol?.kind === 'item') reporter.report(write.node, `"${name}" is an {#each} binding and cannot be mutated; reassign the source array instead`);
+		// `todos[0].done = true`, `delete todos[0].note`: tracked.
+		if (symbol?.kind !== 'state') {
+			const problem = untrackedChange(bindings, write.target.object);
+			if (problem) reporter.report(write.node, problem);
+		}
 		const object = write.target.object;
 		if (object?.type === 'MemberExpression' && !object.computed && object.property.name === 'style')
 			reporter.report(write.node, 'assigning to .style bypasses the visual model');
@@ -101,12 +125,23 @@ function syntax(node: Estree, bindings: Bindings, reporter: Reporter) {
 			return;
 		}
 		case 'CallExpression': {
-			const callee = node.callee;
-			if (callee.type !== 'MemberExpression' || callee.computed || !ARRAY_MUTATORS.has(callee.property.name)) return;
+			const callee = unwrap(node.callee);
+			if (callee.type !== 'MemberExpression' || callee.computed) return;
+			const method = callee.property.name;
+			// `Object.assign(target, …)`: changes its first argument.
+			const owner = unwrap(callee.object);
+			if (owner.type === 'Identifier' && !bindings.reference(owner)?.symbol && STATIC_MUTATORS[owner.name]?.includes(method)) {
+				const shared = node.arguments[0] && sharedWith(bindings, node.arguments[0]);
+				if (shared) reporter.report(callee, `${owner.name}.${method}() changes reactive "${shared.name}" in place, which is not tracked; assign a new value instead`);
+				return;
+			}
+			if (!MUTATORS.has(method)) return;
+			const shared = sharedWith(bindings, callee.object);
+			if (!shared) return;
 			const root = rootOf(callee.object);
-			const ref = root?.type === 'Identifier' ? bindings.reference(root) : undefined;
-			if (isSignal(ref?.symbol))
-				reporter.report(callee.property, `.${callee.property.name}() mutates reactive "${root.name}" in place, which is not tracked; assign a new array instead`);
+			const via = root?.type === 'Identifier' && root.name !== shared.name ? ` (through "${root.name}")` : '';
+			const instead = ARRAY_MUTATORS.has(method) ? 'assign a new array instead' : 'assign a new value instead';
+			reporter.report(callee.property, `.${method}() mutates reactive "${shared.name}"${via} in place, which is not tracked; ${instead}`);
 			return;
 		}
 		case 'ImportExpression':
