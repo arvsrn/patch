@@ -1,10 +1,10 @@
 import { expect, test } from 'bun:test';
-import { createRuntime } from './runtime';
-import { complete } from './compiler';
+import { styleProperties, type ElementKind } from '../src/schema/style';
+import { complete } from '../src';
 
 // `|` marks the cursor.
 const labels = (doc: string) => complete(doc.replace('|', ''), doc.indexOf('|')).map((c) => c.label).sort();
-const legal = (kind: string) => createRuntime({}, true).styleProperties(kind).map((p) => p.name).sort();
+const legal = (kind: string) => styleProperties(kind as ElementKind).map((p) => p.name).sort();
 
 test('inline $style in a style= attribute uses the element kind', () => {
 	expect(labels(`<p>a <span style={$style({\n  |\n})}>b</span></p>`)).toEqual(legal('inline'));
@@ -26,7 +26,7 @@ test('inline $style values still complete', () => {
 
 test('the LSP serves element-aware completions for inline $style', async () => {
 	const text = `<p>a <span style={$style({\n  \n})}>b</span></p>\n`;
-	const proc = Bun.spawn(['bun', `${import.meta.dir}/index.ts`, 'lsp'], { stdin: 'pipe', stdout: 'pipe' });
+	const proc = Bun.spawn(['bun', `${import.meta.dir}/../src/cli.ts`, 'lsp'], { stdin: 'pipe', stdout: 'pipe' });
 	const send = (message: object) => {
 		const body = JSON.stringify({ jsonrpc: '2.0', ...message });
 		proc.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);

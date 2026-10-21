@@ -16,7 +16,9 @@ import {
 	type Diagnostic as LspDiagnostic
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { analyze, complete, type Diagnostic } from './compiler';
+import { analyze } from '../compile';
+import { complete } from '../complete';
+import type { Diagnostic } from '../diagnostics';
 
 export function startLanguageServer() {
 	// stdout carries the protocol; anything else goes to stderr.

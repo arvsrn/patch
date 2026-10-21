@@ -1,11 +1,12 @@
 import { expect, test } from 'bun:test';
-import { analyze, compile, complete } from './compiler';
-import { renderRunic } from './runic-adapter';
-import { createRuntime } from './runtime';
+import { mount } from '../src/runtime/dom';
+import { styleProperties, type ElementKind } from '../src/schema/style';
+import { analyze, compile, complete } from '../src';
+import { renderRunic } from '../src/targets/runic';
 
 const messages = (source: string) => analyze(source).diagnostics.map((d) => `${d.line}:${d.column} ${d.message}`);
 const labels = (doc: string) => complete(doc.replace('|', ''), doc.indexOf('|')).map((c) => c.label).sort();
-const legal = (kind: string) => createRuntime({}, true).styleProperties(kind).map((p) => p.name).sort();
+const legal = (kind: string) => styleProperties(kind as ElementKind).map((p) => p.name).sort();
 const SPAN = '"padding" is not supported on nested <span>s inside text; only typography is allowed there';
 
 test('direct, inline and reusable styles get the same compile-time validation, once', () => {
@@ -58,7 +59,7 @@ test('direct and explicit forms render the same in the browser and in Runic', as
 		(globalThis as any).document = doc;
 		try {
 			const program = new Function(`return (${c.module.replace(/^export default /m, '')})`)();
-			createRuntime().mount(program, node('div'));
+			mount(program, node('div'));
 		} finally {
 			(globalThis as any).document = previous;
 		}

@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { analyze, CompileError, compile, complete } from './compiler';
+import { analyze, CompileError, compile, complete } from '../src';
 
 const dir = mkdtempSync(join(tmpdir(), 'pat-typecheck-'));
 writeFileSync(join(dir, 'models.ts'), `export interface Box<T> { value: T; label: string }\nexport const box = <T,>(value: T): Box<T> => ({ value, label: 'box' });\n`);
@@ -84,7 +84,7 @@ test('style completion is unaffected', () => {
 });
 
 test('the LSP publishes TypeScript diagnostics and survives broken edits', async () => {
-	const proc = Bun.spawn(['bun', `${import.meta.dir}/index.ts`, 'lsp'], { stdin: 'pipe', stdout: 'pipe' });
+	const proc = Bun.spawn(['bun', `${import.meta.dir}/../src/cli.ts`, 'lsp'], { stdin: 'pipe', stdout: 'pipe' });
 	const send = (message: object) => {
 		const body = JSON.stringify({ jsonrpc: '2.0', ...message });
 		proc.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);

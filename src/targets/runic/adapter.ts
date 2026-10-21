@@ -1,22 +1,20 @@
-// Concrete application state → Runic nodes.
+// Concrete tree → Runic nodes.
 //
 // Uses Runic's own node factory (`createNode`), defaults, and zod schema from
-// ../runic.design. Layout is not computed here: authored sizing and flex intent
+// a runic.design checkout next to this repo (the `@runic/types` path in
+// tsconfig.json). Layout is not computed here: authored sizing and flex intent
 // are mapped onto Runic's fields and Runic performs layout itself.
 
-import { createNode, type CreateNodeOptions } from '../runic.design/packages/types/create-node';
-import { DEFAULT_FONT, solidFill } from '../runic.design/packages/types/node-defaults';
-import type { Border, Color, Effect, Fill, Flex, TextSection } from '../runic.design/packages/types/features';
-import type { Node } from '../runic.design/packages/types/nodes';
-import { NodeSchema } from '../runic.design/packages/types/zod';
-import { evaluate, type Compiled, type Concrete, type Font, type Style } from './compiler';
+import { createNode, type CreateNodeOptions } from '@runic/types/create-node';
+import { DEFAULT_FONT, solidFill } from '@runic/types/node-defaults';
+import type { Border, Color, Effect, Fill, Flex, TextSection } from '@runic/types/features';
+import type { Node } from '@runic/types/nodes';
+import { NodeSchema } from '@runic/types/zod';
+import type { Concrete, Font } from '../../schema/concrete';
+import type { Style } from '../../schema/style';
 
-export type RunicOptions = {
-	/** Overrides keyed by state id (see `compiled.state`). */
-	state?: Record<string, unknown>;
-	/** The browser viewport the app is rendered into. `height: "hug"` grows with content. */
-	viewport?: { width: number; height: number | 'hug' };
-};
+/** The browser viewport the app is rendered into. `height: "hug"` grows with content. */
+export type Viewport = { width: number; height: number | 'hug' };
 
 export type RunicResult = { rootNodeIds: string[]; nodes: Record<string, Node> };
 
@@ -207,47 +205,13 @@ class Converter {
 	}
 }
 
-/**
- * The same node graph as HTML for Runic's `write_html` import. Every field
- * travels verbatim in `data-runic`, so nothing is reinterpreted as CSS.
- */
-export function toRunicHtml(result: RunicResult): string {
-	const attr = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-	const render = (id: string): string => {
-		const { id: _id, kind, children, ...fields } = result.nodes[id] as Node & { children?: string[] };
-		const inner = (children ?? []).map(render).join('');
-		return `<div data-runic-kind="${kind}" data-name="${attr(fields.name)}" data-runic="${attr(JSON.stringify(fields))}">${inner}</div>`;
-	};
-	return result.rootNodeIds.map(render).join('\n');
-}
-
-/**
- * Runic's native clipboard payload: what copying nodes in Runic writes as
- * `text/plain` (`serialise` in runic.design/packages/core/clipboard.ts), a
- * JSON array of every node in each copied subtree, pre-order. Paste parses it
- * with `NodesSchema`, treats nodes no other node lists as a child as roots, and
- * regenerates every id.
- */
-export function toRunicClipboard(result: RunicResult): string {
-	const out: Node[] = [];
-	const visit = (id: string) => {
-		const node = result.nodes[id];
-		out.push(node);
-		if ('children' in node) node.children.forEach(visit);
-	};
-	result.rootNodeIds.forEach(visit);
-	return JSON.stringify(out);
-}
-
-/** Renders one concrete state of a compiled app as a validated Runic node graph. */
-export async function renderRunic(compiled: Compiled, options: RunicOptions = {}): Promise<RunicResult> {
-	const viewport = options.viewport ?? { width: 1280, height: 800 };
-	const tree = await evaluate(compiled, { state: options.state });
+/** A concrete tree as a validated Runic node graph, inside a frame standing in for the browser viewport. */
+export function toRunic(tree: Concrete[], name: string, viewport: Viewport = { width: 1280, height: 800 }): RunicResult {
 	const converter = new Converter();
 	const children = tree.map((n) => converter.convert(n));
 	// The viewport the browser host provides: a white column flex frame.
 	const app = createNode('frame', 'app', { x: 0, y: 0, w: viewport.width, h: viewport.height === 'hug' ? 0 : viewport.height }, {
-		name: compiled.filename,
+		name,
 		widthKind: 'fixed',
 		heightKind: viewport.height === 'hug' ? 'hug' : 'fixed',
 		fills: [solidFill(255, 255, 255)],

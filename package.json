@@ -3,13 +3,13 @@
   "private": true,
   "type": "module",
   "bin": {
-    "patch": "./index.ts"
+    "patch": "./src/cli.ts"
   },
   "scripts": {
-    "dev": "bun index.ts dev",
-    "build": "bun index.ts build",
-    "runic": "bun index.ts runic",
-    "lsp": "bun index.ts lsp"
+    "dev": "bun src/cli.ts dev",
+    "build": "bun src/cli.ts build",
+    "runic": "bun src/cli.ts runic",
+    "lsp": "bun src/cli.ts lsp"
   },
   "dependencies": {
     "magic-string": "^1.4.3",

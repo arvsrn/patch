@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { extname } from 'node:path';
-import { compile } from './compiler';
-import { renderRunic, toRunicClipboard, toRunicHtml } from './runic-adapter';
+import { compile } from './compile';
+import { copyText, renderRunic, toRunicClipboard, toRunicHtml } from './targets/runic';
 
 const usage = `usage:
   patch dev <input.pat> [--port 5173]
@@ -36,7 +36,7 @@ if (!commands.includes(command) && (command !== undefined || !process.stdin.isTT
 }
 
 try {
-	if (command === 'lsp') (await import('./lsp')).startLanguageServer();
+	if (command === 'lsp') (await import('./lsp/server')).startLanguageServer();
 	else if (command === 'dev') await dev(rest);
 	else if (command === 'build' || command === 'compile') await build(rest);
 	else if (command === 'runic') await runic(rest);
@@ -48,7 +48,7 @@ try {
 async function dev(args: string[]) {
 	const { positional, flags } = parse(args, ['--port']);
 	if (positional.length !== 1) fail(usage);
-	await (await import('./vite-plugin')).startDevServer(positional[0], flags['--port'] ? Number(flags['--port']) : undefined);
+	await (await import('./targets/browser/vite')).startDevServer(positional[0], flags['--port'] ? Number(flags['--port']) : undefined);
 }
 
 async function build(args: string[]) {
@@ -57,7 +57,7 @@ async function build(args: string[]) {
 	if (!input || positional.length > 2) fail(usage);
 	const stem = input.slice(0, input.length - extname(input).length);
 	const out = output ?? `${stem}.html`;
-	await Bun.write(out, await (await import('./vite-plugin')).buildStandalone(input));
+	await Bun.write(out, await (await import('./targets/browser/vite')).buildStandalone(input));
 	console.error(`wrote ${out}`);
 }
 
@@ -86,24 +86,6 @@ async function runic(args: string[]) {
 		await copyText(toRunicClipboard(result));
 		console.error(`Copied ${count} Runic nodes to clipboard.`);
 	}
-}
-
-/** Writes plain text (Runic's only clipboard format) to the system clipboard. */
-async function copyText(text: string) {
-	const commands: Record<string, string[][]> = {
-		darwin: [['pbcopy']],
-		linux: [['wl-copy'], ['xclip', '-selection', 'clipboard']]
-	};
-	for (const cmd of commands[process.platform] ?? []) {
-		if (!Bun.which(cmd[0])) continue;
-		// pbcopy decodes its input with the locale's encoding.
-		const proc = Bun.spawn(cmd, { stdin: 'pipe', env: { ...process.env, LANG: 'en_US.UTF-8' } });
-		proc.stdin.write(text);
-		await proc.stdin.end();
-		if ((await proc.exited) !== 0) throw new Error(`${cmd[0]} exited with ${proc.exitCode}`);
-		return;
-	}
-	throw new Error(`No clipboard command found for ${process.platform}; use --stdout or --output`);
 }
 
 function parse(args: string[], valued: string[], boolean: string[] = []) {

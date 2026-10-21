@@ -1,6 +1,6 @@
 // Starts the PAT language server (`patch lsp`) for .pat documents.
 //
-// Run from the repository, it uses ../../index.ts. Installed from a .vsix, it
+// Run from the repository, it uses ../../src/cli.ts. Installed from a .vsix, it
 // uses the `patch` command that `bun link` puts in ~/.bun/bin. Both are run
 // through bun directly because editors launched from the Dock often do not
 // have ~/.bun/bin on PATH.
@@ -24,7 +24,7 @@ const exists = (file) => {
 exports.activate = () => {
 	const config = workspace.getConfiguration('patch');
 	const bunBin = path.join(os.homedir(), '.bun', 'bin');
-	const repoEntry = path.join(__dirname, '..', '..', 'index.ts');
+	const repoEntry = path.join(__dirname, '..', '..', 'src', 'cli.ts');
 	const linked = path.join(bunBin, 'patch');
 	const entry =
 		config.get('entry') || (exists(repoEntry) ? repoEntry : exists(linked) ? fs.realpathSync(linked) : null);

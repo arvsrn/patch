@@ -1,0 +1,69 @@
+// Rewrites the author's JS/TS onto the runtime (`$$rt`). Runs only on code
+// that passed every check, so it makes no decisions of its own: each binding
+// list maps to one kind of edit.
+//
+//   reading or assigning `count`      → `count.v`
+//   `{ count }`                       → `{ count: count.v }`
+//   `todos[0].done = true`            → `$$rt.mutate(todos, todos.v[0].done = true)`
+//   `$state(x)` / `$state()`          → `$$rt.state("name", x)` / `$$rt.state("name")`
+//   `$derived(expr)`                  → `$$rt.derived(() => (expr))`
+//   `$derived.by` / `$effect` / `$style` → `$$rt.derived` / `$$rt.effect` / `$$rt.style`
+//   `style={{ gap: 4 }}`              → `style={$$rt.style({ gap: 4 })}`
+//   `import …`                        → moved to the top of the module
+
+import { isSignal, type Bindings } from '../bind';
+import type { Component } from '../ir';
+import type { Styles } from '../styles';
+import type { Edits } from './edits';
+
+const CALLEES: Record<string, string> = {
+	$state: '$$rt.state',
+	$derived: '$$rt.derived',
+	'$derived.by': '$$rt.derived',
+	$effect: '$$rt.effect',
+	$style: '$$rt.style'
+};
+
+/** Records every script and template expression edit. Returns the script body and its imports. */
+export function emitScript(component: Component, bindings: Bindings, styles: Styles, source: string, edits: Edits) {
+	const script = component.script;
+	const imports: string[] = [];
+	for (const statement of script?.imports ?? []) {
+		imports.push(source.slice(statement.start, statement.end));
+		edits.replace(statement.start, statement.end, '');
+	}
+
+	// Edits at the same offset nest in the order they are recorded (later is
+	// further out): references, then member writes (inner first), then runes.
+	for (const ref of bindings.references) {
+		if (!isSignal(ref.symbol)) continue;
+		const { name, start, end } = ref.node;
+		if (ref.shorthand) edits.replace(start, end, `${name}: ${name}.v`);
+		else edits.after(end, '.v');
+	}
+	for (const write of bindings.memberWrites) {
+		if (write.inPattern || write.root?.symbol?.kind !== 'state') continue;
+		edits.before(write.node.start, `$$rt.mutate(${write.root.node.name}, `);
+		edits.after(write.node.end, ')');
+	}
+	const stateIds = new Map(script?.state.map((d) => [d.call, d.info.id]));
+	for (const { node, name } of bindings.runeCalls) {
+		edits.replace(node.callee.start, node.callee.end, CALLEES[name]);
+		const [first] = node.arguments;
+		if (name === '$state') {
+			const id = JSON.stringify(stateIds.get(node));
+			if (first) edits.before(first.start, `${id}, `);
+			else edits.before(node.end - 1, id);
+		} else if (name === '$derived') {
+			edits.before(first.start, '() => (');
+			edits.after(first.end, ')');
+		}
+	}
+	for (const use of styles.uses) {
+		if (!use.direct) continue;
+		edits.before(use.object.start, '$$rt.style(');
+		edits.after(use.object.end, ')');
+	}
+
+	return { code: script ? edits.render(script.span.start, script.span.end) : '', imports };
+}

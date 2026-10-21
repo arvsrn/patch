@@ -8,7 +8,10 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@runic/types/*": ["../runic.design/packages/types/*"]
+    }
   },
-  "include": ["*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
 }
