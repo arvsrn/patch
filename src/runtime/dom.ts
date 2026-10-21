@@ -2,11 +2,12 @@
 // Sizing semantics live in one fixed stylesheet keyed on data-* attributes;
 // each element's own style becomes inline CSS.
 
+import { anchorOptions } from '../schema/anchor';
 import type { ElementNode, InlinePart, Program, ProgramNode, SpanNode } from '../schema/program';
 import { effectiveSizing, SHORTHANDS, sizingOf, type ElementKind, type Sizing, type Style } from '../schema/style';
 import { createApi, type ApiOptions } from './api';
-import { createAnchoring } from './anchoring';
-import { anchorName, eachList, elementStyle, portalName, toText, withId } from './evaluate';
+import { createAnchoring, type AnchorSpec } from './anchoring';
+import { eachList, elementStyle, portalName, toText, withId } from './evaluate';
 import { createPortals } from './portals';
 import { createReactive, type Cell, type Owner } from './reactive';
 
@@ -43,7 +44,8 @@ function toCss(kind: ElementKind, st: Style) {
 	if (typeof st.width === 'number') css.width = px(st.width);
 	if (typeof st.height === 'number') css.height = px(st.height);
 	for (const k of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'left', 'top', 'gap', 'fontSize', 'lineHeight', 'letterSpacing'])
-		if (st[k] !== undefined) css[k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())] = px(st[k]);
+		// Contextual values ("available") are set by the anchoring engine.
+		if (typeof st[k] === 'number') css[k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())] = px(st[k]);
 	const box = (prefix: string) => {
 		const keys = SHORTHANDS[prefix];
 		if (keys.some((k) => st[k] !== undefined)) css[prefix] = keys.map((k) => px(st[k] ?? 0)).join(' ');
@@ -200,7 +202,17 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 			for (const [k, v] of Object.entries(css)) if (prev[k] !== v) el.style.setProperty(k, v);
 			for (const [k, v] of Object.entries(data)) el.setAttribute(`data-${k}`, v);
 			if (kind !== 'inline') {
-				const spec = st.anchor === undefined ? null : { name: st.anchor, position: st.anchorPosition ?? 'bottom', offset: st.anchorOffset ?? 0, at: d.id };
+				const spec: AnchorSpec | null =
+					st.anchor === undefined
+						? null
+						: {
+								anchor: st.anchor instanceof Element ? st.anchor : null,
+								options: anchorOptions(st),
+								matchWidth: st.width === 'anchor',
+								matchHeight: st.height === 'anchor',
+								availableWidth: st.maxWidth === 'available',
+								availableHeight: st.maxHeight === 'available'
+							};
 				anchoring.track(el, spec, css);
 			}
 			prev = css;
@@ -230,15 +242,6 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 					if (control) resizeLater();
 				});
 			if (control) el.addEventListener('input', resizeLater);
-			const named = d.anchorName;
-			if (named) {
-				effect(() => {
-					const name = withId(d.id, () => anchorName(named()));
-					untrack(() => anchoring.name(el, name, d.id));
-					placeLater();
-				});
-				onCleanup(() => anchoring.name(el, null, d.id));
-			}
 			for (const [name, handler] of Object.entries(d.on))
 				el.addEventListener(name, (event: Event) => {
 					interact();

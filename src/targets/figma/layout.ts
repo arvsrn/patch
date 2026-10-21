@@ -5,7 +5,7 @@
 // Fill shares the free space of the main axis equally and stretches across
 // it; hug is the content size; fixed is the value. min/max clamp the result.
 
-import { placeAnchored } from '../../schema/anchor';
+import { available, boundary, choosePlacement, intersect, positionAt, type Rect } from '../../schema/anchor';
 import type { FigmaFrame, FigmaNode, FigmaText } from './adapter';
 import type { TextMeasure } from './text';
 
@@ -20,7 +20,14 @@ const flow = (frame: FigmaFrame) => frame.children.filter((c) => !c.absolute);
 const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
 const gaps = (frame: FigmaFrame, n: number) => frame.gap * Math.max(0, n - 1);
 
+/** Lays out every layer, then places anchored layers (which may resize them and lay out again). */
 export function layout(root: FigmaFrame, measure: TextMeasure) {
+	resolve(root, measure);
+	anchorLayers(root, () => resolve(root, measure));
+}
+
+/** One layout pass: every size and position from the sizing intents. */
+function resolve(root: FigmaFrame, measure: TextMeasure) {
 	const hugWidths = new Map<FigmaNode, number>();
 	const rows = new Map<FigmaFrame, FigmaNode[][]>();
 	const wraps = (n: FigmaText) => n.width.kind !== 'HUG';
@@ -172,51 +179,109 @@ export function layout(root: FigmaFrame, measure: TextMeasure) {
 	resolveWidth(root, own(root));
 	resolveHeight(root, ownHeight(root));
 	place(root);
-	placeAnchoredLayers(root);
 }
 
 /**
- * Anchored layers: positioned from their anchor's box, in the coordinates of
- * the root frame, which stands for the browser viewport. An anchor may sit
- * inside another anchored layer, so this repeats while something moves.
+ * Anchored layers, in the coordinates of the root frame, which stands for the
+ * browser viewport (see schema/anchor.ts):
+ *
+ *   1. anchor-matched sizes become fixed sizes, and layout runs again;
+ *   2. each layer's placement is chosen for its own size, and an "available"
+ *      maximum gets the room that placement has, and layout runs again;
+ *   3. each layer is positioned, then left out when it has no anchor or its
+ *      anchor is clipped completely out of view.
+ *
+ * Absolute layers never affect other layers' layout, so passes only change
+ * the anchored layers. An anchor may sit inside another anchored layer, so
+ * positioning repeats while something moves.
  */
-function placeAnchoredLayers(root: FigmaFrame) {
+function anchorLayers(root: FigmaFrame, relayout: () => void) {
 	const parents = new Map<FigmaNode, FigmaFrame>();
-	const named = new Map<string, FigmaNode>();
+	const byId = new Map<string, FigmaNode>();
 	const anchored: FigmaNode[] = [];
 	const walk = (frame: FigmaFrame) => {
 		for (const k of frame.children) {
 			parents.set(k, frame);
-			if (k.anchorName !== undefined) named.set(k.anchorName, k);
+			if (k.id !== undefined) byId.set(k.id, k);
 			if (k.anchor) anchored.push(k);
 			if (k.type === 'FRAME') walk(k);
 		}
 	};
 	walk(root);
-	/** The position of `node`'s parent (or of `node`, with `self`) in the root frame. */
-	const origin = (node: FigmaNode, self: boolean) => {
-		let x = self ? node.x : 0;
-		let y = self ? node.y : 0;
+	if (!anchored.length) return;
+
+	/** A layer's box (or, with `parentOnly`, the origin of its parent) in root coordinates. */
+	const world = (node: FigmaNode, parentOnly = false): Rect => {
+		let x = parentOnly ? 0 : node.x;
+		let y = parentOnly ? 0 : node.y;
 		for (let p = parents.get(node); p && p !== root; p = parents.get(p)) {
 			x += p.x;
 			y += p.y;
 		}
-		return { x, y };
+		return { x, y, width: parentOnly ? 0 : node.w, height: parentOnly ? 0 : node.h };
 	};
-	const viewport = { x: 0, y: 0, width: root.w, height: root.h };
-	for (let pass = 0; pass < 3; pass++) {
-		let moved = false;
-		for (const n of anchored) {
-			const anchor = named.get(n.anchor!.name);
-			if (!anchor) continue;
-			const at = origin(anchor, true);
-			const p = placeAnchored({ ...at, width: anchor.w, height: anchor.h }, { width: n.w, height: n.h }, viewport, n.anchor!.position, n.anchor!.offset);
-			const parent = origin(n, false);
-			const [x, y] = [p.x - parent.x, p.y - parent.y];
-			if (x !== n.x || y !== n.y) moved = true;
-			n.x = x;
-			n.y = y;
+	const viewport: Rect = { x: 0, y: 0, width: root.w, height: root.h };
+	const anchorOf = (n: FigmaNode) => (n.anchor!.to === null ? undefined : byId.get(n.anchor!.to));
+	const placed = anchored.filter((n) => anchorOf(n));
+	const position = () => {
+		for (let pass = 0; pass < 3; pass++) {
+			let moved = false;
+			for (const n of placed) {
+				const { options } = n.anchor!;
+				const anchor = world(anchorOf(n)!);
+				const bounds = boundary(viewport, options.padding);
+				const at = positionAt(anchor, { width: n.w, height: n.h }, bounds, placement.get(n)!, options);
+				const origin = world(n, true);
+				const [x, y] = [at.x - origin.x, at.y - origin.y];
+				if (x !== n.x || y !== n.y) moved = true;
+				n.x = x;
+				n.y = y;
+			}
+			if (!moved || placed.length < 2) return;
 		}
-		if (!moved || anchored.length < 2) return;
+	};
+
+	const placement = new Map<FigmaNode, string>();
+	const choose = () => {
+		for (const n of placed) {
+			const anchor = world(anchorOf(n)!);
+			placement.set(n, choosePlacement(anchor, { width: n.w, height: n.h }, boundary(viewport, n.anchor!.options.padding), n.anchor!.options));
+		}
+	};
+	let resized = false;
+	for (const n of placed) {
+		const anchor = anchorOf(n)!;
+		if (n.anchor!.matchWidth) n.width = { kind: 'FIXED', value: anchor.w };
+		if (n.anchor!.matchHeight) n.height = { kind: 'FIXED', value: anchor.h };
+		resized ||= n.anchor!.matchWidth || n.anchor!.matchHeight;
+	}
+	if (resized) relayout();
+	// Anchors inside anchored layers need their layer placed first.
+	choose();
+	position();
+	choose();
+	let constrained = false;
+	for (const n of placed) {
+		const { options, availableWidth, availableHeight } = n.anchor!;
+		if (!availableWidth && !availableHeight) continue;
+		const room = available(world(anchorOf(n)!), boundary(viewport, options.padding), placement.get(n)!, options.offset);
+		if (availableWidth) n.maxWidth = room.width;
+		if (availableHeight) n.maxHeight = room.height;
+		constrained = true;
+	}
+	if (constrained) relayout();
+	position();
+
+	// What is left out: no anchor, or an anchor clipped completely out of view.
+	const inView = (anchor: FigmaNode) => {
+		let visible = intersect(world(anchor), viewport);
+		for (let p = parents.get(anchor); visible && p && p !== root; p = parents.get(p)) if (p.clip) visible = intersect(visible, world(p));
+		return visible !== null;
+	};
+	for (const n of anchored) {
+		const anchor = anchorOf(n);
+		if (anchor && inView(anchor)) continue;
+		const parent = parents.get(n)!;
+		parent.children = parent.children.filter((k) => k !== n);
 	}
 }

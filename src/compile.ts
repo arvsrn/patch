@@ -10,7 +10,7 @@ import { basename, resolve } from 'node:path';
 import { bind, isSignal, type Bindings } from './bind';
 import { checkNames } from './check/names';
 import { checkScript } from './check/script';
-import { checkStyles } from './check/styles';
+import { checkAnchorReferences, checkStyles } from './check/styles';
 import { checkTemplate, checkTemplateNames } from './check/template';
 import { CompileError, Reporter, type Diagnostic } from './diagnostics';
 import { Edits } from './emit/edits';
@@ -77,7 +77,8 @@ function check(source: string, filename: string, reporter: Reporter): Front | nu
 	checkScript(component, bindings, reporter);
 	checkTemplate(component, bindings, reporter);
 	checkTemplateNames(component, bindings, globalNames(resolve(filename)), reporter);
-	checkNames(component.template, styles, reporter);
+	checkNames(component.template, reporter);
+	checkAnchorReferences(styles, bindings, reporter);
 	checkStyles(styles, reporter);
 	reporter.diagnostics.sort((a, b) => a.start - b.start);
 

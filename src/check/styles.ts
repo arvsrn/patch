@@ -4,10 +4,41 @@
 // is certain. What is not certain is validated by the runtime with the same
 // schema.
 
-import { literal, NOT_STATIC, propertyName, type Estree } from '../ast';
+import { literal, NOT_STATIC, propertyName, unwrap, type Estree } from '../ast';
+import type { Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
 import { checkKey, normalizeStyle, OFFSETS, rulesFor, SHORTHANDS, styleLiterals, type ElementKind, type StyleRule } from '../schema/style';
 import type { StyledElement, StyleShape, Styles } from '../styles';
+
+/**
+ * Whether `expr` certainly is not an element: a name whose every value is a
+ * non-null literal and that `bind:this` never sets. Literals written in place
+ * are already rejected as values.
+ */
+function notAnElement(bindings: Bindings, expr: Estree): boolean {
+	const e = unwrap(expr);
+	if (e?.type !== 'Identifier') return false;
+	const symbol = bindings.reference(e)?.symbol;
+	if (!symbol || symbol.element || symbol.kind === 'item' || !symbol.defs.length) return false;
+	return symbol.defs.every((d) => {
+		const value = unwrap(d.value);
+		// `let x = $state(initial)`: the initial value.
+		const given = value?.type === 'CallExpression' && bindings.runeCall(value)?.name === '$state' ? value.arguments[0] : value;
+		const v = d.whole && given ? literal(given) : NOT_STATIC;
+		return v !== NOT_STATIC && v !== null && v !== undefined;
+	});
+}
+
+/** `anchor:` values the compiler can tell are not elements from `bind:this`. */
+export function checkAnchorReferences(styles: Styles, bindings: Bindings, reporter: Reporter) {
+	const seen = new Set();
+	for (const { object } of styles.uses)
+		for (const p of object.properties) {
+			if (p.type !== 'Property' || p.computed || propertyName(p) !== 'anchor' || seen.has(p)) continue;
+			seen.add(p);
+			if (notAnElement(bindings, p.value)) reporter.report(p.value, `anchor must be an element from bind:this; "${unwrap(p.value).name}" never holds one`);
+		}
+}
 
 export function checkStyles(styles: Styles, reporter: Reporter) {
 	for (const node of styles.strings) reporter.report(node, 'CSS strings are not supported; use an object or $style({...})');
@@ -37,6 +68,8 @@ export function checkStyles(styles: Styles, reporter: Reporter) {
 /** More alternatives than this are left to the runtime. */
 const MAX_COMBINATIONS = 256;
 const UNKNOWN = Symbol('unknown');
+/** An `anchor` whose value is not visible: present, whatever it holds. */
+const ANCHORED = Symbol('anchored');
 
 /** One way the style can evaluate: the entries merged (null: not visible) and the alternative taken at each choice. */
 type Combination = { entries: (Estree | null)[]; picks: Map<StyleShape, number> };
@@ -100,8 +133,13 @@ function merge(entries: (Estree | null)[]): Merged {
 			}
 			const key = propertyName(p);
 			const value = literal(p.value);
-			if (value === null || value === undefined) continue;
+			if ((value === null || value === undefined) && key !== 'anchor') continue;
 			const longhands = SHORTHANDS[key] ?? [key];
+			// An anchor is kept even when nullish, so whatever it holds, the element is anchored.
+			if (key === 'anchor' && value === NOT_STATIC) {
+				merged.values.set(key, ANCHORED);
+				continue;
+			}
 			try {
 				if (value === NOT_STATIC) throw 0;
 				for (const [k, v] of Object.entries(normalizeStyle({ [key]: value }))) merged.values.set(k, v);

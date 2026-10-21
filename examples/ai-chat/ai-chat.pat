@@ -15,7 +15,7 @@
 	} from './scenarios.ts';
 
 	type Streaming = { chatId: number; messageId: number };
-	type Menu = { kind: 'model' | 'tools' | 'chat'; anchor: string; chatId?: number };
+	type Menu = { kind: 'model' | 'tools' | 'chat'; key: string; chatId?: number; trigger?: HTMLElement };
 
 	let chats: Chat[] = $state(seedChats());
 	let activeId: number | null = $state(null);
@@ -34,7 +34,10 @@
 	let composer = $state<HTMLTextAreaElement>();
 	let bottom = $state<HTMLDivElement>();
 	let menuEl = $state<HTMLDivElement>();
-	let menuTrigger: Element | undefined;
+	// What menus and the "Jump to latest" button are anchored to.
+	let modelButton = $state<HTMLButtonElement>();
+	let toolsButton = $state<HTMLButtonElement>();
+	let composerBox = $state<HTMLDivElement>();
 
 	let activeChat = $derived(chats.find((c) => c.id === activeId) ?? null);
 	let model = $derived(models.find((m) => m.id === modelId) ?? models[0]);
@@ -197,13 +200,13 @@
 
 	function toggleMenu(next: Menu, event: Event) {
 		event.stopPropagation();
-		if (menu?.anchor === next.anchor) {
+		if (menu?.key === next.key) {
 			menu = null;
 			return;
 		}
-		menu = next;
+		// The button that opened it: what the menu is anchored to.
+		menu = { ...next, trigger: event.currentTarget as HTMLElement };
 		menuRow = null;
-		menuTrigger = event.currentTarget as Element;
 	}
 
 	// Paragraphs and "- " bullets, one block per line.
@@ -245,7 +248,7 @@
 	$effect(() => {
 		const onPointerDown = (event: PointerEvent) => {
 			const target = event.target as Node;
-			if (!menu || menuEl?.contains(target) || menuTrigger?.contains(target)) return;
+			if (!menu || menuEl?.contains(target) || menu.trigger?.contains(target)) return;
 			menu = null;
 		};
 		const onKey = (event: KeyboardEvent) => event.key === 'Escape' && (menu = null);
@@ -410,12 +413,11 @@
 					<p style={{ width: 'fill' }}>{chat.title}</p>
 					{#if hoveredChat === chat.id || menu?.chatId === chat.id}
 						<button
-							anchorName={`chat-${chat.id}`}
 							style={[
 								{ width: 26, height: 26, borderRadius: 6, alignItems: 'center', justifyContent: 'center', color: muted, fontSize: 15 },
 								menu?.chatId === chat.id && { background: '#dddbd4' }
 							]}
-							onclick={(e: Event) => toggleMenu({ kind: 'chat', anchor: `chat-${chat.id}`, chatId: chat.id }, e)}
+							onclick={(e: Event) => toggleMenu({ kind: 'chat', key: `chat-${chat.id}`, chatId: chat.id }, e)}
 						>
 							⋯
 						</button>
@@ -449,9 +451,9 @@
 			<p style={{ fontSize: 15, fontWeight: 600 }}>{activeChat ? activeChat.title : 'New chat'}</p>
 			<div style={spacer}></div>
 			<button
-				anchorName="model"
+				bind:this={modelButton}
 				style={[pillButton, { borderWidth: 1, borderColor: line }, menu?.kind === 'model' && { background: '#f3f2ee' }]}
-				onclick={(e: Event) => toggleMenu({ kind: 'model', anchor: 'model' }, e)}
+				onclick={(e: Event) => toggleMenu({ kind: 'model', key: 'model' }, e)}
 			>
 				<div style={[badge, { width: 7, height: 7, background: streaming ? badgeColor.running : badgeColor.done }]}></div>
 				<span style={{ color: ink, fontWeight: 500 }}>{model.name}</span>
@@ -647,7 +649,7 @@
 		<div style={{ width: 'fill', flexDirection: 'row', justifyContent: 'center', padding: [0, 32, 16, 32] }}>
 			<div style={[column, { gap: 8, alignItems: 'center' }]}>
 				<div
-					anchorName="composer"
+					bind:this={composerBox}
 					style={{
 						width: 'fill',
 						gap: 6,
@@ -675,9 +677,9 @@
 					></textarea>
 					<div style={[row, { width: 'fill', gap: 8 }]}>
 						<button
-							anchorName="tools"
+							bind:this={toolsButton}
 							style={[pillButton, { background: menu?.kind === 'tools' ? '#e9e7e1' : '#f3f2ee' }]}
-							onclick={(e: Event) => toggleMenu({ kind: 'tools', anchor: 'tools' }, e)}
+							onclick={(e: Event) => toggleMenu({ kind: 'tools', key: 'tools' }, e)}
 						>
 							<span style={{ fontFamily: mono, fontSize: 11 }}>{'{ }'}</span>
 							<span>{tools.length} tools</span>
@@ -709,7 +711,7 @@
 				pillButton,
 				{
 					position: 'absolute',
-					anchor: 'composer',
+					anchor: composerBox,
 					anchorPosition: 'top',
 					anchorOffset: 12,
 					padding: [7, 14],
@@ -731,9 +733,9 @@
 			bind:this={menuEl}
 			style={[
 				popover,
-				menu.kind === 'model' && { anchor: 'model', anchorPosition: 'bottom-end', anchorOffset: 6, width: 280 },
-				menu.kind === 'tools' && { anchor: 'tools', anchorPosition: 'top-start', anchorOffset: 8, width: 320 },
-				menu.kind === 'chat' && { anchor: menu.anchor, anchorPosition: 'right-start', anchorOffset: 6, width: 180 }
+				menu.kind === 'model' && { anchor: modelButton, anchorPosition: 'bottom-end', anchorOffset: 6, width: 280 },
+				menu.kind === 'tools' && { anchor: toolsButton, anchorPosition: 'top-start', anchorOffset: 8, width: 320 },
+				menu.kind === 'chat' && { anchor: menu.trigger, anchorPosition: 'right-start', anchorOffset: 6, width: 180 }
 			]}
 		>
 			{#if menu.kind === 'model'}

@@ -3,7 +3,7 @@
 // styles against it, the runtime validates and resolves every style with it,
 // and editor completion lists from it.
 
-import { ANCHOR_POSITIONS } from './anchor';
+import { ANCHOR_POSITIONS, isDesignNode } from './anchor';
 
 export type Style = Record<string, any>;
 
@@ -17,7 +17,12 @@ const isColor = (v: unknown) => typeof v === 'string' && /^#([0-9a-f]{3}|[0-9a-f
 // Validators carry the string literals they accept, for editor completion.
 const literals = <F extends (v: any) => boolean>(values: string[], check: F) => Object.assign(check, { values });
 const oneOf = (...values: string[]) => literals(values, (v: unknown) => values.includes(v as string));
-const isSize = literals(['hug', 'fill'], (v: unknown) => isPx(v) || v === 'hug' || v === 'fill');
+const isSize = literals(['hug', 'fill', 'anchor'], (v: unknown) => isPx(v) || v === 'hug' || v === 'fill' || v === 'anchor');
+const isMaxSize = literals(['available'], (v: unknown) => isPx(v) || v === 'available');
+const isPlacement = oneOf(...ANCHOR_POSITIONS);
+const PLACEMENT_HINT = ANCHOR_POSITIONS.map((p) => `"${p}"`).join(', ');
+/** An element from `bind:this` (a DOM element, or its design-time stand-in), or null: anchored to nothing yet. */
+const isAnchorRef = (v: unknown) => v === null || v === undefined || isDesignNode(v) || (typeof Element !== 'undefined' && v instanceof Element);
 const isMargin = literals(['auto'], (v: unknown) => isNum(v) || v === 'auto');
 const isShadow = (v: any) =>
 	!!v &&
@@ -27,7 +32,7 @@ const isShadow = (v: any) =>
 	(v.blur === undefined || isPx(v.blur)) &&
 	(v.color === undefined || isColor(v.color));
 
-const sizeHint = 'a pixel number, "hug" or "fill"';
+const sizeHint = 'a pixel number, "hug", "fill" or "anchor"';
 const isOverflow = oneOf('visible', 'hidden', 'auto', 'scroll');
 const OVERFLOW_HINT = '"visible", "hidden", "auto" or "scroll"';
 const SPEC: Record<string, [(v: any) => boolean, string]> = {
@@ -41,9 +46,9 @@ const SPEC: Record<string, [(v: any) => boolean, string]> = {
 	width: [isSize, sizeHint],
 	height: [isSize, sizeHint],
 	minWidth: [isPx, 'a pixel number'],
-	maxWidth: [isPx, 'a pixel number'],
+	maxWidth: [isMaxSize, 'a pixel number or "available"'],
 	minHeight: [isPx, 'a pixel number'],
-	maxHeight: [isPx, 'a pixel number'],
+	maxHeight: [isMaxSize, 'a pixel number or "available"'],
 	paddingTop: [isPx, 'a pixel number'],
 	paddingRight: [isPx, 'a pixel number'],
 	paddingBottom: [isPx, 'a pixel number'],
@@ -55,9 +60,12 @@ const SPEC: Record<string, [(v: any) => boolean, string]> = {
 	position: [oneOf('absolute', 'flow'), '"absolute" or "flow"'],
 	left: [isNum, 'a pixel number'],
 	top: [isNum, 'a pixel number'],
-	anchor: [(v) => typeof v === 'string' && v.length > 0, 'the anchorName of another element'],
-	anchorPosition: [oneOf(...ANCHOR_POSITIONS), ANCHOR_POSITIONS.map((p) => `"${p}"`).join(', ')],
+	anchor: [isAnchorRef, 'an element from bind:this'],
+	anchorPosition: [isPlacement, PLACEMENT_HINT],
 	anchorOffset: [isNum, 'a pixel number'],
+	anchorCrossOffset: [isNum, 'a pixel number'],
+	anchorPadding: [(v) => sides(v, false) !== null, 'a pixel number, [vertical, horizontal] or [top, right, bottom, left]'],
+	anchorFallbacks: [(v) => Array.isArray(v) && v.every(isPlacement), `an array of placements: ${PLACEMENT_HINT}`],
 	background: [isColor, 'a hex color'],
 	color: [isColor, 'a hex color'],
 	opacity: [(v) => isNum(v) && v >= 0 && v <= 1, 'a number from 0 to 1'],
@@ -85,7 +93,9 @@ export const SHORTHANDS: Record<string, string[]> = {
 	overflow: ['overflowX', 'overflowY']
 };
 
-const BOX = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', 'anchor', 'anchorPosition', 'anchorOffset', 'opacity'];
+/** Anchored positioning (see schema/anchor.ts). */
+const ANCHORING = ['anchor', 'anchorPosition', 'anchorOffset', 'anchorCrossOffset', 'anchorPadding', 'anchorFallbacks'];
+const BOX = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', ...ANCHORING, 'opacity'];
 /** Typography: inherited from parent to child. */
 export const TYPO = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign'];
 const PAINT = ['background', 'borderWidth', 'borderColor', 'borderRadius', 'shadow', ...SHORTHANDS.padding];
@@ -128,7 +138,8 @@ export function normalizeStyle(input: unknown): Style {
 		throw new Error(`A style must be an object, $style(...) value, or array of them; got ${JSON.stringify(input)}`);
 	const out: Style = {};
 	for (const [key, value] of Object.entries(input)) {
-		if (value === undefined || value === null) continue;
+		// A nullish anchor is kept: the element is anchored, to nothing yet.
+		if ((value === undefined || value === null) && key !== 'anchor') continue;
 		if (key in SHORTHANDS) {
 			const [expand, hint] = EXPAND[key];
 			const expanded = expand(value);
@@ -140,7 +151,11 @@ export function normalizeStyle(input: unknown): Style {
 		if (!spec) throw new Error(`Unsupported style property "${key}"`);
 		if (!spec[0](value)) throw new Error(`Invalid ${key}: ${JSON.stringify(value)} (expected ${spec[1]})`);
 		out[key] =
-			key === 'borderRadius' && typeof value === 'number'
+			key === 'anchor'
+				? (value ?? null)
+				: key === 'anchorPadding'
+					? sides(value, false)
+					: key === 'borderRadius' && typeof value === 'number'
 				? [value, value, value, value]
 				: key === 'shadow'
 					? (Array.isArray(value) ? value : [value]).map((s: any) => ({ x: 0, y: 0, blur: 0, spread: 0, color: '#00000040', ...s }))
@@ -150,7 +165,7 @@ export function normalizeStyle(input: unknown): Style {
 }
 
 /** Fields of absolute positioning: an entry switching to `position: 'flow'` discards earlier ones. */
-export const OFFSETS = ['left', 'top', 'anchor', 'anchorPosition', 'anchorOffset'];
+export const OFFSETS = ['left', 'top', ...ANCHORING];
 
 /**
  * `style={a}`, `style={[a, cond && b]}`: merges left to right, skipping falsy
@@ -203,8 +218,15 @@ export const STYLE_RULES: StyleRule[] = [
 		fails: (st) => (st.anchor !== undefined && st.position !== 'absolute' ? 'anchor requires position: "absolute"' : null)
 	},
 	{
-		keys: ['anchor', 'anchorPosition', 'anchorOffset'],
-		fails: (st) => (st.anchor === undefined && (st.anchorPosition !== undefined || st.anchorOffset !== undefined) ? 'anchorPosition/anchorOffset require anchor' : null)
+		keys: ANCHORING,
+		fails: (st) => (st.anchor === undefined && ANCHORING.slice(1).some((k) => st[k] !== undefined) ? 'anchorPosition, anchorOffset, anchorCrossOffset, anchorPadding and anchorFallbacks require anchor' : null)
+	},
+	{
+		keys: ['anchor', 'width', 'height', 'maxWidth', 'maxHeight'],
+		fails: (st) =>
+			st.anchor === undefined && (st.width === 'anchor' || st.height === 'anchor' || st.maxWidth === 'available' || st.maxHeight === 'available')
+				? 'width/height "anchor" and maxWidth/maxHeight "available" require anchor'
+				: null
 	},
 	{
 		keys: ['anchor', 'left', 'top'],
@@ -255,8 +277,8 @@ export const styleLiterals = (key: string): string[] => ((SPEC[key]?.[0] as any)
 
 export type Sizing = 'fixed' | 'hug' | 'fill';
 
-/** How a `width`/`height` style value sizes its element. */
-export const sizingOf = (value: unknown): Sizing => (typeof value === 'number' ? 'fixed' : value === 'fill' ? 'fill' : 'hug');
+/** How a `width`/`height` style value sizes its element. An anchor-matched size is a fixed size set by the renderer. */
+export const sizingOf = (value: unknown): Sizing => (typeof value === 'number' || value === 'anchor' ? 'fixed' : value === 'fill' ? 'fill' : 'hug');
 
 /**
  * How a flow child is actually sized along one axis. Fill takes space its

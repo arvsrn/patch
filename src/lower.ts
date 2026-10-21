@@ -23,7 +23,7 @@ const KINDS: Record<Tag, Element['kind']> = {
 	textarea: 'textarea'
 };
 /** Attributes every element accepts (not an inline <span>). */
-const UNIVERSAL_ATTRIBUTES = ['portal', 'anchorName'];
+const UNIVERSAL_ATTRIBUTES = ['portal'];
 /** Attributes (other than style= and on*=) each tag accepts. */
 const ATTRIBUTES: Partial<Record<Tag, string[]>> = {
 	button: ['disabled'],

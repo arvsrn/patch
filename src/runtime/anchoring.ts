@@ -1,73 +1,137 @@
 // Anchored positioning in the browser. Patch owns the geometry: an anchored
-// element's left/top are derived from its anchor's rendered box with
-// `placeAnchored`, after every render (the renderer calls `update`) and
-// whenever boxes move without one: the viewport resizes, anything scrolls, or
-// an anchor or anchored element changes size.
+// element's position (and any anchor-relative size) is derived from its
+// anchor's rendered box with schema/anchor.ts. It is recomputed after every
+// render (the renderer calls `update`) and whenever boxes can move without
+// one: the viewport resizes, anything scrolls, or an anchor or anchored
+// element changes size. Patch has no transforms or animations, so nothing
+// moves between those and no per-frame tracking is needed.
 //
-// The viewport is the app's host. An anchored element is still absolutely
-// positioned in its rendered parent, so it scrolls and clips with it; render
-// it into a portal to take it out of a clipping parent.
+// An anchored element is still absolutely positioned inside its rendered
+// parent, so the world position is converted into that parent's coordinates.
+// It is hidden while it has no rendered anchor, or while its anchor is
+// scrolled or clipped completely out of view.
 
-import { placeAnchored } from '../schema/anchor';
+import { available, boundary, choosePlacement, intersect, positionAt, type AnchorOptions, type Rect } from '../schema/anchor';
 
 export type Anchoring = ReturnType<typeof createAnchoring>;
 
-export type AnchorSpec = { name: string; position: string; offset: number; at: string };
+export type AnchorSpec = {
+	anchor: Element | null;
+	options: AnchorOptions;
+	/** `width: 'anchor'`, `height: 'anchor'`. */
+	matchWidth: boolean;
+	matchHeight: boolean;
+	/** `maxWidth: 'available'`, `maxHeight: 'available'`. */
+	availableWidth: boolean;
+	availableHeight: boolean;
+};
+
+/** Inline properties the engine sets, and which spec field makes it own each one (always: left/top/visibility). */
+const OWNED: [string, keyof AnchorSpec | null][] = [
+	['left', null],
+	['top', null],
+	['visibility', null],
+	['width', 'matchWidth'],
+	['height', 'matchHeight'],
+	['max-width', 'availableWidth'],
+	['max-height', 'availableHeight']
+];
+
+const rectOf = (r: DOMRect): Rect => ({ x: r.left, y: r.top, width: r.width, height: r.height });
+
+/** The padding box of an element, in viewport coordinates: what it clips its content to. */
+function clipBox(el: Element): Rect {
+	const r = el.getBoundingClientRect();
+	return { x: r.left + el.clientLeft, y: r.top + el.clientTop, width: el.clientWidth, height: el.clientHeight };
+}
 
 export function createAnchoring(host: HTMLElement) {
-	/** Elements by anchor name, in mount order. The first is the anchor; the others are duplicates. */
-	const anchors = new Map<string, HTMLElement[]>();
-	const names = new Map<HTMLElement, string>();
-	const anchored = new Map<HTMLElement, AnchorSpec & { left?: string; top?: string }>();
-	/** Anchored elements already reported as having no anchor, until they get one. */
-	const reported = new Set<HTMLElement>();
+	const anchored = new Map<HTMLElement, AnchorSpec>();
+	/** What the engine last wrote, per element and property. */
+	const written = new Map<HTMLElement, Record<string, string>>();
 	const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => update());
-	const observe = (el: HTMLElement) => {
-		if (anchored.has(el) || names.has(el)) observer?.observe(el);
-		else observer?.unobserve(el);
+	const observed = new Set<Element>();
+
+	/** Observes exactly the anchored elements and their anchors. */
+	const reobserve = () => {
+		const wanted = new Set<Element>();
+		for (const [el, spec] of anchored) {
+			wanted.add(el);
+			if (spec.anchor) wanted.add(spec.anchor);
+		}
+		for (const el of observed) if (!wanted.has(el)) observer?.unobserve(el);
+		for (const el of wanted) if (!observed.has(el)) observer?.observe(el);
+		observed.clear();
+		for (const el of wanted) observed.add(el);
 	};
 
-	/** Places one element. Returns whether it moved. */
-	const place = (el: HTMLElement, spec: AnchorSpec & { left?: string; top?: string }): boolean => {
-		const anchor = anchors.get(spec.name)?.find((a) => a.isConnected);
-		if (!anchor) {
-			el.style.setProperty('visibility', 'hidden');
-			if (!reported.has(el)) {
-				reported.add(el);
-				console.error(`No element with anchorName="${spec.name}" is rendered; the element anchored to it at ${spec.at} is hidden until one is`);
-			}
-			return false;
+	/** Writes a property the engine owns. Returns whether it changed. */
+	const write = (el: HTMLElement, key: string, value: string | null): boolean => {
+		const mine = written.get(el) ?? {};
+		written.set(el, mine);
+		if ((mine[key] ?? null) === value) return false;
+		if (value === null) {
+			el.style.removeProperty(key);
+			delete mine[key];
+		} else el.style.setProperty(key, (mine[key] = value));
+		return true;
+	};
+
+	const viewport = (): Rect => clipBox(host);
+
+	/** Whether any part of the anchor can be seen: inside the viewport and every clipping ancestor. */
+	const inView = (anchor: Element, rect: Rect): boolean => {
+		let visible: Rect | null = intersect(rect, viewport());
+		for (let p = anchor.parentElement; visible && p && p !== host; p = p.parentElement) {
+			const cs = getComputedStyle(p);
+			if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible') visible = intersect(visible, clipBox(p));
 		}
-		reported.delete(el);
-		el.style.removeProperty('visibility');
+		return visible !== null;
+	};
+
+	/** Places one element. Returns whether anything it wrote changed. */
+	const place = (el: HTMLElement, spec: AnchorSpec): boolean => {
+		const anchor = spec.anchor;
 		const parent = (el.offsetParent ?? el.parentElement) as HTMLElement | null;
-		if (!parent) return false;
-		const frame = host.getBoundingClientRect();
-		const viewport = { x: frame.left + host.clientLeft, y: frame.top + host.clientTop, width: host.clientWidth, height: host.clientHeight };
-		const box = el.getBoundingClientRect();
-		const { x, y } = placeAnchored(anchor.getBoundingClientRect(), box, viewport, spec.position, spec.offset);
+		const rect = anchor?.isConnected ? rectOf(anchor.getBoundingClientRect()) : null;
+		if (!anchor || !rect || !parent || !inView(anchor, rect)) return write(el, 'visibility', 'hidden');
+		let changed = write(el, 'visibility', null);
+		const bounds = boundary(viewport(), spec.options.padding);
+		if (spec.matchWidth) changed = write(el, 'width', `${rect.width}px`) || changed;
+		if (spec.matchHeight) changed = write(el, 'height', `${rect.height}px`) || changed;
+		// The placement is chosen for the element's own size, then it gets the room that placement has.
+		if (spec.availableWidth) write(el, 'max-width', null);
+		if (spec.availableHeight) write(el, 'max-height', null);
+		const natural = rectOf(el.getBoundingClientRect());
+		const placement = choosePlacement(rect, natural, bounds, spec.options);
+		let size = natural;
+		if (spec.availableWidth || spec.availableHeight) {
+			const room = available(rect, bounds, placement, spec.options.offset);
+			if (spec.availableWidth) changed = write(el, 'max-width', `${room.width}px`) || changed;
+			if (spec.availableHeight) changed = write(el, 'max-height', `${room.height}px`) || changed;
+			size = rectOf(el.getBoundingClientRect());
+		}
+		const { x, y } = positionAt(rect, size, bounds, placement, spec.options);
 		// left/top are inside the parent's padding box, which scrolls with it.
 		const origin = parent.getBoundingClientRect();
-		const left = `${x - origin.left - parent.clientLeft + parent.scrollLeft}px`;
-		const top = `${y - origin.top - parent.clientTop + parent.scrollTop}px`;
-		if (left === spec.left && top === spec.top) return false;
-		el.style.setProperty('left', (spec.left = left));
-		el.style.setProperty('top', (spec.top = top));
-		return true;
+		changed = write(el, 'left', `${x - origin.left - parent.clientLeft + parent.scrollLeft}px`) || changed;
+		changed = write(el, 'top', `${y - origin.top - parent.clientTop + parent.scrollTop}px`) || changed;
+		return changed;
 	};
 
 	/**
 	 * Places every rendered anchored element. An anchor may itself be inside
 	 * an anchored element, so this repeats (a few times at most) while
-	 * something moved.
+	 * something changed.
 	 */
 	const update = () => {
 		for (let pass = 0; pass < 3; pass++) {
-			let moved = false;
-			for (const [el, spec] of anchored) if (el.isConnected && place(el, spec)) moved = true;
-			if (!moved || anchored.size < 2) return;
+			let changed = false;
+			for (const [el, spec] of anchored) if (el.isConnected && place(el, spec)) changed = true;
+			if (!changed || anchored.size < 2) return;
 		}
 	};
+
 	// Listening only while something is anchored.
 	let listening = false;
 	const listen = (on: boolean) => {
@@ -86,42 +150,24 @@ export function createAnchoring(host: HTMLElement) {
 		update,
 		/** Whether any element is anchored: otherwise nothing needs placing after a render. */
 		active: () => anchored.size > 0,
-		/** Gives `el` an anchor name, or takes it away (null). */
-		name(el: HTMLElement, name: string | null, at: string) {
-			const previous = names.get(el);
-			if (previous === (name ?? undefined)) return;
-			if (previous !== undefined) {
-				const list = anchors.get(previous)!;
-				list.splice(list.indexOf(el), 1);
-				if (!list.length) anchors.delete(previous);
-				names.delete(el);
-			}
-			if (name !== null) {
-				const list = anchors.get(name) ?? [];
-				if (list.length) console.error(`Duplicate anchorName "${name}" (at ${at}); elements anchored to it follow the first one rendered`);
-				list.push(el);
-				anchors.set(name, list);
-				names.set(el, name);
-			}
-			observe(el);
-		},
 		/**
 		 * Anchors `el` (`spec`), or stops (null). `own` is the element's own
-		 * inline CSS, which keeps any left/top it sets.
+		 * inline CSS: a property the engine stops owning is removed unless the
+		 * element's style sets it.
 		 */
 		track(el: HTMLElement, spec: AnchorSpec | null, own: Record<string, string>) {
-			const previous = anchored.get(el);
 			if (spec) {
-				anchored.set(el, previous && previous.name === spec.name ? { ...previous, ...spec } : spec);
+				anchored.set(el, spec);
 				el.setAttribute('data-anchored', '');
-			} else if (previous) {
-				anchored.delete(el);
-				reported.delete(el);
-				el.removeAttribute('data-anchored');
-				el.style.removeProperty('visibility');
-				for (const key of ['left', 'top']) if (!(key in own)) el.style.removeProperty(key);
-			}
-			observe(el);
+			} else if (anchored.delete(el)) el.removeAttribute('data-anchored');
+			const mine = written.get(el) ?? {};
+			for (const [key, field] of OWNED)
+				if (key in mine && !(spec && (field === null || spec[field]))) {
+					delete mine[key];
+					if (!(key in own)) el.style.removeProperty(key);
+				}
+			if (!spec) written.delete(el);
+			reobserve();
 			listen(anchored.size > 0);
 		},
 		dispose() {

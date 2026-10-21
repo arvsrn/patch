@@ -95,7 +95,7 @@ Patch currently supports single-file apps (one `.pat` file) with:
 - Portals: `<portal id="overlay" />` and `portal="overlay"` render an element elsewhere without changing where it belongs
 - `onclick={...}`-style event handlers, `bind:value` on inputs, and `bind:this` for the underlying DOM element
 - Flex layout with fixed, `hug`, and `fill` sizing, and scroll containers (`overflow`, `overflowX`, `overflowY`)
-- Typography, fills, borders, radii, opacity, shadows, and positioning, including elements anchored to another element (`anchor`, `anchorPosition`, `anchorOffset`)
+- Typography, fills, borders, radii, opacity, shadows, and positioning, including elements anchored to another element from `bind:this`, with collision-aware placement and anchor-relative sizing
 - A Vite dev server with live reload, and production builds to a single standalone HTML file
 - Snapshots of any state as editable Figma layers or standalone HTML
 

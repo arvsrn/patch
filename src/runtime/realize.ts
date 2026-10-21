@@ -4,12 +4,18 @@
 // The tree is the rendered tree: an element with `portal="name"` appears
 // where `<portal id="name" />` is, and inherits typography from there, as in
 // the browser. Its getters still run in the scope of where it is declared.
+//
+// `bind:this` variables hold a design-time stand-in for their element (there
+// is no DOM). The template is evaluated twice, so an expression reading one
+// sees the element it ends up holding even when that element comes later in
+// the document, as it does in the browser once everything is mounted.
 
+import { DESIGN_NODE, isDesignNode, type DesignNode } from '../schema/anchor';
 import type { Concrete, Font, Run } from '../schema/concrete';
 import type { ElementNode, InlinePart, Program, ProgramNode } from '../schema/program';
 import { TYPO, type Style } from '../schema/style';
 import { createApi } from './api';
-import { anchorName, eachList, elementStyle, portalName, toText, withId } from './evaluate';
+import { eachList, elementStyle, portalName, toText, withId } from './evaluate';
 import { createReactive } from './reactive';
 
 const DEFAULT_FONT: Font = {
@@ -44,6 +50,9 @@ type Slot = { type: 'slot'; name: string };
 type Portaled = { name: string; at: string; render: (font: Font) => Concrete; done?: Concrete };
 
 class Realizer {
+	/** One stand-in per element, by concrete id, shared by both evaluations. */
+	constructor(private handles: Map<string, DesignNode>) {}
+
 	private portals = new Map<string, { at: string; font: Font }>();
 	private portaled: Portaled[] = [];
 
@@ -85,17 +94,19 @@ class Realizer {
 		const st = elementStyle(d, d.kind);
 		const own = inheritFont(font, st);
 		const attr = (name: string) => (d.attrs[name] ? toText(withId(d.id, d.attrs[name])) : '');
-		const name = d.anchorName ? withId(d.id, () => anchorName(d.anchorName!())) : null;
-		const named = name === null ? {} : { anchorName: name };
-		if (d.kind === 'frame') return { type: 'frame', id, tag: d.tag, style: st, font: own, ...named, children: this.nodes(d.kids, suffix, own) };
-		if (d.kind === 'text') return { type: 'text', id, tag: d.tag, style: st, font: own, ...named, runs: inlineRuns(d.kids, own, [], d.id) };
+		if (d.ref) {
+			let handle = this.handles.get(id);
+			if (!handle) this.handles.set(id, (handle = Object.freeze({ [DESIGN_NODE]: id })));
+			d.ref.set(handle);
+		}
+		if (d.kind === 'frame') return { type: 'frame', id, tag: d.tag, style: st, font: own, children: this.nodes(d.kids, suffix, own) };
+		if (d.kind === 'text') return { type: 'text', id, tag: d.tag, style: st, font: own, runs: inlineRuns(d.kids, own, [], d.id) };
 		return {
 			type: 'input',
 			id,
 			tag: d.kind,
 			style: st,
 			font: own,
-			...named,
 			value: attr('value'),
 			placeholder: attr('placeholder'),
 			inputType: attr('type') || 'text'
@@ -133,31 +144,39 @@ class Realizer {
 	}
 }
 
-/** Every anchor name is rendered once, and every anchored element's anchor is rendered. */
-function checkAnchors(tree: Concrete[]) {
-	const names = new Map<string, string>();
+/**
+ * Each anchored element's `anchor` becomes the concrete id of the element it
+ * refers to, or null when that element is not rendered (or there is none).
+ */
+function resolveAnchors(tree: Concrete[]) {
+	const ids = new Set<string>();
 	const anchored: Concrete[] = [];
 	const walk = (nodes: Concrete[]) => {
 		for (const n of nodes) {
-			if (n.anchorName !== undefined) {
-				const other = names.get(n.anchorName);
-				if (other) throw new Error(`Duplicate anchorName "${n.anchorName}" (at ${other} and ${n.id})`);
-				names.set(n.anchorName, n.id);
-			}
+			ids.add(n.id);
 			if (n.style.anchor !== undefined) anchored.push(n);
 			if (n.type === 'frame') walk(n.children);
 		}
 	};
 	walk(tree);
-	for (const n of anchored)
-		if (!names.has(n.style.anchor)) throw new Error(`No element with anchorName="${n.style.anchor}" is rendered (anchor at ${n.id})`);
+	for (const n of anchored) {
+		const ref = n.style.anchor;
+		const id = isDesignNode(ref) ? ref[DESIGN_NODE] : null;
+		n.style = { ...n.style, anchor: id !== null && ids.has(id) ? id : null };
+	}
 }
 
-/** Runs the program without effects and evaluates the template once. */
+/** Runs the program without effects and evaluates its template (twice, for `bind:this`; see above). */
 export function realize(program: Program, overrides: Record<string, unknown> = {}): Concrete[] {
 	const { api } = createApi(createReactive(), { overrides, design: true });
-	const realizer = new Realizer();
-	const tree = realizer.finish(realizer.nodes(program(api), '', DEFAULT_FONT));
-	checkAnchors(tree);
+	const nodes = program(api);
+	const handles = new Map<string, DesignNode>();
+	const evaluate = () => {
+		const realizer = new Realizer(handles);
+		return realizer.finish(realizer.nodes(nodes, '', DEFAULT_FONT));
+	};
+	evaluate();
+	const tree = evaluate();
+	resolveAnchors(tree);
 	return tree;
 }

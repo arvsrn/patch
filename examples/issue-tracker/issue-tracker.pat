@@ -13,7 +13,7 @@
 	} from './data.ts';
 
 	type MenuKind = 'status' | 'priority' | 'assignee' | 'labels';
-	type Menu = { kind: MenuKind; issueId: number; anchor: string };
+	type Menu = { kind: MenuKind; issueId: number; key: string; trigger?: HTMLElement };
 	type MenuItem = {
 		key: string;
 		label: string;
@@ -45,11 +45,10 @@
 	let menuIndex = $state(0);
 	let newLabelColor = $state(labelColors[6]);
 
-	let searchInput: HTMLInputElement | undefined;
+	let searchInput = $state<HTMLInputElement>();
 	let composerInput = $state<HTMLInputElement>();
 	let menuInput = $state<HTMLInputElement>();
 	let menuEl = $state<HTMLDivElement>();
-	let menuTrigger: Element | undefined;
 
 	const memberById = Object.fromEntries(members.map((m) => [m.id, m]));
 	const statusById = Object.fromEntries(statuses.map((s) => [s.id, s]));
@@ -160,16 +159,16 @@
 		menu = null;
 	}
 
-	function toggleMenu(kind: MenuKind, issueId: number, anchor: string, event: Event) {
+	// `key` tells which button opened the menu; the menu is anchored to that button.
+	function toggleMenu(kind: MenuKind, issueId: number, key: string, event: Event) {
 		event.stopPropagation();
-		if (menu?.anchor === anchor) {
+		if (menu?.key === key) {
 			menu = null;
 			return;
 		}
-		menu = { kind, issueId, anchor };
+		menu = { kind, issueId, key, trigger: event.currentTarget as HTMLElement };
 		menuQuery = '';
 		menuIndex = 0;
-		menuTrigger = event.currentTarget as Element;
 	}
 
 	function choose(patch: Partial<Issue>) {
@@ -226,7 +225,7 @@
 	$effect(() => {
 		const onPointerDown = (event: PointerEvent) => {
 			const target = event.target as Node;
-			if (!menu || menuEl?.contains(target) || menuTrigger?.contains(target)) return;
+			if (!menu || menuEl?.contains(target) || menu.trigger?.contains(target)) return;
 			menu = null;
 		};
 		window.addEventListener('pointerdown', onPointerDown);
@@ -425,12 +424,15 @@
 
 	const menuBox = $style({
 		position: 'absolute',
+		anchorPadding: 8,
 		width: 248,
+		maxHeight: 'available',
 		borderRadius: 10,
 		borderWidth: 1,
 		borderColor: line,
 		background: '#ffffff',
-		overflow: 'hidden',
+		overflowX: 'hidden',
+		overflowY: 'auto',
 		color: ink,
 		fontSize: 13,
 		shadow: [
@@ -574,8 +576,7 @@
 							>
 								<div style={[row, { width: 'fill', gap: 8 }]}>
 									<button
-										anchorName={`status-${issue.id}`}
-										style={[iconButton, { width: 18, height: 18 }, menu?.anchor === `status-${issue.id}` && propertyOpen]}
+										style={[iconButton, { width: 18, height: 18 }, menu?.key === `status-${issue.id}` && propertyOpen]}
 										onclick={(e: Event) => toggleMenu('status', issue.id, `status-${issue.id}`, e)}
 									>
 										<div style={ring(issue.status)}>
@@ -589,7 +590,6 @@
 									<p style={{ color: faint, fontSize: 12, fontWeight: 500 }}>{key(issue.id)}</p>
 									<div style={spacer}></div>
 									<button
-										anchorName={`assignee-${issue.id}`}
 										style={{ borderRadius: 11 }}
 										onclick={(e: Event) => toggleMenu('assignee', issue.id, `assignee-${issue.id}`, e)}
 									>
@@ -612,8 +612,7 @@
 								</p>
 								<div style={[row, { width: 'fill', gap: 6, flexWrap: 'wrap' }]}>
 									<button
-										anchorName={`priority-${issue.id}`}
-										style={[pill, { padding: [3, 5] }, menu?.anchor === `priority-${issue.id}` && propertyOpen]}
+										style={[pill, { padding: [3, 5] }, menu?.key === `priority-${issue.id}` && propertyOpen]}
 										onclick={(e: Event) => toggleMenu('priority', issue.id, `priority-${issue.id}`, e)}
 									>
 										{#if issue.priority === 1}
@@ -630,7 +629,6 @@
 									</button>
 									{#if issue.labels.length > 0}
 										<button
-											anchorName={`labels-${issue.id}`}
 											style={[row, { gap: 6, flexWrap: 'wrap', borderRadius: 999 }]}
 											onclick={(e: Event) => toggleMenu('labels', issue.id, `labels-${issue.id}`, e)}
 										>
@@ -682,8 +680,7 @@
 					<div style={property}>
 						<p style={propertyLabel}>Status</p>
 						<button
-							anchorName="panel-status"
-							style={[propertyButton, menu?.anchor === 'panel-status' && propertyOpen]}
+							style={[propertyButton, menu?.key === 'panel-status' && propertyOpen]}
 							onclick={(e: Event) => toggleMenu('status', selected!.id, 'panel-status', e)}
 						>
 							<div style={ring(selected.status)}>
@@ -700,8 +697,7 @@
 					<div style={property}>
 						<p style={propertyLabel}>Priority</p>
 						<button
-							anchorName="panel-priority"
-							style={[propertyButton, menu?.anchor === 'panel-priority' && propertyOpen]}
+							style={[propertyButton, menu?.key === 'panel-priority' && propertyOpen]}
 							onclick={(e: Event) => toggleMenu('priority', selected!.id, 'panel-priority', e)}
 						>
 							{#if selected.priority === 1}
@@ -722,8 +718,7 @@
 					<div style={property}>
 						<p style={propertyLabel}>Assignee</p>
 						<button
-							anchorName="panel-assignee"
-							style={[propertyButton, menu?.anchor === 'panel-assignee' && propertyOpen]}
+							style={[propertyButton, menu?.key === 'panel-assignee' && propertyOpen]}
 							onclick={(e: Event) => toggleMenu('assignee', selected!.id, 'panel-assignee', e)}
 						>
 							{#if selected.assignee}
@@ -746,8 +741,7 @@
 								</div>
 							{/each}
 							<button
-								anchorName="panel-labels"
-								style={[pill, { padding: [3, 9], fontSize: 12, color: muted }, menu?.anchor === 'panel-labels' && chipActive]}
+								style={[pill, { padding: [3, 9], fontSize: 12, color: muted }, menu?.key === 'panel-labels' && chipActive]}
 								onclick={(e: Event) => toggleMenu('labels', selected!.id, 'panel-labels', e)}
 							>
 								{selected.labels.length ? 'Edit' : '+ Add label'}
@@ -769,7 +763,14 @@
 		<div
 			portal="overlay"
 			bind:this={menuEl}
-			style={[menuBox, { anchor: menu.anchor, anchorPosition: menu.anchor.startsWith('assignee-') || menu.anchor === 'panel-labels' ? 'bottom-end' : 'bottom-start', anchorOffset: 6 }]}
+			style={[
+				menuBox,
+				{
+					anchor: menu.trigger,
+					anchorPosition: menu.key.startsWith('assignee-') || menu.key === 'panel-labels' ? 'bottom-end' : 'bottom-start',
+					anchorOffset: 6
+				}
+			]}
 		>
 			<div style={[row, { width: 'fill', gap: 8, padding: [9, 12] }]}>
 				<input

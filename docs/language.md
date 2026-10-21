@@ -235,7 +235,7 @@ Elements accept only these attributes, plus `style=` and event handlers (`on…`
 | `<button>` | `disabled` |
 | `<input>` | `value`, `placeholder`, `disabled`, `type` |
 | `<textarea>` | `value`, `placeholder`, `disabled` |
-| every element except inline spans | [`portal`](#portals), [`anchorName`](#anchored-positioning) |
+| every element except inline spans | [`portal`](#portals) |
 | `<portal>` | only a static `id` |
 
 You can write an attribute value in these forms:
@@ -364,11 +364,11 @@ These are not supported: `{#await}`, `{#key}`, `{#snippet}`, `{@render}`, `{@htm
 {/if}
 ```
 
-- `bind:this` works on any element except an inline span. Its target must be a **top-level `let` identifier**, either plain or `$state`. A `const`, a derived value, a member (`refs.input`), or an each item is not allowed. You can combine it with `bind:value`.
+- `bind:this` works on any element except an inline span. Its target must be a **top-level `$state` variable**, such as `let input = $state<HTMLInputElement>()`. Patch writes the element into it as the element mounts and unmounts, so it changes like any state, and expressions, styles and effects that read it update. A plain `let`, a `const`, a derived value, a member (`refs.input`), or an each item is not allowed. You can combine it with `bind:value`.
 - The variable holds the element while the element is mounted. Before the element mounts and after it unmounts, it holds `undefined`. When an `{#if}` branch is destroyed, its elements unmount; when an `{#each}` item is removed, its elements unmount.
-- It is set as the element mounts, during the render that follows a state change, which is **after** the event handler that made the change returns (see [Batching](#batching)). So in `open = true; input?.focus()`, the input does not exist yet. To act on a newly mounted element, bind a `$state` variable and read it in an `$effect`, as above. A plain `let` is not reactive; use it for elements that you only reach from handlers once they exist.
+- It is set as the element mounts, during the render that follows a state change, which is **after** the event handler that made the change returns (see [Batching](#batching)). So in `open = true; input?.focus()`, the input does not exist yet. To act on a newly mounted element, read the variable in an `$effect`, as above.
 - If several mounted elements bind the same variable, for example one in each `{#each}` item, it holds the most recently mounted one. When that element unmounts, the variable becomes `undefined`, even if others are still mounted.
-- In TS, the variable must accept the element's type and `undefined`: `$state<HTMLInputElement>()` or `let input: HTMLInputElement | undefined`. A type that rejects `undefined`, such as `HTMLInputElement | null`, is a type error. Each tag is typed as follows:
+- In TS, the variable must accept the element's type and `undefined`, as `$state<HTMLInputElement>()` does. A type that rejects `undefined`, such as `let input: HTMLInputElement | null = $state(null)`, is a type error. Each tag is typed as follows:
 
   | Tag | Type |
   | --- | --- |
@@ -380,7 +380,7 @@ These are not supported: `{#await}`, `{#key}`, `{#snippet}`, `{@render}`, `{@htm
   | `<input>` | `HTMLInputElement` |
   | `<textarea>` | `HTMLTextAreaElement` |
 - The [DOM rendering rules](#supported-jsts) still apply to the element: `input.focus()`, `input.select()`, and `input.value` are fine, but `input.querySelector(…)`, `input.getBoundingClientRect()`, and `input.style.color = …` are compile errors.
-- Figma snapshots have no DOM, so the variable stays `undefined`.
+- Figma snapshots have no DOM. There the variable holds an opaque stand-in for the element, so it can be an [`anchor`](#anchored-positioning); it has none of an element's API.
 
 No other bindings exist (`bind:checked`, `bind:group`, …).
 
@@ -437,7 +437,7 @@ The merge rules are:
    [{ position: 'absolute', left: 4 }, { position: 'flow' }, { position: 'absolute' }] // { position: 'absolute' }
    [{ position: 'absolute', left: 4 }, { position: 'absolute', top: 2 }]              // keeps left: 4
    ```
-   One object that sets `position: 'flow'` together with `left`, `top` or `anchor` is an error.
+   One object that sets `position: 'flow'` together with `left`, `top` or `anchor` is an error. Unlike other properties, a nullish `anchor` is kept, and overrides an earlier one (see [Anchored positioning](#anchored-positioning)).
 6. [Combination rules](#combination-rules) are checked on the **merged** result, so `[row, { justifyContent: 'space-between', gap: 0 }]` is valid even if `row` sets a gap.
 
 Strings are never styles. A string or template literal in a style position is a compile error, and that includes `''`. For example, `cond ? card : ''` fails. Use `false` or `null` instead.
@@ -488,16 +488,20 @@ Units are pixels. All numbers must be finite.
 
 | Property | Values | Default |
 | --- | --- | --- |
-| `width`, `height` | *size* | `'hug'` |
-| `minWidth`, `maxWidth`, `minHeight`, `maxHeight` | *px* | none |
+| `width`, `height` | *size*, or `'anchor'` (the anchor's width or height; [anchored](#anchored-positioning) elements only) | `'hug'` |
+| `minWidth`, `minHeight` | *px* | none |
+| `maxWidth`, `maxHeight` | *px*, or `'available'` (the room at the anchored placement; [anchored](#anchored-positioning) elements only) | none |
 | `margin` | *num* or `'auto'`; or `[vertical, horizontal]`; or `[top, right, bottom, left]` | `0` |
 | `marginTop`, `marginRight`, `marginBottom`, `marginLeft` | *num* or `'auto'` | `0` |
 | `alignSelf` | `'start'`, `'center'`, `'end'` | parent's `alignItems` |
 | `position` | `'flow'`, `'absolute'` | `'flow'` |
 | `left`, `top` | *num* | none |
-| `anchor` | the `anchorName` of another element (non-empty string) | none |
-| `anchorPosition` | `'top'`, `'top-start'`, `'top-end'`, `'right'`, `'right-start'`, `'right-end'`, `'bottom'`, `'bottom-start'`, `'bottom-end'`, `'left'`, `'left-start'`, `'left-end'` | `'bottom'` |
+| `anchor` | an element from `bind:this` (or `null`/`undefined`: none yet) | none |
+| `anchorPosition` | a *placement*: `'top'`, `'top-start'`, `'top-end'`, `'right'`, `'right-start'`, `'right-end'`, `'bottom'`, `'bottom-start'`, `'bottom-end'`, `'left'`, `'left-start'`, `'left-end'` | `'bottom'` |
 | `anchorOffset` | *num* | `0` |
+| `anchorCrossOffset` | *num* | `0` |
+| `anchorPadding` | *px*; or `[vertical, horizontal]`; or `[top, right, bottom, left]` | `0` |
+| `anchorFallbacks` | an array of *placements* | the opposite side |
 | `opacity` | number from 0 to 1 | `1` |
 
 ### Paint (containers, inputs)
@@ -547,7 +551,7 @@ These are checked on the merged style, by the compiler where the outcome is cert
 - `justifyContent: 'space-between'` cannot be combined with a non-zero `gap`, or with `flexWrap: 'wrap'`.
 - `left` and `top` require `position: 'absolute'`.
 - `overflowX: 'visible'` cannot be combined with any other `overflowY`, and the other way around.
-- `anchor` requires `position: 'absolute'`, and cannot be combined with `left`, `top` or a non-zero margin. `anchorPosition` and `anchorOffset` require `anchor`.
+- `anchor` requires `position: 'absolute'`, and cannot be combined with `left`, `top` or a non-zero margin. The other anchor properties, `width`/`height: 'anchor'` and `maxWidth`/`maxHeight: 'available'` require `anchor`.
 - An absolute element cannot use `'fill'` for `width` or `height`.
 - `<input>` needs `width` set to a number or `'fill'`. `<textarea>` needs both `width` and `height` set to a number or `'fill'`. A bare `<input />` is a compile error.
 
@@ -626,25 +630,45 @@ A child sized by its content this way is a hugging parent to its own children, s
 
 ### Anchored positioning
 
-An absolute element can be anchored to another element: its position is derived from where that element is rendered, wherever the two are in the tree. Give the anchor a name with `anchorName=`, and refer to it with the `anchor` style property:
+An absolute element can be anchored to another element: its position is derived from where that element is rendered, wherever the two are in the tree and whatever their rendered parents are. The anchor is an element from [`bind:this`](#bindthis), given in the `anchor` style property:
 
 ```svelte
-<button anchorName="labels" onclick={() => (open = !open)}>Labels</button>
+<script lang="ts">
+	let open = $state(false);
+	let trigger = $state<HTMLButtonElement>();
+</script>
+<button bind:this={trigger} onclick={() => (open = !open)}>Labels</button>
 {#if open}
-	<div portal="overlay" style={{ position: 'absolute', anchor: 'labels', anchorPosition: 'bottom-start', anchorOffset: 4 }}>…</div>
+	<div
+		portal="overlay"
+		style={{
+			position: 'absolute',
+			anchor: trigger,
+			anchorPosition: 'bottom-start',
+			anchorOffset: 6,
+			anchorPadding: 8,
+			width: 'anchor',
+			maxHeight: 'available',
+			overflowY: 'auto'
+		}}
+	>…</div>
 {/if}
 ```
 
-- `anchorPosition` is the side of the anchor the element goes on, and how it lines up along that side: `'bottom-start'` puts it below the anchor with their start (left) edges aligned, `'bottom-end'` aligns their end edges, and `'bottom'` centers it. `'left-start'` puts it to the left with their top edges aligned, and so on. `anchorOffset` is the gap between the two.
-- The position follows the anchor's rendered box and the element's own size. It stays correct when either one moves or changes size, when the layout reflows, when the viewport resizes, and when anything scrolls. You never measure or listen for anything yourself.
-- **Collisions.** When the element does not fit in the viewport on its side, it moves to the opposite side if there is more room there. Along the side, it is then shifted to stay inside the viewport; an element larger than the viewport keeps its start edge visible.
+- **Placement.** `anchorPosition` is the side of the anchor the element goes on, and how it lines up along that side: `'bottom-start'` puts it below with their start (left) edges aligned, `'bottom-end'` aligns their end edges, and `'bottom'` centers it. `'left-start'` puts it on the left with their top edges aligned, and so on. `anchorOffset` is the gap between the two along the main axis (below, for `'bottom-start'`). `anchorCrossOffset` moves it along the other axis from where it lines up (right, for `'bottom-start'`; negative values move it the other way).
+- **Collisions.** The element stays inside the viewport inset by `anchorPadding`, the *boundary*. Two things happen, in this order:
+  - *Flip:* the placements are tried in order, `anchorPosition` first, then `anchorFallbacks`. The first one where the element fits along its main axis wins. When none fits, the one with the most room along its main axis wins, the earliest among equals. Without `anchorFallbacks`, the fallback is the opposite side with the same alignment (`'bottom-start'` falls back to `'top-start'`). `anchorFallbacks: []` never flips.
+  - *Shift:* along the side, the element is moved to stay inside the boundary instead of flipping. An element larger than the boundary keeps its start edge inside. The main axis is never shifted, so an element that fits on no side overflows on its chosen side; give it `maxWidth`/`maxHeight: 'available'` to keep it in.
+  - The same geometry and options always give the same result.
+- **Sizing.** `width: 'anchor'` and `height: 'anchor'` match the anchor's current width and height. `maxWidth: 'available'` and `maxHeight: 'available'` limit the element to the room it has at the chosen placement: along the main axis, from the anchor (past `anchorOffset`) to the boundary; across it, the whole boundary. The placement is chosen for the element's size without that limit.
+- **Updates.** The position and sizes follow the anchor's rendered box and the element's own size, and stay correct when either one moves or changes size, when the layout reflows, when the viewport resizes, when anything scrolls, and when the element moves to another portal. You never measure or listen for anything yourself, and there is nothing to turn on.
+- **Detachment.** While the anchor is not rendered, or is scrolled or clipped completely out of view (by the viewport or a clipping ancestor such as a scroll container), the anchored element is hidden. It comes back when the anchor does.
+- **The reference.** `anchor` takes an element from `bind:this`, or an element from an event saved in `$state` (`menu = { trigger: event.currentTarget as HTMLElement }`), which is how one menu anchors to whichever button opened it. A nullish `anchor` means "anchored to nothing yet": the element is hidden. Unlike other properties, it is kept when nullish, so the anchor rules still apply and it overrides an earlier `anchor`. A `bind:this` variable is state, so the style is evaluated again when the anchor mounts, even when it comes after the anchored element.
 - Anchoring works with or without a [portal](#portals). The element is still absolutely positioned inside its rendered parent, so it scrolls with that parent and is clipped by it (`overflow: 'hidden'`). To float above everything and escape clipping, render it into a portal at the end of the app, as above.
-- `anchorName=` works on every element except an inline span, and can be an expression. A nullish or `false` value gives the element no name. A name must be rendered at most once at a time; inside `{#each}`, compute one per item, such as ``anchorName={`row-${row.id}`}``.
-- When the anchor is not rendered, the anchored element is hidden until it is. The browser logs an error. A snapshot fails, and so does a snapshot with two elements of the same `anchorName`.
 
-These are compile errors: two static `anchorName`s with the same name that can be rendered at the same time, a static `anchorName` repeated by `{#each}` (directly, not inside an `{#if}` in the item), a bare `anchorName`, and a literal `anchor: 'name'` when no element in the app has that `anchorName` (unless some `anchorName` is computed).
+These are compile errors: `anchor` without `position: 'absolute'`, the other anchor properties without `anchor`, an unknown placement in `anchorPosition` or `anchorFallbacks`, `width`/`height: 'anchor'` or `maxWidth`/`maxHeight: 'available'` without `anchor`, and an `anchor` that certainly is not an element: a literal such as `anchor: 'trigger'`, or a name whose every value is one (`const`, or a `$state` with a literal initial value that is never set to an element).
 
-In the browser, Patch places anchored elements itself instead of using CSS anchor positioning, so that the browser and Figma snapshots use the same geometry. In a Figma snapshot the viewport is the 1280 × 800 frame.
+In the browser, Patch places anchored elements itself instead of using CSS anchor positioning, so that the browser and Figma snapshots use the same geometry. In a Figma snapshot, the viewport is the 1280 × 800 frame, a `bind:this` anchor resolves to its element, and an anchored element whose anchor is missing or out of view is left out. An anchor saved from an event has no value in a snapshot, so its element is left out too.
 
 ### The root
 

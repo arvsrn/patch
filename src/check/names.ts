@@ -1,12 +1,11 @@
-// App-wide names: portal ids and anchor names. A name links two places in the
-// app that may be far apart, so these checks see the whole app at once:
+// App-wide names: portal ids. A name links two places in the app that may be
+// far apart, so these checks see the whole app at once:
 // names that cannot resolve, declarations that can be rendered twice at the
 // same time, and an element that would render into itself.
 
-import { literal, NOT_STATIC, propertyName } from '../ast';
+import { literal, NOT_STATIC } from '../ast';
 import type { Reporter, Span } from '../diagnostics';
 import type { AttributeValue, If, TemplateNode } from '../ir';
-import type { Styles } from '../styles';
 
 /**
  * Where a node sits: the `{#if}` branches leading to it, and whether a
@@ -14,7 +13,7 @@ import type { Styles } from '../styles';
  */
 type Site = { branches: [If, number][]; repeated: boolean };
 
-/** A name declared once in the template, by `<portal id>` or `anchorName=`. */
+/** A name declared once in the template, by `<portal id>`. */
 type Declaration = { name: string; span: Span; site: Site };
 
 /** `"name"` or `{"name"}`: the string, null when it is computed, or true for a bare attribute. */
@@ -37,11 +36,9 @@ function duplicates(declarations: Declaration[], describe: (name: string) => str
 	});
 }
 
-export function checkNames(template: TemplateNode[], styles: Styles, reporter: Reporter) {
+export function checkNames(template: TemplateNode[], reporter: Reporter) {
 	const portals: Declaration[] = [];
 	const portalUses: { name: string; span: Span }[] = [];
-	const anchors: Declaration[] = [];
-	let computedAnchor = false;
 
 	// `into`: static portal names of the enclosing elements.
 	const walk = (nodes: TemplateNode[], site: Site, into: string[]) => {
@@ -53,16 +50,10 @@ export function checkNames(template: TemplateNode[], styles: Styles, reporter: R
 			} else if (node.type === 'element') {
 				let inner = into;
 				for (const a of node.attributes) {
-					if (a.type !== 'attribute' || (a.name !== 'portal' && a.name !== 'anchorName')) continue;
+					if (a.type !== 'attribute' || a.name !== 'portal') continue;
 					const name = staticValue(a.value);
-					if (name === true || name === '') reporter.report(a.nameSpan, `${a.name} needs a name: ${a.name}="name"`);
-					else if (a.name === 'anchorName') {
-						if (name === null) computedAnchor = true;
-						else {
-							anchors.push({ name, span: a.span, site });
-							if (site.repeated) reporter.report(a.span, `anchorName="${name}" repeated by {#each} gives every item the same name; compute one per item, e.g. anchorName={\`row-\${item.id}\`}`);
-						}
-					} else if (name !== null) {
+					if (name === true || name === '') reporter.report(a.nameSpan, 'portal needs a name: portal="name"');
+					else if (name !== null) {
 						portalUses.push({ name, span: a.span });
 						inner = [...into, name];
 					}
@@ -79,17 +70,4 @@ export function checkNames(template: TemplateNode[], styles: Styles, reporter: R
 	duplicates(portals, (name) => `<portal id="${name}">`, reporter);
 	const declaredPortals = new Set(portals.map((p) => p.name));
 	for (const use of portalUses) if (!declaredPortals.has(use.name)) reporter.report(use.span, `no <portal id="${use.name}"> in the app`);
-
-	duplicates(anchors, (name) => `anchorName="${name}"`, reporter);
-	if (computedAnchor) return;
-	const declaredAnchors = new Set(anchors.map((a) => a.name));
-	const reported = new Set();
-	for (const { object } of styles.uses)
-		for (const p of object.properties) {
-			if (p.type !== 'Property' || p.computed || propertyName(p) !== 'anchor' || reported.has(p)) continue;
-			const name = literal(p.value);
-			if (typeof name !== 'string' || !name || declaredAnchors.has(name)) continue;
-			reported.add(p);
-			reporter.report(p.value, `no element with anchorName="${name}" in the app`);
-		}
 }

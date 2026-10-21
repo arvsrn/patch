@@ -48,8 +48,6 @@ type ElementBase = {
 	ref: { get: Getter; set: (node: unknown) => void } | null;
 	/** `portal="name"`: the portal it renders into; a nullish or `false` value renders it in place. */
 	portal: Getter | null;
-	/** `anchorName="name"`: the name anchored elements refer to it by; a nullish or `false` value gives it none. */
-	anchorName: Getter | null;
 };
 export type FrameElement = ElementBase & { kind: 'frame'; kids: ProgramNode[] };
 export type TextElement = ElementBase & { kind: 'text'; kids: InlinePart[] };
