@@ -476,6 +476,7 @@ Each axis of each element is sized one of three ways:
 - **Fixed** (a number): exactly that many pixels. Padding is included, so `width: 100, padding: 10` leaves 80 for content.
 - **`hug`** (the default): the size of the content plus padding.
   - Text that hugs its width stays on one line and never wraps. It breaks only at `\n` characters in expression values. If the parent is too narrow, it overflows.
+  - An `<input>` or `<textarea>` that ends up hugging (see below: it cannot be authored as `hug`) is the size of what it shows: its value (masked as `•` for passwords), else its placeholder, measured like text, plus padding. A textarea's height is its lines, wrapped at its width. The size follows the value as it changes.
 - **`fill`**:
   - On the parent's **main axis**: the element takes an equal share of the space left after fixed and hugging siblings and gaps.
   - On the parent's **cross axis**: the element stretches to the parent's inner size. This overrides `alignSelf` and `alignItems` for that axis.

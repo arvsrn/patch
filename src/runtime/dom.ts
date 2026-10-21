@@ -14,6 +14,8 @@ html,body{margin:0;padding:0}
 [data-p=frame]{display:flex;flex-direction:column;align-items:flex-start;align-content:flex-start}
 [data-dir=row]{flex-direction:row}
 [data-p=input],[data-p=textarea]{display:block;resize:none;overflow:hidden}
+[data-p=input][data-w=hug],[data-p=textarea][data-w=hug]{width:var(--hug-w)}
+[data-p=textarea][data-h=hug]{height:var(--hug-h)}
 [data-p=input]::placeholder,[data-p=textarea]::placeholder{color:currentColor;opacity:.5}
 [data-p=text]{display:block;white-space:pre}
 [data-p=text][data-w=fixed],[data-p=text][data-w=fill]{white-space:pre-wrap}
@@ -86,6 +88,41 @@ function resolveSizing(frame: Element, w: Sizing, h: Sizing) {
 		if (k.getAttribute('data-w') !== kw) k.setAttribute('data-w', kw);
 		if (k.getAttribute('data-h') !== kh) k.setAttribute('data-h', kh);
 		if (k.getAttribute('data-p') === 'frame') resolveSizing(k, kw, kh);
+		else if (k.getAttribute('data-p') === 'input') sizeControl(k as HTMLInputElement, kw === 'hug', false);
+		else if (k.getAttribute('data-p') === 'textarea') sizeControl(k as HTMLTextAreaElement, kw === 'hug', kh === 'hug');
+	}
+}
+
+let mirror: HTMLElement | null = null;
+
+/**
+ * The content size of a form control that hugs, as for any text: what it
+ * shows (its value, masked for passwords, else its placeholder) at its
+ * font, plus padding. Width is the widest line, unwrapped; a textarea's
+ * height is its lines, wrapped at its width unless the width hugs too.
+ * Browsers would size such a control by its `size`/`rows` instead.
+ */
+function sizeControl(el: HTMLInputElement | HTMLTextAreaElement, width: boolean, height: boolean) {
+	if (!width) el.style.removeProperty('--hug-w');
+	if (!height) el.style.removeProperty('--hug-h');
+	if (!width && !height) return;
+	const cs = getComputedStyle(el);
+	const px = (v: string) => parseFloat(v) || 0;
+	const shown = el.value ? (el.type === 'password' ? '•'.repeat(el.value.length) : el.value) : el.placeholder;
+	if (!mirror) {
+		mirror = document.createElement('div');
+		mirror.setAttribute('aria-hidden', 'true');
+	}
+	if (!mirror.isConnected) document.body.appendChild(mirror);
+	mirror.style.cssText = `position:absolute;left:-99999px;top:0;visibility:hidden;margin:0;padding:0;border:0;font-family:${cs.fontFamily};font-size:${cs.fontSize};font-weight:${cs.fontWeight};font-style:${cs.fontStyle};font-feature-settings:${cs.fontFeatureSettings};letter-spacing:${cs.letterSpacing};line-height:${cs.lineHeight};white-space:pre`;
+	mirror.textContent = shown;
+	if (width) el.style.setProperty('--hug-w', `${mirror.getBoundingClientRect().width + px(cs.paddingLeft) + px(cs.paddingRight)}px`);
+	if (height) {
+		if (!width) {
+			mirror.style.whiteSpace = 'pre-wrap';
+			mirror.style.width = `${el.clientWidth - px(cs.paddingLeft) - px(cs.paddingRight)}px`;
+		}
+		el.style.setProperty('--hug-h', `${mirror.getBoundingClientRect().height + px(cs.paddingTop) + px(cs.paddingBottom)}px`);
 	}
 }
 
@@ -156,7 +193,14 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 		el.setAttribute('data-p', kind);
 		if (d.style || kind !== 'inline') bindStyle(el, d, kind);
 		if (d.t === 'el') {
-			for (const [name, value] of Object.entries(d.attrs)) effect(() => setAttribute(el, name, withId(d.id, value)));
+			const control = kind === 'input' || kind === 'textarea';
+			for (const [name, value] of Object.entries(d.attrs))
+				effect(() => {
+					setAttribute(el, name, withId(d.id, value));
+					// What a control shows is its content size.
+					if (control) resizeLater();
+				});
+			if (control) el.addEventListener('input', resizeLater);
 			for (const [name, handler] of Object.entries(d.on))
 				el.addEventListener(name, (event: Event) => {
 					interact();
@@ -292,5 +336,10 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 	target.setAttribute('data-dir', 'column');
 	target.setAttribute('data-host', '');
 	batch(() => within(root, null, () => mountNodes(program(api), target, null)));
-	return () => dispose(root);
+	// Content sizes measured before a web font loads are re-measured with it.
+	document.fonts?.addEventListener('loadingdone', resizeLater);
+	return () => {
+		document.fonts?.removeEventListener('loadingdone', resizeLater);
+		dispose(root);
+	};
 }
