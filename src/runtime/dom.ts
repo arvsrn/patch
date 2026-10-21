@@ -20,7 +20,6 @@ html,body{margin:0;padding:0}
 [data-p=inline]{display:inline}
 [data-dir=row]>[data-w=fill],[data-dir=column]>[data-h=fill]{flex:1 1 0}
 [data-dir=row]>[data-h=fill],[data-dir=column]>[data-w=fill]{align-self:stretch!important}
-[data-dir=row]>[data-p=frame][data-w=hug]{flex-shrink:1}
 button[data-p]{cursor:pointer}
 [data-host]{width:100vw;height:100vh;overflow:auto;background:#fff;font-family:"Inter";font-size:16px;font-weight:400;font-style:normal;line-height:1.2;letter-spacing:0;color:#000;text-align:start}
 `;
