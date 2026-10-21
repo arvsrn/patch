@@ -192,6 +192,8 @@ class Compiler {
 	private stateIds = new Map<any, string>();
 	private styles = createRuntime({}, true);
 	state: StateInfo[] = [];
+	/** Every style object literal checked, with the element kind it was checked for. */
+	styleObjects: { node: any; kind: string }[] = [];
 
 	constructor(private source: string, private filename: string) {
 		this.edits = new Edits(source);
@@ -557,6 +559,7 @@ class Compiler {
 		if (!expr) return;
 		switch (expr.type) {
 			case 'ObjectExpression':
+				this.styleObjects.push({ node: expr, kind: kind ?? 'frame' });
 				for (const p of expr.properties) {
 					if (p.type !== 'Property' || p.computed) continue;
 					const key = p.key.name ?? String(p.key.value);
@@ -798,6 +801,70 @@ export function analyze(source: string, options: { filename?: string } = {}): An
 	return new Compiler(source, options.filename ?? 'app.pat').run(false);
 }
 
+export type Completion = {
+	label: string;
+	kind: 'property' | 'value';
+	detail?: string;
+	/** Text to insert when it differs from `label`. */
+	insertText?: string;
+};
+
+const HOLE = '$$complete';
+const STYLE_SCHEMA = createRuntime({}, true);
+
+/**
+ * Style completion at `offset`: property names inside a style object, or the
+ * string literals a property accepts after `key:`. The incomplete construct
+ * under the cursor is patched into valid syntax and the compiler re-runs, so
+ * which objects are styles, and for which element kind, comes from the same
+ * checks that produce diagnostics. Anywhere else this returns nothing.
+ */
+export function complete(source: string, offset: number, options: { filename?: string } = {}): Completion[] {
+	const before = source.slice(0, offset);
+	const after = source.slice(offset);
+	const value = /[A-Za-z_$][\w$]*\s*:\s*(['"]?)[\w-]*$/.exec(before);
+	const keyPrefix = /[\w$]*$/.exec(before)![0];
+	if (!value && !/[{,]$/.test(before.slice(0, offset - keyPrefix.length).trimEnd())) return [];
+
+	const quote = value?.[1] ?? '';
+	const start = value ? offset - value[0].length + value[0].search(/['"\w-]*$/) : offset - keyPrefix.length;
+	const end = offset + (value ? new RegExp(quote ? `^[\\w-]*${quote}?` : '^[\\w$-]*') : /^[\w$]*/).exec(after)![0].length;
+	const rest = source.slice(end);
+	const comma = /^\s*[,}]/.test(rest) ? '' : ',';
+	const hole = value ? `0${comma}` : /^\s*:/.test(rest) ? HOLE : `${HOLE}: 0${comma}`;
+
+	const compiler = new Compiler(source.slice(0, start) + hole + rest, options.filename ?? 'app.pat');
+	compiler.run(false);
+	const kinds = new Set<string>();
+	let object: any;
+	let property: any;
+	for (const record of compiler.styleObjects) {
+		const p = record.node.properties.find((p: any) => p.type === 'Property' && !p.computed && (value ? p.value : p.key).start === start);
+		if (!p) continue;
+		[object, property] = [record.node, p];
+		kinds.add(record.kind);
+	}
+	if (!property) return [];
+
+	// A `$style` const is checked where it is declared and again for every
+	// element using it; only what is legal everywhere is offered.
+	const [first, ...others] = [...kinds].map((kind) => STYLE_SCHEMA.styleProperties(kind));
+	const legal = first.filter((p) => others.every((list) => list.some((q) => q.name === p.name)));
+	const keyName = (p: any) => p.key.name ?? String(p.key.value);
+
+	if (value) {
+		const name = keyName(property);
+		return (legal.find((p) => p.name === name)?.values ?? []).map((v) => ({
+			label: v,
+			kind: 'value',
+			detail: name,
+			...(quote ? {} : { insertText: `'${v}'` })
+		}));
+	}
+	const present = new Set(object.properties.filter((p: any) => p !== property && p.type === 'Property' && !p.computed).map(keyName));
+	return legal.filter((p) => !present.has(p.name)).map((p) => ({ label: p.name, kind: 'property', detail: p.hint }));
+}
+
 /** Validation plus code generation. Throws a CompileError listing every diagnostic. */
 export function compile(source: string, filename = 'app.pat'): Compiled {
 	const result = new Compiler(source, filename).run(true);
@@ -807,7 +874,17 @@ export function compile(source: string, filename = 'app.pat'): Compiled {
 
 /** A standalone HTML document that runs the app. */
 export function toHtml(compiled: Compiled, title = 'App'): string {
-	const script = `const createRuntime = ${createRuntime.toString()};\nconst program = ${compiled.program};\ncreateRuntime().mount(program, document.getElementById("app"));`;
+	const script = `const createRuntime = ${createRuntime.toString()};\n${mountScript(compiled)}`;
+	return htmlPage(title, `<script type="module">\n${script.replace(/<\/script/gi, '<\\/script')}\n</script>`);
+}
+
+/** Mounts the compiled program into #app; expects `createRuntime` in scope. */
+export function mountScript(compiled: Compiled): string {
+	return `const program = ${compiled.program};\ncreateRuntime().mount(program, document.getElementById("app"));`;
+}
+
+/** The host document: fonts, the #app element, and the given script tag. */
+export function htmlPage(title: string, script: string): string {
 	return `<!doctype html>
 <html>
 <head>
@@ -819,9 +896,7 @@ export function toHtml(compiled: Compiled, title = 'App'): string {
 </head>
 <body>
 <div id="app"></div>
-<script type="module">
-${script.replace(/<\/script/gi, '<\\/script')}
-</script>
+${script}
 </body>
 </html>
 `;

@@ -221,6 +221,24 @@ export function toRunicHtml(result: RunicResult): string {
 	return result.rootNodeIds.map(render).join('\n');
 }
 
+/**
+ * Runic's native clipboard payload: what copying nodes in Runic writes as
+ * `text/plain` (`serialise` in runic.design/packages/core/clipboard.ts), a
+ * JSON array of every node in each copied subtree, pre-order. Paste parses it
+ * with `NodesSchema`, treats nodes no other node lists as a child as roots, and
+ * regenerates every id.
+ */
+export function toRunicClipboard(result: RunicResult): string {
+	const out: Node[] = [];
+	const visit = (id: string) => {
+		const node = result.nodes[id];
+		out.push(node);
+		if ('children' in node) node.children.forEach(visit);
+	};
+	result.rootNodeIds.forEach(visit);
+	return JSON.stringify(out);
+}
+
 /** Renders one concrete state of a compiled app as a validated Runic node graph. */
 export function renderRunic(compiled: Compiled, options: RunicOptions = {}): RunicResult {
 	const viewport = options.viewport ?? { width: 1280, height: 800 };

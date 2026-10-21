@@ -220,10 +220,11 @@ export function createRuntime(overrides: Record<string, unknown> = {}, design = 
 	const isNum = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
 	const isColor = (v: unknown) =>
 		typeof v === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(v);
-	const oneOf =
-		(...values: unknown[]) =>
-		(v: unknown) =>
-			values.includes(v);
+	// Validators carry the string literals they accept, for editor completion.
+	const literals = <F extends (v: any) => boolean>(values: string[], check: F) => Object.assign(check, { values });
+	const oneOf = (...values: string[]) => literals(values, (v: unknown) => values.includes(v as string));
+	const isSize = literals(['hug', 'fill'], (v: unknown) => isPx(v) || v === 'hug' || v === 'fill');
+	const isMargin = literals(['auto'], (v: unknown) => isNum(v) || v === 'auto');
 	const isShadow = (v: any) =>
 		!!v &&
 		typeof v === 'object' &&
@@ -240,8 +241,8 @@ export function createRuntime(overrides: Record<string, unknown> = {}, design = 
 		alignSelf: [oneOf('start', 'center', 'end'), '"start", "center" or "end"'],
 		flexWrap: [oneOf('wrap', 'nowrap'), '"wrap" or "nowrap"'],
 		gap: [isPx, 'a pixel number'],
-		width: [(v) => isPx(v) || v === 'hug' || v === 'fill', sizeHint],
-		height: [(v) => isPx(v) || v === 'hug' || v === 'fill', sizeHint],
+		width: [isSize, sizeHint],
+		height: [isSize, sizeHint],
 		minWidth: [isPx, 'a pixel number'],
 		maxWidth: [isPx, 'a pixel number'],
 		minHeight: [isPx, 'a pixel number'],
@@ -250,10 +251,10 @@ export function createRuntime(overrides: Record<string, unknown> = {}, design = 
 		paddingRight: [isPx, 'a pixel number'],
 		paddingBottom: [isPx, 'a pixel number'],
 		paddingLeft: [isPx, 'a pixel number'],
-		marginTop: [(v) => isNum(v) || v === 'auto', 'a pixel number or "auto"'],
-		marginRight: [(v) => isNum(v) || v === 'auto', 'a pixel number or "auto"'],
-		marginBottom: [(v) => isNum(v) || v === 'auto', 'a pixel number or "auto"'],
-		marginLeft: [(v) => isNum(v) || v === 'auto', 'a pixel number or "auto"'],
+		marginTop: [isMargin, 'a pixel number or "auto"'],
+		marginRight: [isMargin, 'a pixel number or "auto"'],
+		marginBottom: [isMargin, 'a pixel number or "auto"'],
+		marginLeft: [isMargin, 'a pixel number or "auto"'],
 		position: [oneOf('absolute', 'flow'), '"absolute" or "flow"'],
 		left: [isNum, 'a pixel number'],
 		top: [isNum, 'a pixel number'],
@@ -280,6 +281,7 @@ export function createRuntime(overrides: Record<string, unknown> = {}, design = 
 		padding: ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'],
 		margin: ['marginTop', 'marginRight', 'marginBottom', 'marginLeft']
 	};
+	const SHORTHAND_HINT = 'a pixel number, [vertical, horizontal] or [top, right, bottom, left]';
 	const BOX = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', 'opacity'];
 	const TYPO = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign'];
 	const PAINT = ['background', 'borderWidth', 'borderColor', 'borderRadius', 'shadow', ...SHORTHANDS.padding];
@@ -317,7 +319,7 @@ export function createRuntime(overrides: Record<string, unknown> = {}, design = 
 			if (value === undefined || value === null) continue;
 			if (key in SHORTHANDS) {
 				const expanded = sides(value, key === 'margin');
-				if (!expanded) throw new Error(`Invalid ${key}: ${JSON.stringify(value)} (expected a pixel number, [vertical, horizontal] or [top, right, bottom, left])`);
+				if (!expanded) throw new Error(`Invalid ${key}: ${JSON.stringify(value)} (expected ${SHORTHAND_HINT})`);
 				SHORTHANDS[key].forEach((longhand, i) => (out[longhand] = expanded[i]));
 				continue;
 			}
@@ -356,6 +358,16 @@ export function createRuntime(overrides: Record<string, unknown> = {}, design = 
 			if (!ALLOWED[kind].includes(k)) throw new Error(`"${key}" is not supported on ${KIND_LABEL[kind]}`);
 		}
 	};
+
+	// The keys `checkKey` accepts for one element kind (shorthands included),
+	// with the hint and string literals `normalizeStyle` accepts for each.
+	const styleProperties = (kind: string) =>
+		[...Object.keys(SHORTHANDS), ...Object.keys(SPEC)]
+			.filter((key) => (SHORTHANDS[key] ?? [key]).every((k) => ALLOWED[kind].includes(k)))
+			.map((key) => {
+				const spec = SPEC[SHORTHANDS[key]?.[0] ?? key];
+				return { name: key, hint: key in SHORTHANDS ? SHORTHAND_HINT : spec[1], values: ((spec[0] as any).values ?? []) as string[] };
+			});
 
 	// Validates a merged style for one element kind.
 	const checkStyle = (kind: string, st: Style) => {
@@ -703,5 +715,5 @@ button[data-p]{cursor:pointer}
 
 	const api = { state, derived, effect: userEffect, style, mutate };
 
-	return { ...api, batch, untrack, resolveStyle, normalizeStyle, checkKey, checkStyle, realize, mount };
+	return { ...api, batch, untrack, resolveStyle, normalizeStyle, checkKey, checkStyle, styleProperties, realize, mount };
 }

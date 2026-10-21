@@ -2,13 +2,19 @@
   "name": "patch",
   "private": true,
   "type": "module",
+  "bin": {
+    "pat": "./index.ts"
+  },
   "scripts": {
-    "compile": "bun index.ts compile",
-    "runic": "bun index.ts runic"
+    "dev": "bun index.ts dev",
+    "build": "bun index.ts build",
+    "runic": "bun index.ts runic",
+    "lsp": "bun index.ts lsp"
   },
   "dependencies": {
     "magic-string": "^1.4.3",
     "svelte": "^5.57.2",
+    "vite": "^8.3.4",
     "vscode-languageserver": "^10.1.2",
     "vscode-languageserver-textdocument": "^1.0.15"
   },

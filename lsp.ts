@@ -1,19 +1,22 @@
-// PAT language server: publishes compiler diagnostics for open .pat documents.
-// It knows nothing about PAT semantics; every rule lives in the compiler.
+// PAT language server: publishes compiler diagnostics and serves style
+// completions for open .pat documents. It knows nothing about PAT semantics;
+// every rule lives in the compiler.
 
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+	CompletionItemKind,
 	createConnection,
 	DiagnosticSeverity,
 	StreamMessageReader,
 	StreamMessageWriter,
 	TextDocuments,
 	TextDocumentSyncKind,
+	type CompletionItem,
 	type Diagnostic as LspDiagnostic
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { analyze, type Diagnostic } from './compiler';
+import { analyze, complete, type Diagnostic } from './compiler';
 
 export function startLanguageServer() {
 	// stdout carries the protocol; anything else goes to stderr.
@@ -57,8 +60,26 @@ export function startLanguageServer() {
 	};
 
 	connection.onInitialize(() => ({
-		capabilities: { textDocumentSync: TextDocumentSyncKind.Incremental }
+		capabilities: {
+			textDocumentSync: TextDocumentSyncKind.Incremental,
+			completionProvider: { triggerCharacters: ['{', ',', ':', "'", '"'] }
+		}
 	}));
+	connection.onCompletion(({ textDocument, position }): CompletionItem[] => {
+		const document = documents.get(textDocument.uri);
+		if (!document) return [];
+		try {
+			return complete(document.getText(), document.offsetAt(position), { filename: filename(document.uri) }).map((c) => ({
+				label: c.label,
+				kind: c.kind === 'property' ? CompletionItemKind.Property : CompletionItemKind.Value,
+				detail: c.detail,
+				insertText: c.insertText
+			}));
+		} catch (error) {
+			console.error(error);
+			return [];
+		}
+	});
 	documents.onDidChangeContent(({ document }) => validate(document));
 	documents.onDidClose(({ document }) => connection.sendDiagnostics({ uri: document.uri, diagnostics: [] }));
 
