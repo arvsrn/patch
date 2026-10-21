@@ -152,17 +152,55 @@ export function checkKey(kind: ElementKind, key: string) {
 	}
 }
 
+/**
+ * A rule about how properties of one merged style combine. `fails` reads
+ * only `keys` (normalized longhands) and returns the problem, if any.
+ * `kinds`: the element kinds it applies to (all when absent).
+ */
+export type StyleRule = { keys: string[]; kinds?: ElementKind[]; fails: (st: Style, kind: ElementKind) => string | null };
+
+export const STYLE_RULES: StyleRule[] = [
+	{
+		keys: ['justifyContent', 'gap'],
+		fails: (st) => (st.justifyContent === 'space-between' && st.gap ? 'justifyContent "space-between" cannot be combined with gap' : null)
+	},
+	{
+		keys: ['justifyContent', 'flexWrap'],
+		fails: (st) => (st.justifyContent === 'space-between' && st.flexWrap === 'wrap' ? 'justifyContent "space-between" cannot be combined with flexWrap "wrap"' : null)
+	},
+	{
+		keys: ['position', 'left', 'top'],
+		fails: (st) => (st.position !== 'absolute' && (st.left !== undefined || st.top !== undefined) ? 'left/top require position: "absolute"' : null)
+	},
+	{
+		keys: ['position', 'width', 'height'],
+		fails: (st) => (st.position === 'absolute' && (st.width === 'fill' || st.height === 'fill') ? 'absolute elements cannot use "fill" sizing' : null)
+	},
+	{
+		keys: ['width'],
+		kinds: ['input', 'textarea'],
+		fails: (st, kind) => ((st.width ?? 'hug') === 'hug' ? `<${kind}> needs width: <number> or "fill"` : null)
+	},
+	{
+		keys: ['height'],
+		kinds: ['textarea'],
+		fails: (st) => ((st.height ?? 'hug') === 'hug' ? '<textarea> needs height: <number> or "fill"' : null)
+	}
+];
+
+export const rulesFor = (kind: ElementKind) => STYLE_RULES.filter((rule) => !rule.kinds || rule.kinds.includes(kind));
+
 /** Validates a merged style for one element kind: allowed keys and combinations. */
 export function checkStyle(kind: ElementKind, st: Style) {
 	for (const key of Object.keys(st)) checkKey(kind, key);
-	if (st.justifyContent === 'space-between' && st.gap) throw new Error('justifyContent "space-between" cannot be combined with gap');
-	if (st.justifyContent === 'space-between' && st.flexWrap === 'wrap') throw new Error('justifyContent "space-between" cannot be combined with flexWrap "wrap"');
-	const absolute = st.position === 'absolute';
-	if (!absolute && (st.left !== undefined || st.top !== undefined)) throw new Error('left/top require position: "absolute"');
-	if (absolute && (st.width === 'fill' || st.height === 'fill')) throw new Error('absolute elements cannot use "fill" sizing');
-	if ((kind === 'input' || kind === 'textarea') && (st.width ?? 'hug') === 'hug') throw new Error(`<${kind}> needs width: <number> or "fill"`);
-	if (kind === 'textarea' && (st.height ?? 'hug') === 'hug') throw new Error('<textarea> needs height: <number> or "fill"');
+	for (const rule of rulesFor(kind)) {
+		const problem = rule.fails(st, kind);
+		if (problem) throw new Error(problem);
+	}
 }
+
+/** The string literals a longhand property accepts. */
+export const styleLiterals = (key: string): string[] => ((SPEC[key]?.[0] as any)?.values ?? []) as string[];
 
 export type Sizing = 'fixed' | 'hug' | 'fill';
 

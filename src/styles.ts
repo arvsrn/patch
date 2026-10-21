@@ -1,9 +1,11 @@
 // Static style analysis: every style object the compiler can see, paired with
-// the element kind it styles. `check/styles.ts` validates them, `emit` wraps
-// the ones written in place in style=, and completion lists from them.
+// the element kind it styles, and the shape of every element's style=.
+// `check/styles.ts` validates them, `emit` wraps the ones written in place in
+// style=, and completion lists from them.
 
 import { unwrap, type Estree } from './ast';
 import type { Bindings } from './bind';
+import type { Span } from './diagnostics';
 import { elements, type Component } from './ir';
 import type { ElementKind } from './schema/style';
 
@@ -16,57 +18,79 @@ export type StyleUse = {
 	direct: boolean;
 };
 
+/**
+ * What a style expression evaluates to, as far as the compiler can see:
+ * one object, entries merged in order, one of several alternatives (each
+ * with the expression to blame, or null for the whole style), nothing
+ * (a falsy value), or something it cannot see into.
+ */
+export type StyleShape =
+	| { type: 'object'; object: Estree }
+	| { type: 'list'; items: StyleShape[] }
+	| { type: 'choice'; options: { shape: StyleShape; node: Estree | null }[] }
+	| { type: 'none' }
+	| { type: 'unknown' };
+
+/** An element (or inline span), the kind it is styled as, and its style. */
+export type StyledElement = { kind: ElementKind; style: Estree | null; nameSpan: Span; shape: StyleShape };
+
 export type Styles = {
 	uses: StyleUse[];
 	/** CSS strings where a style is expected. */
 	strings: Estree[];
+	elements: StyledElement[];
 };
 
-export function collectStyles(component: Component, bindings: Bindings): Styles {
-	const styles: Styles = { uses: [], strings: [] };
+const NONE: StyleShape = { type: 'none' };
+const UNKNOWN: StyleShape = { type: 'unknown' };
 
-	// The statically known parts of a style expression, through arrays,
-	// `&&` / `||` / `??` and ternaries: object literals, the object of a
-	// `$style({...})` call or of a `$style` const, and CSS strings.
-	const sources = (expr: Estree, kind: ElementKind, inAttribute: boolean): void => {
-		expr = unwrap(expr);
-		switch (expr?.type) {
+export function collectStyles(component: Component, bindings: Bindings): Styles {
+	const styles: Styles = { uses: [], strings: [], elements: [] };
+
+	// Through arrays, `&&` / `||` / `??` and ternaries: object literals, the
+	// object of a `$style({...})` call or of a `$style` const, CSS strings.
+	const shape = (expr: Estree, kind: ElementKind, inAttribute: boolean): StyleShape => {
+		const e = unwrap(expr);
+		const object = (object: Estree, direct: boolean): StyleShape => {
+			styles.uses.push({ object, kind, direct });
+			return { type: 'object', object };
+		};
+		const of = (node: Estree) => shape(node, kind, inAttribute);
+		switch (e?.type) {
 			case 'ObjectExpression':
-				styles.uses.push({ object: expr, kind, direct: inAttribute });
-				break;
+				return object(e, inAttribute);
 			case 'ArrayExpression':
-				for (const element of expr.elements) sources(element, kind, inAttribute);
-				break;
+				return { type: 'list', items: e.elements.map((el: Estree) => (!el ? NONE : of(el.type === 'SpreadElement' ? el.argument : el))) };
 			case 'LogicalExpression':
-				if (expr.operator !== '&&') sources(expr.left, kind, inAttribute);
-				sources(expr.right, kind, inAttribute);
-				break;
+				if (e.operator === '&&') return { type: 'choice', options: [{ shape: NONE, node: null }, { shape: of(e.right), node: e.right }] };
+				return { type: 'choice', options: [{ shape: of(e.left), node: e.left }, { shape: of(e.right), node: e.right }] };
 			case 'ConditionalExpression':
-				sources(expr.consequent, kind, inAttribute);
-				sources(expr.alternate, kind, inAttribute);
-				break;
+				return { type: 'choice', options: [{ shape: of(e.consequent), node: e.consequent }, { shape: of(e.alternate), node: e.alternate }] };
 			case 'Literal':
-				if (typeof expr.value === 'string') styles.strings.push(expr);
-				break;
+				if (typeof e.value === 'string') styles.strings.push(e);
+				return e.value ? UNKNOWN : NONE;
 			case 'TemplateLiteral':
-				styles.strings.push(expr);
-				break;
+				styles.strings.push(e);
+				return NONE;
 			case 'Identifier': {
-				const object = bindings.reference(expr)?.symbol?.style;
-				if (object) styles.uses.push({ object, kind, direct: false });
-				break;
+				const symbol = bindings.reference(e)?.symbol;
+				if (symbol?.style) return object(symbol.style, false);
+				return !symbol && e.name === 'undefined' ? NONE : UNKNOWN;
 			}
 			case 'CallExpression': {
-				const arg = unwrap(expr.arguments[0]);
-				if (arg?.type === 'ObjectExpression' && bindings.runeCall(expr)?.name === '$style') styles.uses.push({ object: arg, kind, direct: false });
+				const arg = unwrap(e.arguments[0]);
+				if (arg?.type === 'ObjectExpression' && bindings.runeCall(e)?.name === '$style') return object(arg, false);
 			}
 		}
+		return UNKNOWN;
 	};
 
 	// A `$style({...})` anywhere: checked on its own, for any element.
-	for (const call of bindings.runeCalls) if (call.name === '$style') sources(call.node.arguments[0], 'frame', false);
+	for (const call of bindings.runeCalls) if (call.name === '$style') shape(call.node.arguments[0], 'frame', false);
 	// A style= attribute: checked for the element it styles.
-	for (const element of elements(component.template))
-		if (element.style) sources(element.style, element.type === 'span' ? 'inline' : element.kind, true);
+	for (const element of elements(component.template)) {
+		const kind = element.type === 'span' ? 'inline' : element.kind;
+		styles.elements.push({ kind, style: element.style, nameSpan: element.nameSpan, shape: element.style ? shape(element.style, kind, true) : NONE });
+	}
 	return styles;
 }
