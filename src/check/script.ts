@@ -70,9 +70,11 @@ function runeCalls(component: Component, bindings: Bindings, reporter: Reporter)
 		} else if (!allowed.has(node)) {
 			const where = name === '$effect' ? 'a top-level statement' : 'a top-level `let x = ...` declaration';
 			reporter.report(node, RUNES.includes(name) ? `${name}(...) is only allowed as ${where}` : `${name} is not supported`);
+		} else if (name === '$state') {
+			if (count > 1) reporter.report(node, '$state takes at most one initial value');
 		} else if (name === '$derived') {
 			if (count !== 1) reporter.report(node, '$derived takes exactly one expression');
-		} else if (name !== '$state' && count !== 1) reporter.report(node, `${name} takes exactly one function`);
+		} else if (count !== 1) reporter.report(node, `${name} takes exactly one function`);
 	}
 }
 
