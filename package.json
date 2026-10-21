@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "bun src/cli.ts dev",
     "build": "bun src/cli.ts build",
-    "runic": "bun src/cli.ts runic",
+    "snapshot": "bun src/cli.ts snapshot",
     "lsp": "bun src/cli.ts lsp"
   },
   "dependencies": {

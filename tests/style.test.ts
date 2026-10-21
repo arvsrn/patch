@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { mount } from '../src/runtime/dom';
 import { styleProperties, type ElementKind } from '../src/schema/style';
 import { analyze, compile, complete } from '../src';
-import { renderRunic } from '../src/targets/runic';
+import { evaluate } from '../src/design';
 
 const messages = (source: string) => analyze(source).diagnostics.map((d) => `${d.line}:${d.column} ${d.message}`);
 const labels = (doc: string) => complete(doc.replace('|', ''), doc.indexOf('|')).map((c) => c.label).sort();
@@ -32,17 +32,17 @@ test('a direct style object compiles to the same code as $style(...)', () => {
 	expect(direct.module).toContain('style: () => [$$rt.style({ gap: 4 }), d.v && $$rt.style({ opacity: 0.5 })]');
 });
 
-test('direct and explicit forms render the same in the browser and in Runic', async () => {
+test('direct and explicit forms evaluate the same in the browser and at design time', async () => {
 	const app = (s: (style: string) => string) =>
 		`<script lang="ts">let off = $state(true)</script><main style={${s(`{ padding: 8, background: '#181818', gap: 4 }`)}}><div style={[${s(`{ width: 40, height: 20 }`)}, ${s(`{ opacity: off ? 0.5 : 1 }`)}]}></div><p style={${s(`{ color: '#ffffff' }`)}}>hi</p></main>`;
 	const direct = compile(app((o) => o), 'direct.pat');
 	const explicit = compile(app((o) => `$style(${o})`), 'direct.pat');
 
 	// Node ids are source positions, which the extra `$style(` text shifts.
-	const runic = async (c: typeof direct, state = {}) => JSON.stringify(await renderRunic(c, { state })).replace(/n:\d+:\d+/g, 'n');
-	expect(await runic(direct)).toBe(await runic(explicit));
-	expect(await runic(direct, { off: false })).toBe(await runic(explicit, { off: false }));
-	expect(await runic(direct)).toContain('"transparency":50');
+	const design = async (c: typeof direct, state = {}) => JSON.stringify(await evaluate(c, state)).replace(/"id":"[^"]*"/g, '');
+	expect(await design(direct)).toBe(await design(explicit));
+	expect(await design(direct, { off: false })).toBe(await design(explicit, { off: false }));
+	expect(await design(direct)).toContain('"opacity":0.5');
 
 	// The same DOM, via a minimal document stand-in for mount().
 	const dom = (c: typeof direct) => {

@@ -4,7 +4,7 @@
 	let tasks: Task[] = $state([
 		{ id: 1, title: 'Sketch the layout', done: true },
 		{ id: 2, title: 'Wire up reactivity', done: false },
-		{ id: 3, title: 'Render into Runic', done: false }
+		{ id: 3, title: 'Snapshot into Figma', done: false }
 	]);
 	let draft = $state('');
 	let filter: 'all' | 'active' | 'done' = $state('all');
@@ -18,7 +18,7 @@
 		tasks.filter((t) => (filter === 'all' ? true : filter === 'done' ? t.done : !t.done))
 	);
 
-	// Browser-only side effects. They never run during Runic rendering.
+	// Browser-only side effects. They never run in a snapshot.
 	$effect(() => {
 		const saved = localStorage.getItem('patch-tasks');
 		if (saved) {

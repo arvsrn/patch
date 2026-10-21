@@ -1,21 +1,19 @@
 #!/usr/bin/env bun
-import { extname } from 'node:path';
+import { basename, extname } from 'node:path';
 import { compile } from './compile';
-import { copyText, renderRunic, toRunicClipboard, toRunicHtml } from './targets/runic';
 
 const usage = `usage:
-  patch dev <input.pat> [--port 5173]
-  patch build <input.pat> [output.html]
-  patch runic <input.pat> [--state name=value]... [--viewport WxH | Wxhug] [--stdout | --output file.json | file.html]
+  patch dev <path> [--port 5173]
+  patch build <path> [output.html]
+  patch snapshot <path> [--state name=value]...
   patch lsp
 
 dev serves the app with Vite and reloads the browser when the file changes.
 build bundles the app and its imports into one standalone HTML file (compile is an alias).
-Type errors fail build and runic; dev shows them in the browser overlay.
-runic copies the evaluated design to the clipboard for pasting into Runic.
-  --state   values are parsed as JSON, falling back to a plain string
-  --stdout  print the clipboard payload instead of copying it
-  --output  write the node graph as JSON, or as HTML for Runic's write_html import
+snapshot copies the app, evaluated at its initial state, to the clipboard as
+editable Figma layers; paste it into Figma. --state replaces a $state's initial
+value: JSON, else a plain string, checked against the variable's type.
+Type errors fail build and snapshot; dev shows them in the browser overlay.
 lsp runs the PAT language server over stdio.
 Any other arguments are passed to the system patch(1).`;
 
@@ -25,7 +23,7 @@ const fail = (message: string): never => {
 };
 
 const [command, ...rest] = process.argv.slice(2);
-const commands = ['dev', 'build', 'compile', 'runic', 'lsp', 'help'];
+const commands = ['dev', 'build', 'compile', 'snapshot', 'lsp', 'help'];
 
 // `patch` is also the standard Unix tool. Anything that is not one of our
 // commands (e.g. `patch -p1 < fix.diff`) goes to the system binary unchanged.
@@ -39,7 +37,7 @@ try {
 	if (command === 'lsp') (await import('./lsp/server')).startLanguageServer();
 	else if (command === 'dev') await dev(rest);
 	else if (command === 'build' || command === 'compile') await build(rest);
-	else if (command === 'runic') await runic(rest);
+	else if (command === 'snapshot') await snapshot(rest);
 	else fail(usage);
 } catch (error) {
 	fail(error instanceof Error ? error.message : String(error));
@@ -61,49 +59,29 @@ async function build(args: string[]) {
 	console.error(`wrote ${out}`);
 }
 
-async function runic(args: string[]) {
-	const { positional, flags, state } = parse(args, ['--viewport', '--output'], ['--stdout']);
+async function snapshot(args: string[]) {
+	const { positional, state } = parse(args, [], true);
 	const [input] = positional;
 	if (!input || positional.length > 1) fail(usage);
-	let viewport: { width: number; height: number | 'hug' } | undefined;
-	if (flags['--viewport']) {
-		const [w, h] = flags['--viewport'].split('x');
-		viewport = { width: Number(w), height: h === 'hug' ? 'hug' : Number(h) };
-	}
-
+	const { evaluate, parseStateOverrides } = await import('./design');
+	const { copyFigmaClipboard, snapshotToFigma } = await import('./targets/figma');
 	const compiled = compile(await Bun.file(input).text(), input);
-	const result = await renderRunic(compiled, { state, viewport });
-	const count = Object.keys(result.nodes).length;
-	console.error(`state: ${compiled.state.map((s) => `${s.id}=${JSON.stringify(s.id in state ? state[s.id] : s.defaultValue ?? s.defaultSource)}`).join(' ')}`);
-
-	const out = flags['--output'];
-	if (out) {
-		await Bun.write(out, out.endsWith('.html') ? toRunicHtml(result) : JSON.stringify(result, null, '\t'));
-		console.error(`wrote ${out} (${count} nodes)`);
-	} else if (flags['--stdout']) {
-		process.stdout.write(toRunicClipboard(result) + '\n');
-	} else {
-		await copyText(toRunicClipboard(result));
-		console.error(`Copied ${count} Runic nodes to clipboard.`);
-	}
+	const tree = await evaluate(compiled, parseStateOverrides(compiled, state));
+	const { html, warnings } = await snapshotToFigma(tree, basename(input, extname(input)));
+	for (const warning of warnings) console.error(`warning: ${warning}`);
+	await copyFigmaClipboard(html);
+	console.error('Copied snapshot to clipboard');
 }
 
-function parse(args: string[], valued: string[], boolean: string[] = []) {
+function parse(args: string[], valued: string[], withState = false) {
 	const positional: string[] = [];
 	const flags: Record<string, string> = {};
-	const state: Record<string, unknown> = {};
+	const state: string[] = [];
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
-		if (arg === '--state') {
-			const [name, ...value] = (args[++i] ?? '').split('=');
-			const raw = value.join('=');
-			try {
-				state[name] = JSON.parse(raw);
-			} catch {
-				state[name] = raw;
-			}
-		} else if (valued.includes(arg)) flags[arg] = args[++i] ?? fail(`${arg} needs a value`);
-		else if (boolean.includes(arg)) flags[arg] = 'true';
+		if (withState && arg === '--state') state.push(args[++i] ?? fail('--state needs name=value'));
+		else if (withState && arg.startsWith('--state=')) state.push(arg.slice('--state='.length));
+		else if (valued.includes(arg)) flags[arg] = args[++i] ?? fail(`${arg} needs a value`);
 		else if (arg.startsWith('--')) fail(`unknown option ${arg}\n\n${usage}`);
 		else positional.push(arg);
 	}

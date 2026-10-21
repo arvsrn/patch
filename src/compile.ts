@@ -30,6 +30,8 @@ export type Compiled = {
 	/** Specifiers the module still imports after type-only imports are removed. */
 	imports: string[];
 	state: StateInfo[];
+	/** The .pat source and the script's offsets in it, for checking design-time state values. */
+	script: { lang: 'ts' | 'js'; source: string; start: number; end: number } | null;
 };
 
 export type Analysis = { diagnostics: Diagnostic[]; state: StateInfo[] };
@@ -94,5 +96,13 @@ export function compile(source: string, filename = 'app.pat'): Compiled {
 	const ts = `${script.imports.join('\n')}\nexport default function program($$rt) {\n${script.code}\nreturn [${nodes.join(',\n')}];\n}\n`;
 	const module = new Bun.Transpiler({ loader: 'ts', target: 'browser' }).transformSync(ts);
 	const imports = new Bun.Transpiler({ loader: 'js' }).scanImports(module).map((i) => i.path);
-	return { filename: basename(filename), path: resolve(filename), module, imports, state: component.script?.state.map((d) => d.info) ?? [] };
+	const info = component.script;
+	return {
+		filename: basename(filename),
+		path: resolve(filename),
+		module,
+		imports,
+		state: info?.state.map((d) => d.info) ?? [],
+		script: info ? { lang: info.lang, source, start: info.span.start, end: info.span.end } : null
+	};
 }

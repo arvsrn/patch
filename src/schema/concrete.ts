@@ -1,6 +1,6 @@
 // One evaluated state of a program: plain data with every style resolved and
-// fonts inherited. `runtime/realize.ts` produces it; design targets (Runic)
-// consume it.
+// fonts inherited. `runtime/realize.ts` produces it; the Figma snapshot
+// target consumes it.
 
 import type { Style } from './style';
 

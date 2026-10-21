@@ -76,6 +76,39 @@ function project(file: string): Project {
 	return created;
 }
 
+let valueChecks = 0;
+
+/**
+ * Whether each expression is assignable to the declared type of a top-level
+ * variable of the script: the TypeScript error for each check, or null when it fits.
+ */
+export function checkValues(
+	source: string,
+	path: string,
+	start: number,
+	end: number,
+	checks: { name: string; expression: string }[]
+): (string | null)[] {
+	if (!checks.length) return [];
+	const { service, files } = project(path);
+	// Inside a function a `let` has its declared type, not the type its initializer narrowed it to.
+	const prefix = source.slice(0, start).replace(/[^\r\n]/g, ' ') + source.slice(start, end) + '\n;function __pat_values() {\n';
+	const lines = checks.map((c, i) => `const __pat_value_${i}: typeof ${c.name} = (${c.expression});\n`);
+	lines.push('}\n');
+	const offsets = lines.map((_, i) => prefix.length + lines.slice(0, i).join('').length);
+	const virtual = `${path}.values.ts`;
+	files.set(virtual, { text: prefix + lines.join(''), version: ++valueChecks });
+	try {
+		const diagnostics = service.getSemanticDiagnostics(virtual).filter((d) => d.start !== undefined && d.start >= prefix.length);
+		return checks.map((_, i) => {
+			const d = diagnostics.find((d) => d.start! >= offsets[i] && d.start! < offsets[i] + lines[i].length);
+			return d ? ts.flattenDiagnosticMessageText(d.messageText, '\n') : null;
+		});
+	} finally {
+		files.delete(virtual);
+	}
+}
+
 /** Type-checks `source.slice(start, end)` as the script of the .pat file at `path`. */
 export function typecheck(source: string, path: string, start: number, end: number): TypeDiagnostic[] {
 	const { service, files } = project(path);
