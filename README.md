@@ -50,31 +50,31 @@ bun link
 Start the dev server:
 
 ```sh
-patch dev app.patch
+patch dev app.pat
 ```
 
 Build for production:
 
 ```sh
-patch build app.patch
+patch build app.pat
 ```
 
 Take a snapshot of the app and copy it to the clipboard as editable layers, ready to paste into Figma:
 
 ```sh
-patch snapshot figma app.patch
+patch snapshot figma app.pat
 ```
 
 Or write it as a standalone HTML file (`app.snapshot.html`, or a path you pass):
 
 ```sh
-patch snapshot html app.patch
+patch snapshot html app.pat
 ```
 
 Snapshots render the app from its initial state, without running `$effect`s, so they show exactly that state. You can override any `$state` value:
 
 ```sh
-patch snapshot html app.patch \
+patch snapshot html app.pat \
   --state loading=true \
   --state filter=done
 ```
@@ -85,7 +85,7 @@ Since state can be set from outside, an agent can jump straight to the screen it
 
 ### Scope
 
-Patch currently supports single-file apps with:
+Patch currently supports single-file apps (one `.pat` file) with:
 
 - TS/JS in `<script>`, with type checking
 - Imports from npm packages and local TS/JS modules
