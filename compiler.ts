@@ -595,53 +595,70 @@ class Compiler {
 		node.arguments.forEach((a: any) => this.walk(a, scope));
 	}
 
-	// Compile-time checks for style expressions whose shape is visible.
-	private checkStyleExpression(expr: any, kind: string | null, scope: Scope): void {
+	// The statically known parts of a style expression, through arrays,
+	// `&&` / `||` / `??` and ternaries: object literals written in place
+	// (`direct`), the object of an inline `$style({...})` or of a `$style`
+	// const, and CSS strings (always an error).
+	private styleSources(expr: any, scope: Scope, out: { node: any; direct?: boolean; css?: boolean }[] = []) {
 		expr = unwrap(expr);
-		if (!expr) return;
-		switch (expr.type) {
+		switch (expr?.type) {
 			case 'ObjectExpression':
-				this.styleObjects.push({ node: expr, kind: kind ?? 'frame' });
-				for (const p of expr.properties) {
-					if (p.type !== 'Property' || p.computed) continue;
-					const key = p.key.name ?? String(p.key.value);
-					try {
-						this.styles.checkKey(kind ?? 'frame', key);
-					} catch (error: any) {
-						this.report(p.key, error.message);
-						continue;
-					}
-					const value = literal(p.value);
-					try {
-						if (value !== NOT_STATIC) this.styles.normalizeStyle({ [key]: value });
-					} catch (error: any) {
-						this.report(p.value, error.message);
-					}
-				}
-				return;
+				out.push({ node: expr, direct: true });
+				break;
 			case 'ArrayExpression':
-				return expr.elements.forEach((e: any) => this.checkStyleExpression(e, kind, scope));
+				expr.elements.forEach((e: any) => this.styleSources(e, scope, out));
+				break;
 			case 'LogicalExpression':
-				if (expr.operator !== '&&') this.checkStyleExpression(expr.left, kind, scope);
-				return this.checkStyleExpression(expr.right, kind, scope);
+				if (expr.operator !== '&&') this.styleSources(expr.left, scope, out);
+				this.styleSources(expr.right, scope, out);
+				break;
 			case 'ConditionalExpression':
-				this.checkStyleExpression(expr.consequent, kind, scope);
-				return this.checkStyleExpression(expr.alternate, kind, scope);
+				this.styleSources(expr.consequent, scope, out);
+				this.styleSources(expr.alternate, scope, out);
+				break;
 			case 'Literal':
 			case 'TemplateLiteral':
-				if (typeof expr.value === 'string' || expr.type === 'TemplateLiteral')
-					this.error(expr, 'CSS strings are not supported; use an object or $style({...})');
-				return;
+				if (typeof expr.value === 'string' || expr.type === 'TemplateLiteral') out.push({ node: expr, css: true });
+				break;
 			case 'Identifier':
-				if (kind && scope.get(expr.name) === 'local' && this.styleDecls.has(expr.name))
-					this.checkStyleExpression(this.styleDecls.get(expr.name), kind, scope);
-				return;
+				if (scope.get(expr.name) === 'local' && this.styleDecls.has(expr.name)) out.push({ node: this.styleDecls.get(expr.name) });
+				break;
 			case 'CallExpression': {
-				// An inline `$style({...})` is validated by `call()` without an element
-				// kind; record which element it styles so completion can respect it.
 				const arg = unwrap(expr.arguments[0]);
-				if (kind && arg?.type === 'ObjectExpression' && this.runeName(expr.callee, scope) === '$style')
-					this.styleObjects.push({ node: arg, kind });
+				if (arg?.type === 'ObjectExpression' && this.runeName(expr.callee, scope) === '$style') out.push({ node: arg });
+			}
+		}
+		return out;
+	}
+
+	// Checks every statically known style object in `expr` against the element
+	// kind it styles (`null` inside `$style(...)` itself: any element), and
+	// records the pairing for completion. An object reached along several paths
+	// reports each problem once (see `report`). In a style= attribute, objects
+	// written in place become `$style(...)` values, like the explicit form.
+	private checkStyleExpression(expr: any, kind: string | null, scope: Scope): void {
+		for (const source of this.styleSources(expr, scope)) {
+			if (source.css) this.error(source.node, 'CSS strings are not supported; use an object or $style({...})');
+			this.styleObjects.push({ node: source.node, kind: kind ?? 'frame' });
+			if (kind && source.direct) {
+				this.edits.before(source.node.start, '$$rt.style(');
+				this.edits.after(source.node.end, ')');
+			}
+			for (const p of source.node.properties) {
+				if (p.type !== 'Property' || p.computed) continue;
+				const key = p.key.name ?? String(p.key.value);
+				try {
+					this.styles.checkKey(kind ?? 'frame', key);
+				} catch (error: any) {
+					this.report(p.key, error.message);
+					continue;
+				}
+				const value = literal(p.value);
+				try {
+					if (value !== NOT_STATIC) this.styles.normalizeStyle({ [key]: value });
+				} catch (error: any) {
+					this.report(p.value, error.message);
+				}
 			}
 		}
 	}
