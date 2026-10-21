@@ -4,7 +4,7 @@
 
 import type { ElementNode, InlinePart, Program, ProgramNode, SpanNode } from '../schema/program';
 import { SHORTHANDS, type ElementKind, type Style } from '../schema/style';
-import { createApi } from './api';
+import { createApi, type ApiOptions } from './api';
 import { eachList, elementStyle, toText, withId } from './evaluate';
 import { createReactive, type Cell, type Owner } from './reactive';
 
@@ -85,8 +85,11 @@ const moveRange = (start: Node, end: Node, before: Node) => {
 	}
 };
 
-/** Mounts `program` into `target`. Returns a function that disposes it. */
-export function mount(program: Program, target: HTMLElement): () => void {
+/**
+ * Mounts `program` into `target`. Returns a function that disposes it.
+ * `options` start it from overridden state, without effects (snapshots).
+ */
+export function mount(program: Program, target: HTMLElement, options: ApiOptions = {}): () => void {
 	const r = createReactive();
 	const { effect, newOwner, dispose, within, untrack, batch, cell } = r;
 
@@ -244,7 +247,7 @@ export function mount(program: Program, target: HTMLElement): () => void {
 	target.setAttribute('data-dir', 'column');
 	target.setAttribute('data-host', '');
 	const root = newOwner();
-	const api = createApi(r);
+	const api = createApi(r, options);
 	batch(() => within(root, null, () => mountNodes(program(api), target, null)));
 	return () => dispose(root);
 }

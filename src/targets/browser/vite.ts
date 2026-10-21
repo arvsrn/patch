@@ -1,11 +1,13 @@
-// Vite integration for `patch dev` and `patch build`. The .pat file is an
-// ordinary module in Vite's graph (compiled by `transform`), so Vite resolves
-// its imports, watches it, reloads the page when it changes and shows compile
-// and type errors in its overlay. A virtual entry mounts the program.
+// Vite integration for `patch dev`, `patch build` and `patch snapshot html`.
+// The .pat file is an ordinary module in Vite's graph (compiled by
+// `transform`), so Vite resolves its imports, watches it, reloads the page
+// when it changes and shows compile and type errors in its overlay. A virtual
+// entry mounts the program, optionally from overridden state.
 
 import { basename, dirname, extname, resolve } from 'node:path';
 import { build, createServer, type Plugin } from 'vite';
 import { compile } from '../../compile';
+import type { ApiOptions } from '../../runtime/api';
 import { CompileError } from '../../diagnostics';
 import { htmlPage, overlayError } from './html';
 
@@ -14,7 +16,7 @@ const RESOLVED = '\0pat:entry';
 const DOM = resolve(import.meta.dir, '../../runtime/dom.ts');
 const REPO = resolve(import.meta.dir, '../../..');
 
-export function patPlugin(file: string): Plugin {
+export function patPlugin(file: string, mount: ApiOptions = {}): Plugin {
 	return {
 		name: 'pat',
 		resolveId: (id) => (id === ENTRY ? RESOLVED : undefined),
@@ -23,7 +25,7 @@ export function patPlugin(file: string): Plugin {
 			return [
 				`import program from ${JSON.stringify(file)};`,
 				`import { mount } from ${JSON.stringify(DOM)};`,
-				`mount(program, document.getElementById("app"));`
+				`mount(program, document.getElementById("app"), ${JSON.stringify(mount)});`
 			].join('\n');
 		},
 		transform(source, id) {
@@ -62,14 +64,17 @@ export async function startDevServer(input: string, port = 5173) {
 	return server;
 }
 
-/** Bundles the app and its imports with Vite into one self-contained HTML document. */
-export async function buildStandalone(input: string): Promise<string> {
+/**
+ * Bundles the app and its imports with Vite into one self-contained HTML
+ * document. `mount` starts it from overridden state, without effects.
+ */
+export async function buildStandalone(input: string, mount: ApiOptions = {}): Promise<string> {
 	const file = resolve(input);
 	const result = await build({
 		configFile: false,
 		root: dirname(file),
 		logLevel: 'warn',
-		plugins: [patPlugin(file)],
+		plugins: [patPlugin(file, mount)],
 		build: {
 			write: false,
 			modulePreload: false,

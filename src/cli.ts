@@ -5,14 +5,18 @@ import { compile } from './compile';
 const usage = `usage:
   patch dev <path> [--port 5173]
   patch build <path> [output.html]
-  patch snapshot <path> [--state name=value]...
+  patch snapshot figma <path> [--state name=value]...
+  patch snapshot html <path> [output.html] [--state name=value]...
   patch lsp
 
 dev serves the app with Vite and reloads the browser when the file changes.
 build bundles the app and its imports into one standalone HTML file (compile is an alias).
-snapshot copies the app, evaluated at its initial state, to the clipboard as
-editable Figma layers; paste it into Figma. --state replaces a $state's initial
-value: JSON, else a plain string, checked against the variable's type.
+snapshot renders the app at its initial state, without running $effects:
+  figma  copies it to the clipboard as editable Figma layers; paste it into Figma.
+  html   writes the app as one standalone HTML file starting from that state
+         (default <name>.snapshot.html); event handlers still work.
+--state replaces a $state's initial value: JSON, else a plain string, checked
+against the variable's type.
 Type errors fail build and snapshot; dev shows them in the browser overlay.
 lsp runs the PAT language server over stdio.
 Any other arguments are passed to the system patch(1).`;
@@ -61,13 +65,24 @@ async function build(args: string[]) {
 
 async function snapshot(args: string[]) {
 	const { positional, state } = parse(args, [], true);
-	const [input] = positional;
-	if (!input || positional.length > 1) fail(usage);
+	const [target, input, output] = positional;
+	if (target !== 'figma' && target !== 'html') fail(`patch snapshot needs a target: figma or html\n\n${usage}`);
+	if (!input || positional.length > (target === 'html' ? 3 : 2)) fail(usage);
 	const { evaluate, parseStateOverrides } = await import('./design');
-	const { copyFigmaClipboard, snapshotToFigma } = await import('./targets/figma');
 	const compiled = compile(await Bun.file(input).text(), input);
-	const tree = await evaluate(compiled, parseStateOverrides(compiled, state));
-	const { html, warnings } = await snapshotToFigma(tree, basename(input, extname(input)));
+	const overrides = parseStateOverrides(compiled, state);
+	const stem = basename(input, extname(input));
+
+	if (target === 'html') {
+		const out = output ?? `${input.slice(0, input.length - extname(input).length)}.snapshot.html`;
+		const html = await (await import('./targets/browser/vite')).buildStandalone(input, { overrides, design: true });
+		await Bun.write(out, html);
+		console.error(`wrote ${out}`);
+		return;
+	}
+
+	const { copyFigmaClipboard, snapshotToFigma } = await import('./targets/figma');
+	const { html, warnings } = await snapshotToFigma(await evaluate(compiled, overrides), stem);
 	for (const warning of warnings) console.error(`warning: ${warning}`);
 	await copyFigmaClipboard(html);
 	console.error('Copied snapshot to clipboard');

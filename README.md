@@ -59,19 +59,27 @@ Build for production:
 patch build app.patch
 ```
 
-Take a static snapshot of the app and copy it to the clipboard, ready to paste into Figma:
+Take a snapshot of the app and copy it to the clipboard as editable layers, ready to paste into Figma:
 
 ```sh
-patch snapshot app.patch
+patch snapshot figma app.patch
 ```
 
-Snapshots render the app from its initial state. You can override any `$state` value:
+Or write it as a standalone HTML file (`app.snapshot.html`, or a path you pass):
 
 ```sh
-patch snapshot app.patch \
+patch snapshot html app.patch
+```
+
+Snapshots render the app from its initial state, without running `$effect`s, so they show exactly that state. You can override any `$state` value:
+
+```sh
+patch snapshot html app.patch \
   --state loading=true \
   --state filter=done
 ```
+
+Agents can use HTML snapshots to visually verify the code they write: snapshot the screen in the state they just changed, open the file in a browser, and look at it.
 
 Since state can be set from outside, an agent can jump straight to the screen it wants to look at instead of clicking through the app, mocking network requests, or seeding a database to get there. The same mechanism is what fixtures are built on.
 
@@ -88,6 +96,6 @@ Patch currently supports single-file apps with:
 - Flex layout with fixed, `hug`, and `fill` sizing
 - Typography, fills, borders, radii, opacity, shadows, and positioning
 - A Vite dev server with live reload, and production builds to a single standalone HTML file
-- Editable Figma snapshot export
+- Snapshots of any state as editable Figma layers or standalone HTML
 
 Still WIP. 
