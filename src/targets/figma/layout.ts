@@ -5,6 +5,7 @@
 // Fill shares the free space of the main axis equally and stretches across
 // it; hug is the content size; fixed is the value. min/max clamp the result.
 
+import { placeAnchored } from '../../schema/anchor';
 import type { FigmaFrame, FigmaNode, FigmaText } from './adapter';
 import type { TextMeasure } from './text';
 
@@ -171,4 +172,51 @@ export function layout(root: FigmaFrame, measure: TextMeasure) {
 	resolveWidth(root, own(root));
 	resolveHeight(root, ownHeight(root));
 	place(root);
+	placeAnchoredLayers(root);
+}
+
+/**
+ * Anchored layers: positioned from their anchor's box, in the coordinates of
+ * the root frame, which stands for the browser viewport. An anchor may sit
+ * inside another anchored layer, so this repeats while something moves.
+ */
+function placeAnchoredLayers(root: FigmaFrame) {
+	const parents = new Map<FigmaNode, FigmaFrame>();
+	const named = new Map<string, FigmaNode>();
+	const anchored: FigmaNode[] = [];
+	const walk = (frame: FigmaFrame) => {
+		for (const k of frame.children) {
+			parents.set(k, frame);
+			if (k.anchorName !== undefined) named.set(k.anchorName, k);
+			if (k.anchor) anchored.push(k);
+			if (k.type === 'FRAME') walk(k);
+		}
+	};
+	walk(root);
+	/** The position of `node`'s parent (or of `node`, with `self`) in the root frame. */
+	const origin = (node: FigmaNode, self: boolean) => {
+		let x = self ? node.x : 0;
+		let y = self ? node.y : 0;
+		for (let p = parents.get(node); p && p !== root; p = parents.get(p)) {
+			x += p.x;
+			y += p.y;
+		}
+		return { x, y };
+	};
+	const viewport = { x: 0, y: 0, width: root.w, height: root.h };
+	for (let pass = 0; pass < 3; pass++) {
+		let moved = false;
+		for (const n of anchored) {
+			const anchor = named.get(n.anchor!.name);
+			if (!anchor) continue;
+			const at = origin(anchor, true);
+			const p = placeAnchored({ ...at, width: anchor.w, height: anchor.h }, { width: n.w, height: n.h }, viewport, n.anchor!.position, n.anchor!.offset);
+			const parent = origin(n, false);
+			const [x, y] = [p.x - parent.x, p.y - parent.y];
+			if (x !== n.x || y !== n.y) moved = true;
+			n.x = x;
+			n.y = y;
+		}
+		if (!moved || anchored.length < 2) return;
+	}
 }

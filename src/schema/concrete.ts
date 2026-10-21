@@ -17,10 +17,13 @@ export type Font = {
 
 export type Run = { text: string; font: Font };
 
+/** What every element has: its `anchorName`, when it has one. */
+type Named = { anchorName?: string };
+
 export type Concrete =
-	| { type: 'frame'; id: string; tag: string; style: Style; font: Font; children: Concrete[] }
-	| { type: 'text'; id: string; tag: string | null; style: Style; font: Font; runs: Run[] }
-	| {
+	| ({ type: 'frame'; id: string; tag: string; style: Style; font: Font; children: Concrete[] } & Named)
+	| ({ type: 'text'; id: string; tag: string | null; style: Style; font: Font; runs: Run[] } & Named)
+	| ({
 			type: 'input';
 			id: string;
 			tag: 'input' | 'textarea';
@@ -29,4 +32,4 @@ export type Concrete =
 			value: string;
 			placeholder: string;
 			inputType: string;
-	  };
+	  } & Named);

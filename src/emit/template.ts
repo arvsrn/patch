@@ -40,9 +40,11 @@ export class TemplateEmitter {
 		const on: [string, string][] = [];
 		let ref = 'null';
 		let portal = 'null';
+		let anchorName = 'null';
 		for (const a of node.attributes) {
 			if (a.type === 'event') on.push([a.name, this.getter(a.handler)]);
 			else if (a.type === 'attribute' && a.name === 'portal') portal = `() => (${this.attributeValue(a.value)})`;
+			else if (a.type === 'attribute' && a.name === 'anchorName') anchorName = `() => (${this.attributeValue(a.value)})`;
 			else if (a.type === 'bind' && a.name === 'this') {
 				const target = this.variable(a.expression);
 				ref = `{get: () => (${target}), set: (node) => { ${target} = node }}`;
@@ -54,7 +56,7 @@ export class TemplateEmitter {
 		}
 		const kids = node.kind === 'frame' ? this.nodes(node.children).join(',') : node.kind === 'text' ? this.inline(node.content) : '';
 		const style = node.style ? this.getter(node.style) : 'null';
-		return `{t:"el",tag:${str(node.tag)},kind:"${node.kind}",id:${str(this.id(node.span.start))},style:${style},attrs:${record(attrs)},on:${record(on)},ref:${ref},portal:${portal},kids:[${kids}]}`;
+		return `{t:"el",tag:${str(node.tag)},kind:"${node.kind}",id:${str(this.id(node.span.start))},style:${style},attrs:${record(attrs)},on:${record(on)},ref:${ref},portal:${portal},anchorName:${anchorName},kids:[${kids}]}`;
 	}
 
 	private attributeValue(value: Extract<Element['attributes'][number], { type: 'attribute' }>['value']) {

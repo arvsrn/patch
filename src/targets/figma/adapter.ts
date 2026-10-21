@@ -29,6 +29,10 @@ type Layer = {
 	alignSelf?: Align;
 	/** Out of the auto-layout flow; unset sides take the position the browser gives it. */
 	absolute?: { left?: number; top?: number };
+	/** Placed next to the layer named `name` by layout (see schema/anchor.ts). */
+	anchor?: { name: string; position: string; offset: number };
+	/** The name anchored layers refer to this one by. */
+	anchorName?: string;
 	opacity: number;
 	/** Resolved by layout: position in the parent and size. */
 	x: number;
@@ -133,6 +137,8 @@ class Converter {
 		for (const key of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight'] as const) if (st[key] !== undefined) layer[key] = st[key];
 		if (st.alignSelf) layer.alignSelf = ALIGN[st.alignSelf];
 		if (st.position === 'absolute') layer.absolute = { left: st.left, top: st.top };
+		if (st.anchor !== undefined) layer.anchor = { name: st.anchor, position: st.anchorPosition ?? 'bottom', offset: st.anchorOffset ?? 0 };
+		if (n.anchorName !== undefined) layer.anchorName = n.anchorName;
 		return layer;
 	}
 
@@ -188,7 +194,7 @@ class Converter {
 			const shown = n.value ? (n.inputType === 'password' ? '•'.repeat(n.value.length) : n.value) : n.placeholder;
 			const text = this.text(n, layerName(shown), [{ text: shown, font: n.font }], n.font, n.value ? 1 : 0.5);
 			Object.assign(text, { width: { kind: 'FILL' }, height: { kind: 'HUG' }, opacity: 1, truncate: !multiline, editable: multiline });
-			for (const key of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'alignSelf', 'absolute'] as const) delete text[key];
+			for (const key of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'alignSelf', 'absolute', 'anchor', 'anchorName'] as const) delete text[key];
 			node = this.frame(n, n.tag, { ...n.style, flexDirection: multiline ? 'column' : 'row', alignItems: multiline ? 'start' : 'center', overflow: 'hidden' }, [text]);
 		}
 		return this.margins(n, node);

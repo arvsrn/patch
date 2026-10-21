@@ -77,7 +77,7 @@ function check(source: string, filename: string, reporter: Reporter): Front | nu
 	checkScript(component, bindings, reporter);
 	checkTemplate(component, bindings, reporter);
 	checkTemplateNames(component, bindings, globalNames(resolve(filename)), reporter);
-	checkNames(component.template, reporter);
+	checkNames(component.template, styles, reporter);
 	checkStyles(styles, reporter);
 	reporter.diagnostics.sort((a, b) => a.start - b.start);
 

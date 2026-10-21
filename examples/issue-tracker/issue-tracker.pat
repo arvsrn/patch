@@ -348,8 +348,13 @@
 		color: '#3c3c43'
 	});
 	const segmentActive = $style({ background: '#eef0fc', borderColor: '#c5caf3', color: '#3a43a5' });
+	// Floats below the "+ Add label" button, above everything else.
 	const menu = $style({
-		width: 'fill',
+		position: 'absolute',
+		anchor: 'label-picker',
+		anchorPosition: 'bottom-start',
+		anchorOffset: 6,
+		width: 300,
 		borderRadius: 9,
 		borderWidth: 1,
 		borderColor: line,
@@ -666,6 +671,7 @@
 							</div>
 						{/each}
 						<button
+							anchorName="label-picker"
 							style={[pill, { padding: [3, 9], fontSize: 12, color: muted }, labelPickerOpen && chipActive]}
 							onclick={() => (labelPickerOpen ? closePicker() : (labelPickerOpen = true))}
 						>
@@ -674,7 +680,7 @@
 					</div>
 
 					{#if labelPickerOpen}
-						<div style={menu}>
+						<div portal="overlay" style={menu}>
 							<div style={{ width: 'fill', padding: [8, 12] }}>
 								<input
 									style={{ width: 'fill', fontSize: 13, lineHeight: 18, color: ink }}
@@ -733,3 +739,4 @@
 		{/if}
 	</div>
 </main>
+<portal id="overlay" />

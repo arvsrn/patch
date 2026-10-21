@@ -5,7 +5,8 @@
 import type { ElementNode, InlinePart, Program, ProgramNode, SpanNode } from '../schema/program';
 import { effectiveSizing, SHORTHANDS, sizingOf, type ElementKind, type Sizing, type Style } from '../schema/style';
 import { createApi, type ApiOptions } from './api';
-import { eachList, elementStyle, portalName, toText, withId } from './evaluate';
+import { createAnchoring } from './anchoring';
+import { anchorName, eachList, elementStyle, portalName, toText, withId } from './evaluate';
 import { createPortals } from './portals';
 import { createReactive, type Cell, type Owner } from './reactive';
 
@@ -21,6 +22,7 @@ html,body{margin:0;padding:0}
 [data-p=text]{display:block;white-space:pre}
 [data-p=text][data-w=fixed],[data-p=text][data-w=fill]{white-space:pre-wrap}
 [data-p=inline]{display:inline}
+[data-anchored][data-w=hug]{width:max-content}
 [data-dir=row]>[data-w=fill],[data-dir=column]>[data-h=fill]{flex:1 1 0}
 [data-dir=row]>[data-h=fill],[data-dir=column]>[data-w=fill]{align-self:stretch!important}
 button[data-p]{cursor:pointer}
@@ -159,7 +161,20 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 	const root = newOwner();
 	const { api, startEffects } = createApi(r, options);
 	const portals = createPortals();
+	const anchoring = createAnchoring(target);
 	const interact = () => batch(() => within(root, null, startEffects));
+
+	// Anchored elements are placed once a render has laid everything out,
+	// after sizing, and again whenever anything may have moved them.
+	let placingQueued = false;
+	const placeLater = () => {
+		if (placingQueued || !anchoring.active()) return;
+		placingQueued = true;
+		queueMicrotask(() => {
+			placingQueued = false;
+			anchoring.update();
+		});
+	};
 
 	// Sizing depends on parents and siblings, so it is resolved in one pass
 	// after styles or structure change, before the browser paints.
@@ -170,19 +185,26 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 		queueMicrotask(() => {
 			sizingQueued = false;
 			resolveSizing(target, 'fixed', 'fixed');
+			placeLater();
 		});
 	};
 
 	const bindStyle = (el: HTMLElement, d: ElementNode | SpanNode, kind: ElementKind) => {
 		let prev: Record<string, string> = {};
 		effect(() => {
-			const { css, data } = toCss(kind, elementStyle(d, kind));
+			const st = elementStyle(d, kind);
+			const { css, data } = toCss(kind, st);
 			for (const k of Object.keys(prev)) if (!(k in css)) el.style.removeProperty(k);
 			for (const [k, v] of Object.entries(css)) if (prev[k] !== v) el.style.setProperty(k, v);
 			for (const [k, v] of Object.entries(data)) el.setAttribute(`data-${k}`, v);
+			if (kind !== 'inline') {
+				const spec = st.anchor === undefined ? null : { name: st.anchor, position: st.anchorPosition ?? 'bottom', offset: st.anchorOffset ?? 0, at: d.id };
+				anchoring.track(el, spec, css);
+			}
 			prev = css;
 			resizeLater();
 		});
+		if (kind !== 'inline') onCleanup(() => anchoring.track(el, null, {}));
 	};
 
 	const setAttribute = (el: any, name: string, value: unknown) => {
@@ -206,6 +228,15 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 					if (control) resizeLater();
 				});
 			if (control) el.addEventListener('input', resizeLater);
+			const named = d.anchorName;
+			if (named) {
+				effect(() => {
+					const name = withId(d.id, () => anchorName(named()));
+					untrack(() => anchoring.name(el, name, d.id));
+					placeLater();
+				});
+				onCleanup(() => anchoring.name(el, null, d.id));
+			}
 			for (const [name, handler] of Object.entries(d.on))
 				el.addEventListener(name, (event: Event) => {
 					interact();
@@ -224,7 +255,11 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 			if (typeof part === 'string') parent.appendChild(document.createTextNode(part));
 			else if (typeof part === 'function') {
 				const node = document.createTextNode('');
-				effect(() => (node.data = toText(part())));
+				effect(() => {
+					node.data = toText(part());
+					// New text can move boxes without resizing an anchor.
+					placeLater();
+				});
 				parent.appendChild(node);
 			} else {
 				const span = element(part, 'span', 'inline');
@@ -373,5 +408,6 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 	return () => {
 		document.fonts?.removeEventListener('loadingdone', resizeLater);
 		dispose(root);
+		anchoring.dispose();
 	};
 }

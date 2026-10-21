@@ -3,6 +3,8 @@
 // styles against it, the runtime validates and resolves every style with it,
 // and editor completion lists from it.
 
+import { ANCHOR_POSITIONS } from './anchor';
+
 export type Style = Record<string, any>;
 
 /** What an element is for styling purposes. `inline` is a <span> nested in text. */
@@ -51,6 +53,9 @@ const SPEC: Record<string, [(v: any) => boolean, string]> = {
 	position: [oneOf('absolute', 'flow'), '"absolute" or "flow"'],
 	left: [isNum, 'a pixel number'],
 	top: [isNum, 'a pixel number'],
+	anchor: [(v) => typeof v === 'string' && v.length > 0, 'the anchorName of another element'],
+	anchorPosition: [oneOf(...ANCHOR_POSITIONS), ANCHOR_POSITIONS.map((p) => `"${p}"`).join(', ')],
+	anchorOffset: [isNum, 'a pixel number'],
 	background: [isColor, 'a hex color'],
 	color: [isColor, 'a hex color'],
 	opacity: [(v) => isNum(v) && v >= 0 && v <= 1, 'a number from 0 to 1'],
@@ -77,7 +82,7 @@ export const SHORTHANDS: Record<string, string[]> = {
 };
 const SHORTHAND_HINT = 'a pixel number, [vertical, horizontal] or [top, right, bottom, left]';
 
-const BOX = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', 'opacity'];
+const BOX = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', 'anchor', 'anchorPosition', 'anchorOffset', 'opacity'];
 /** Typography: inherited from parent to child. */
 export const TYPO = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign'];
 const PAINT = ['background', 'borderWidth', 'borderColor', 'borderRadius', 'shadow', ...SHORTHANDS.padding];
@@ -133,7 +138,7 @@ export function normalizeStyle(input: unknown): Style {
 }
 
 /** Fields of absolute positioning: an entry switching to `position: 'flow'` discards earlier ones. */
-export const OFFSETS = ['left', 'top'];
+export const OFFSETS = ['left', 'top', 'anchor', 'anchorPosition', 'anchorOffset'];
 
 /**
  * `style={a}`, `style={[a, cond && b]}`: merges left to right, skipping falsy
@@ -180,6 +185,22 @@ export const STYLE_RULES: StyleRule[] = [
 	{
 		keys: ['position', 'left', 'top'],
 		fails: (st) => (st.position !== 'absolute' && (st.left !== undefined || st.top !== undefined) ? 'left/top require position: "absolute"' : null)
+	},
+	{
+		keys: ['position', 'anchor'],
+		fails: (st) => (st.anchor !== undefined && st.position !== 'absolute' ? 'anchor requires position: "absolute"' : null)
+	},
+	{
+		keys: ['anchor', 'anchorPosition', 'anchorOffset'],
+		fails: (st) => (st.anchor === undefined && (st.anchorPosition !== undefined || st.anchorOffset !== undefined) ? 'anchorPosition/anchorOffset require anchor' : null)
+	},
+	{
+		keys: ['anchor', 'left', 'top'],
+		fails: (st) => (st.anchor !== undefined && (st.left !== undefined || st.top !== undefined) ? 'anchor cannot be combined with left/top; use anchorOffset' : null)
+	},
+	{
+		keys: ['anchor', ...SHORTHANDS.margin],
+		fails: (st) => (st.anchor !== undefined && SHORTHANDS.margin.some((k) => st[k] !== undefined && st[k] !== 0) ? 'anchor cannot be combined with margin; use anchorOffset' : null)
 	},
 	{
 		keys: ['position', 'width', 'height'],

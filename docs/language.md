@@ -235,7 +235,7 @@ Elements accept only these attributes, plus `style=` and event handlers (`on…`
 | `<button>` | `disabled` |
 | `<input>` | `value`, `placeholder`, `disabled`, `type` |
 | `<textarea>` | `value`, `placeholder`, `disabled` |
-| every element except inline spans | [`portal`](#portals) |
+| every element except inline spans | [`portal`](#portals), [`anchorName`](#anchored-positioning) |
 | `<portal>` | only a static `id` |
 
 You can write an attribute value in these forms:
@@ -430,13 +430,13 @@ The merge rules are:
    ```
 3. `borderRadius` and `shadow` are replaced as a whole.
 4. A property whose value is `null` or `undefined` is ignored. It does **not** unset an earlier value. To override something, set an explicit neutral value: `width: 'hug'`, `gap: 0`, `borderWidth: 0`, `shadow: []`, `opacity: 1`, or `background: '#0000'`.
-5. `left` and `top` belong to absolute positioning. An entry with `position: 'flow'` leaves that mode and discards `left`/`top` set by earlier entries, so switching back to `'absolute'` later does not bring them back:
+5. `left`, `top` and the [anchor properties](#anchored-positioning) belong to absolute positioning. An entry with `position: 'flow'` leaves that mode and discards those set by earlier entries, so switching back to `'absolute'` later does not bring them back:
    ```ts
    [{ position: 'absolute', left: 4 }, { position: 'flow' }]                          // { position: 'flow' }
    [{ position: 'absolute', left: 4 }, { position: 'flow' }, { position: 'absolute' }] // { position: 'absolute' }
    [{ position: 'absolute', left: 4 }, { position: 'absolute', top: 2 }]              // keeps left: 4
    ```
-   One object that sets `position: 'flow'` together with `left` or `top` is an error.
+   One object that sets `position: 'flow'` together with `left`, `top` or `anchor` is an error.
 6. [Combination rules](#combination-rules) are checked on the **merged** result, so `[row, { justifyContent: 'space-between', gap: 0 }]` is valid even if `row` sets a gap.
 
 Strings are never styles. A string or template literal in a style position is a compile error, and that includes `''`. For example, `cond ? card : ''` fails. Use `false` or `null` instead.
@@ -493,6 +493,9 @@ Units are pixels. All numbers must be finite.
 | `alignSelf` | `'start'`, `'center'`, `'end'` | parent's `alignItems` |
 | `position` | `'flow'`, `'absolute'` | `'flow'` |
 | `left`, `top` | *num* | none |
+| `anchor` | the `anchorName` of another element (non-empty string) | none |
+| `anchorPosition` | `'top'`, `'top-start'`, `'top-end'`, `'right'`, `'right-start'`, `'right-end'`, `'bottom'`, `'bottom-start'`, `'bottom-end'`, `'left'`, `'left-start'`, `'left-end'` | `'bottom'` |
+| `anchorOffset` | *num* | `0` |
 | `opacity` | number from 0 to 1 | `1` |
 
 ### Paint (containers, inputs)
@@ -541,6 +544,7 @@ These are checked on the merged style, by the compiler where the outcome is cert
 
 - `justifyContent: 'space-between'` cannot be combined with a non-zero `gap`, or with `flexWrap: 'wrap'`.
 - `left` and `top` require `position: 'absolute'`.
+- `anchor` requires `position: 'absolute'`, and cannot be combined with `left`, `top` or a non-zero margin. `anchorPosition` and `anchorOffset` require `anchor`.
 - An absolute element cannot use `'fill'` for `width` or `height`.
 - `<input>` needs `width` set to a number or `'fill'`. `<textarea>` needs both `width` and `height` set to a number or `'fill'`. A bare `<input />` is a compile error.
 
@@ -598,7 +602,29 @@ A child sized by its content this way is a hugging parent to its own children, s
 
 - An absolute element leaves the flow. It does not affect its siblings or its parent's hug size.
 - `left` and `top` are measured from the parent's outer top-left corner, ignoring the parent's padding. An omitted side keeps the position the element would have as the parent's only flow child.
-- Absolute elements are positioned relative to their direct parent. `right`, `bottom`, and `fill` sizing are not available.
+- Absolute elements are positioned relative to their direct parent, unless they are [anchored](#anchored-positioning). `right`, `bottom`, and `fill` sizing are not available.
+
+### Anchored positioning
+
+An absolute element can be anchored to another element: its position is derived from where that element is rendered, wherever the two are in the tree. Give the anchor a name with `anchorName=`, and refer to it with the `anchor` style property:
+
+```svelte
+<button anchorName="labels" onclick={() => (open = !open)}>Labels</button>
+{#if open}
+	<div portal="overlay" style={{ position: 'absolute', anchor: 'labels', anchorPosition: 'bottom-start', anchorOffset: 4 }}>…</div>
+{/if}
+```
+
+- `anchorPosition` is the side of the anchor the element goes on, and how it lines up along that side: `'bottom-start'` puts it below the anchor with their start (left) edges aligned, `'bottom-end'` aligns their end edges, and `'bottom'` centers it. `'left-start'` puts it to the left with their top edges aligned, and so on. `anchorOffset` is the gap between the two.
+- The position follows the anchor's rendered box and the element's own size. It stays correct when either one moves or changes size, when the layout reflows, when the viewport resizes, and when anything scrolls. You never measure or listen for anything yourself.
+- **Collisions.** When the element does not fit in the viewport on its side, it moves to the opposite side if there is more room there. Along the side, it is then shifted to stay inside the viewport; an element larger than the viewport keeps its start edge visible.
+- Anchoring works with or without a [portal](#portals). The element is still absolutely positioned inside its rendered parent, so it scrolls with that parent and is clipped by it (`overflow: 'hidden'`). To float above everything and escape clipping, render it into a portal at the end of the app, as above.
+- `anchorName=` works on every element except an inline span, and can be an expression. A nullish or `false` value gives the element no name. A name must be rendered at most once at a time; inside `{#each}`, compute one per item, such as ``anchorName={`row-${row.id}`}``.
+- When the anchor is not rendered, the anchored element is hidden until it is. The browser logs an error. A snapshot fails, and so does a snapshot with two elements of the same `anchorName`.
+
+These are compile errors: two static `anchorName`s with the same name that can be rendered at the same time, a static `anchorName` repeated by `{#each}` (directly, not inside an `{#if}` in the item), a bare `anchorName`, and a literal `anchor: 'name'` when no element in the app has that `anchorName` (unless some `anchorName` is computed).
+
+In the browser, Patch places anchored elements itself instead of using CSS anchor positioning, so that the browser and Figma snapshots use the same geometry. In a Figma snapshot the viewport is the 1280 × 800 frame.
 
 ### The root
 

@@ -28,12 +28,18 @@ export function elementStyle(d: { id: string; style: (() => unknown) | null }, k
 /** How a value appears as text: nullish and `false` are empty. */
 export const toText = (v: unknown) => (v === null || v === undefined || v === false ? '' : String(v));
 
-/** The portal a `portal=` value names; null renders the element in place. */
-export function portalName(v: unknown): string | null {
+/** An optional name attribute: nullish and `false` are none; anything else must be a non-empty string. */
+const optionalName = (attribute: string, v: unknown): string | null => {
 	if (v === null || v === undefined || v === false) return null;
-	if (typeof v !== 'string' || !v) throw new Error(`portal must be a portal id or null, got ${JSON.stringify(v)}`);
+	if (typeof v !== 'string' || !v) throw new Error(`${attribute} must be a non-empty string or null, got ${JSON.stringify(v)}`);
 	return v;
-}
+};
+
+/** The portal a `portal=` value names; null renders the element in place. */
+export const portalName = (v: unknown) => optionalName('portal', v);
+
+/** The name an `anchorName=` value gives its element, if any. */
+export const anchorName = (v: unknown) => optionalName('anchorName', v);
 
 /** The array an `{#each}` iterates. */
 export function eachList(v: unknown): unknown[] {
