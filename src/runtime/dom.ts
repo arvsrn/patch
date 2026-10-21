@@ -209,7 +209,10 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 						if (next.has(key)) throw new Error(`Duplicate each key ${JSON.stringify(key)} (at ${d.id})`);
 						let entry = items.get(key);
 						if (entry) {
-							entry.item.v = raw;
+							// Mutation is tracked per state variable, not per object: the
+							// same object may have changed in place, so its row re-reads it.
+							if (Object.is(entry.item.v, raw)) entry.item.notify();
+							else entry.item.v = raw;
 							entry.index.v = i;
 						} else {
 							const o = within(container, null, () => newOwner());
