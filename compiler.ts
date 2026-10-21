@@ -29,7 +29,34 @@ export type Compiled = {
 	state: StateInfo[];
 };
 
-export class CompileError extends Error {}
+export type Diagnostic = {
+	message: string;
+	severity: 'error' | 'warning';
+	/** UTF-16 offsets into the source, end exclusive. */
+	start: number;
+	end: number;
+	/** 1-based, for display. */
+	line: number;
+	column: number;
+};
+
+export type Analysis = { diagnostics: Diagnostic[]; state: StateInfo[] };
+
+export class CompileError extends Error {
+	constructor(readonly diagnostics: Diagnostic[], readonly source: string, readonly filename: string) {
+		super(diagnostics.map((d) => formatDiagnostic(d, source, filename)).join('\n\n'));
+	}
+}
+
+/** `file:line:col: message` plus the offending line with the range underlined. */
+export function formatDiagnostic(d: Diagnostic, source: string, filename: string): string {
+	const text = source.split('\n')[d.line - 1] ?? '';
+	const width = Math.max(1, Math.min(d.end - d.start, text.length - d.column + 1));
+	return `${filename}:${d.line}:${d.column}: ${d.severity}: ${d.message}\n  ${text}\n  ${' '.repeat(d.column - 1)}${'^'.repeat(width)}`;
+}
+
+// Thrown by `error()` to abandon the current construct; caught by `recover()`.
+class Abort {}
 
 type Binding = 'state' | 'derived' | 'item' | 'local';
 const SIGNALS = new Set<Binding | undefined>(['state', 'derived', 'item']);
@@ -182,72 +209,110 @@ class Compiler {
 		return `${line}:${column}`;
 	}
 
-	error(node: any, message: string): never {
-		const offset = typeof node === 'number' ? node : node?.start ?? 0;
-		const { line, column } = this.position(offset);
-		const text = this.source.slice(this.lineStarts[line - 1]).split('\n')[0];
-		throw new CompileError(`${this.filename}:${line}:${column}: ${message}\n  ${text}\n  ${' '.repeat(column - 1)}^`);
+	diagnostics: Diagnostic[] = [];
+
+	// The smallest useful range: an element/attribute name, else the node
+	// clipped to its first line.
+	private range(at: any): [number, number] {
+		if (typeof at === 'number') return [at, at + 1];
+		if (at?.name_loc) return [at.name_loc.start.character, at.name_loc.end.character];
+		const start = at?.start ?? 0;
+		const end = Math.max(start + 1, at?.end ?? start + 1);
+		const lineEnd = this.source.indexOf('\n', start);
+		return [start, lineEnd > start && lineEnd < end ? lineEnd : end];
+	}
+
+	/** Records a diagnostic and keeps going. */
+	report(at: any, message: string, severity: Diagnostic['severity'] = 'error') {
+		const [start, end] = this.range(at);
+		// A $style const is checked where it is declared and again where it is used.
+		if (this.diagnostics.some((d) => d.start === start && d.end === end && d.message === message)) return;
+		this.diagnostics.push({ message, severity, start, end, ...this.position(start) });
+	}
+
+	/** Records an error and abandons the current construct. */
+	error(at: any, message: string): never {
+		this.report(at, message);
+		throw new Abort();
+	}
+
+	/** Runs one independent construct; an error in it does not stop its siblings. */
+	private recover<T>(fn: () => T, fallback: T): T {
+		try {
+			return fn();
+		} catch (error) {
+			if (error instanceof Abort) return fallback;
+			throw error;
+		}
 	}
 
 	// ------------------------------------------------------------------ script
 
-	compile(): Compiled {
+	/** Validates and generates code. `program` is only set when there are no errors. */
+	run(emit: boolean): Analysis & { program?: string } {
 		let ast: any;
 		try {
 			ast = parse(this.source, { modern: true });
 		} catch (error: any) {
-			this.error(error.position?.[0] ?? error.start?.character ?? 0, error.message.split('\n')[0]);
+			const [start, end] = error.position ?? [error.start?.character ?? 0, (error.start?.character ?? 0) + 1];
+			this.report({ start, end: Math.max(end, start + 1) }, error.message.split('\n')[0]);
+			return { diagnostics: this.diagnostics, state: [] };
 		}
-		if (ast.css) this.error(ast.css, '<style> is not supported; use style={...} with $style({...}) values');
-		if (ast.module) this.error(ast.module, '<script module> is not supported in v0');
-		if (ast.options) this.error(ast.options, '<svelte:options> is not supported');
+		if (ast.css) this.report(ast.css, '<style> is not supported; use style={...} with $style({...}) values');
+		if (ast.module) this.report(ast.module, '<script module> is not supported in v0');
+		if (ast.options) this.report(ast.options, '<svelte:options> is not supported');
 
 		const top = new Scope();
 		const script = ast.instance ? this.script(ast.instance.content, top) : '';
 		const nodes = this.children(ast.fragment.nodes, new Scope(top));
+		const result = { diagnostics: this.diagnostics, state: this.state };
+		if (!emit || this.diagnostics.some((d) => d.severity === 'error')) return result;
 		const ts = `export default function program($$rt) {\n${script}\nreturn [${nodes.join(',\n')}];\n}\n`;
 		const js = new Bun.Transpiler({ loader: 'ts', target: 'browser' }).transformSync(ts);
-		return { filename: this.filename, program: js.replace(/^export default /m, '').trim(), state: this.state };
+		return { ...result, program: js.replace(/^export default /m, '').trim() };
 	}
 
 	private script(program: any, top: Scope): string {
-		for (const statement of program.body) {
-			if (/^(Import|Export)/.test(statement.type))
-				this.error(statement, 'imports/exports are not supported in v0 (single-file apps, no props)');
-			if (statement.type === 'VariableDeclaration') {
-				for (const d of statement.declarations) {
-					const init = unwrap(d.init);
-					const rune = init?.type === 'CallExpression' ? this.runeName(init.callee, top) : null;
-					if (rune === '$state' || rune === '$derived' || rune === '$derived.by') {
-						if (d.id.type !== 'Identifier') this.error(d.id, `${rune} must be assigned to a plain identifier`);
-						if (rune === '$state' && statement.kind !== 'let') this.error(statement, '$state must be declared with let');
-						top.vars.set(d.id.name, rune === '$state' ? 'state' : 'derived');
-						this.runeCalls.set(init, rune.slice(1) as any);
-						if (rune === '$state') {
-							this.stateIds.set(init, d.id.name);
-							const arg = init.arguments[0];
-							const value = arg ? literal(arg) : undefined;
-							this.state.push({
-								id: d.id.name,
-								name: d.id.name,
-								...this.position(d.start),
-								defaultSource: arg ? this.source.slice(arg.start, arg.end) : 'undefined',
-								...(value === NOT_STATIC ? {} : { defaultValue: value })
-							});
-						}
-					} else if (rune === '$style' && statement.kind === 'const' && d.id.type === 'Identifier' && unwrap(init.arguments[0])?.type === 'ObjectExpression') {
-						this.styleDecls.set(d.id.name, unwrap(init.arguments[0]));
+		const declared = program.body.filter((s: any) => this.recover(() => (this.declare(s, top), true), false));
+		this.hoist(program.body, top);
+		for (const statement of declared) this.recover(() => this.walk(statement, top), undefined);
+		return this.edits.render(program.start, program.end);
+	}
+
+	// Top-level declarations: which names are state/derived, where runes may appear.
+	private declare(statement: any, top: Scope) {
+		if (/^(Import|Export)/.test(statement.type))
+			this.error(statement, 'imports/exports are not supported in v0 (single-file apps, no props)');
+		if (statement.type === 'VariableDeclaration') {
+			for (const d of statement.declarations) {
+				const init = unwrap(d.init);
+				const rune = init?.type === 'CallExpression' ? this.runeName(init.callee, top) : null;
+				if (rune === '$state' || rune === '$derived' || rune === '$derived.by') {
+					if (d.id.type !== 'Identifier') this.error(d.id, `${rune} must be assigned to a plain identifier`);
+					if (rune === '$state' && statement.kind !== 'let') this.error(statement, '$state must be declared with let');
+					top.vars.set(d.id.name, rune === '$state' ? 'state' : 'derived');
+					this.runeCalls.set(init, rune.slice(1) as any);
+					if (rune === '$state') {
+						this.stateIds.set(init, d.id.name);
+						const arg = init.arguments[0];
+						const value = arg ? literal(arg) : undefined;
+						this.state.push({
+							id: d.id.name,
+							name: d.id.name,
+							...this.position(d.start),
+							defaultSource: arg ? this.source.slice(arg.start, arg.end) : 'undefined',
+							...(value === NOT_STATIC ? {} : { defaultValue: value })
+						});
 					}
+				} else if (rune === '$style' && statement.kind === 'const' && d.id.type === 'Identifier' && unwrap(init.arguments[0])?.type === 'ObjectExpression') {
+					this.styleDecls.set(d.id.name, unwrap(init.arguments[0]));
 				}
 			}
-			if (statement.type === 'ExpressionStatement') {
-				const call = unwrap(statement.expression);
-				if (call.type === 'CallExpression' && this.runeName(call.callee, top) === '$effect') this.runeCalls.set(call, 'effect');
-			}
 		}
-		this.hoist(program.body, top);
-		for (const statement of program.body) this.walk(statement, top);
-		return this.edits.render(program.start, program.end);
+		if (statement.type === 'ExpressionStatement') {
+			const call = unwrap(statement.expression);
+			if (call.type === 'CallExpression' && this.runeName(call.callee, top) === '$effect') this.runeCalls.set(call, 'effect');
+		}
 	}
 
 	private runeName(callee: any, scope: Scope): string | null {
@@ -299,7 +364,7 @@ class Compiler {
 				}
 				if (node.body.type === 'BlockStatement') {
 					this.hoist(node.body.body, inner);
-					for (const s of node.body.body) this.walk(s, inner);
+					for (const s of node.body.body) this.recover(() => this.walk(s, inner), undefined);
 				} else this.walk(node.body, inner);
 				return;
 			}
@@ -307,7 +372,7 @@ class Compiler {
 			case 'StaticBlock': {
 				const inner = new Scope(scope);
 				this.hoist(node.body, inner);
-				for (const s of node.body) this.walk(s, inner);
+				for (const s of node.body) this.recover(() => this.walk(s, inner), undefined);
 				return;
 			}
 			case 'ForStatement':
@@ -497,10 +562,15 @@ class Compiler {
 					const key = p.key.name ?? String(p.key.value);
 					try {
 						this.styles.checkKey(kind ?? 'frame', key);
-						const value = literal(p.value);
+					} catch (error: any) {
+						this.report(p.key, error.message);
+						continue;
+					}
+					const value = literal(p.value);
+					try {
 						if (value !== NOT_STATIC) this.styles.normalizeStyle({ [key]: value });
 					} catch (error: any) {
-						this.error(p, error.message);
+						this.report(p.value, error.message);
 					}
 				}
 				return;
@@ -534,7 +604,7 @@ class Compiler {
 		const out: string[] = [];
 		let group: any[] = [];
 		const flush = () => {
-			const parts = this.inline(group, scope);
+			const parts = this.recover(() => this.inline(group, scope), []);
 			if (parts.length) out.push(`{t:"text",id:${JSON.stringify(this.id(group[0]))},parts:[${parts.join(',')}]}`);
 			group = [];
 		};
@@ -545,10 +615,13 @@ class Compiler {
 			}
 			if (node.type === 'Comment') continue;
 			flush();
-			if (node.type === 'RegularElement') out.push(this.element(node, scope));
-			else if (node.type === 'IfBlock') out.push(this.ifBlock(node, scope));
-			else if (node.type === 'EachBlock') out.push(this.eachBlock(node, scope));
-			else this.unsupportedNode(node);
+			const code = this.recover(() => {
+				if (node.type === 'RegularElement') return this.element(node, scope);
+				if (node.type === 'IfBlock') return this.ifBlock(node, scope);
+				if (node.type === 'EachBlock') return this.eachBlock(node, scope);
+				return this.unsupportedNode(node);
+			}, 'null');
+			out.push(code);
 		}
 		flush();
 		return out;
@@ -588,15 +661,15 @@ class Compiler {
 
 	private eachBlock(node: any, scope: Scope): string {
 		if (!node.context || node.context.type !== 'Identifier') this.error(node, '{#each} needs `as item` with a plain identifier');
-		if (!node.key) this.error(node, '{#each} must be keyed: {#each list as item (item.id)}');
-		if (node.fallback) this.error(node.fallback.nodes[0] ?? node, '{:else} inside {#each} is not supported; use {#if list.length === 0}');
+		if (!node.key) this.report(node, '{#each} must be keyed: {#each list as item (item.id)}');
+		if (node.fallback) this.report(node.fallback.nodes[0] ?? node, '{:else} inside {#each} is not supported; use {#if list.length === 0}');
 		const list = this.expression(node.expression, scope);
 		const inner = new Scope(scope);
 		inner.vars.set(node.context.name, 'item');
 		const index = node.index ?? '$$i';
 		if (node.index) inner.vars.set(node.index, 'item');
 		const params = `(${node.context.name}, ${index})`;
-		const key = this.expression(node.key, inner);
+		const key = node.key ? this.expression(node.key, inner) : 'null';
 		const kids = this.children(node.body.nodes, inner);
 		return `{t:"each",id:${JSON.stringify(this.id(node))},list:() => (${list}),key:${params} => (${key}),kids:${params} => [${kids.join(',')}]}`;
 	}
@@ -614,14 +687,14 @@ class Compiler {
 			if (a.value === true || Array.isArray(a.value)) this.error(a, `${a.name} needs an expression: ${a.name}={...}`);
 			return a.value.expression;
 		};
-		for (const a of node.attributes) {
+		for (const a of node.attributes) this.recover(() => {
 			if (a.type === 'BindDirective') {
 				if (a.name !== 'value' || (kind !== 'input' && kind !== 'textarea')) this.error(a, 'only bind:value on <input>/<textarea> is supported');
 				if (a.expression.type !== 'Identifier' || scope.get(a.expression.name) !== 'state') this.error(a, 'bind:value needs a top-level $state variable');
 				if (attrs.value || on.input) this.error(a, 'bind:value cannot be combined with value= or oninput=');
 				attrs.value = `() => (${a.expression.name}.v)`;
 				on.input = `() => (event) => { ${a.expression.name}.v = event.currentTarget.value }`;
-				continue;
+				return;
 			}
 			if (a.type !== 'Attribute') {
 				const messages: Record<string, string> = {
@@ -655,7 +728,7 @@ class Compiler {
 				}
 				attrs[name] = `() => (${this.attributeValue(a, scope)})`;
 			} else this.error(a, `attribute "${name}" is not supported on <${node.name}>${inline ? ' inside text' : ''}`);
-		}
+		}, undefined);
 		const id = JSON.stringify(this.id(node));
 		const nodes = node.fragment.nodes;
 		if (inline) return `{t:"span",id:${id},style:${style},kids:[${inlineKids}]}`;
@@ -713,15 +786,23 @@ class Compiler {
 			} else if (node.type === 'RegularElement') {
 				out.push({ span: node, kids: this.inlineTokens(node.fragment.nodes, scope, state) });
 			} else if (node.type === 'IfBlock' || node.type === 'EachBlock') {
-				this.error(node, 'blocks cannot appear inside text; use a ternary {cond ? "a" : "b"} or move the block into a <div>');
-			} else this.unsupportedNode(node);
+				this.report(node, 'blocks cannot appear inside text; use a ternary {cond ? "a" : "b"} or move the block into a <div>');
+			} else this.recover(() => this.unsupportedNode(node), undefined);
 		}
 		return out;
 	}
 }
 
-export function compile(source: string, filename = 'app.svelte'): Compiled {
-	return new Compiler(source, filename).compile();
+/** Validation only: every diagnostic, no code generation. */
+export function analyze(source: string, options: { filename?: string } = {}): Analysis {
+	return new Compiler(source, options.filename ?? 'app.pat').run(false);
+}
+
+/** Validation plus code generation. Throws a CompileError listing every diagnostic. */
+export function compile(source: string, filename = 'app.pat'): Compiled {
+	const result = new Compiler(source, filename).run(true);
+	if (!result.program) throw new CompileError(result.diagnostics, source, filename);
+	return { filename, program: result.program, state: result.state };
 }
 
 /** A standalone HTML document that runs the app. */

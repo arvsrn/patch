@@ -1,0 +1,52 @@
+{
+	"name": "pat",
+	"displayName": "PAT",
+	"description": "PAT language support (development build)",
+	"version": "0.0.1",
+	"private": true,
+	"publisher": "local",
+	"engines": {
+		"vscode": "^1.82.0"
+	},
+	"main": "./extension.js",
+	"activationEvents": [],
+	"contributes": {
+		"languages": [
+			{
+				"id": "pat",
+				"aliases": ["PAT"],
+				"extensions": [".pat"],
+				"configuration": "./language-configuration.json"
+			}
+		],
+		"grammars": [
+			{
+				"language": "pat",
+				"scopeName": "source.pat",
+				"path": "./syntaxes/pat.tmLanguage.json",
+				"embeddedLanguages": {
+					"meta.embedded.block.pat": "typescript",
+					"meta.embedded.expression.pat": "typescript"
+				}
+			},
+			{
+				"scopeName": "pat.runes",
+				"path": "./syntaxes/pat-runes.tmLanguage.json",
+				"injectTo": ["source.pat"]
+			}
+		],
+		"configuration": {
+			"title": "PAT",
+			"properties": {
+				"pat.bun": {
+					"type": "string",
+					"default": "bun",
+					"description": "Path to the bun executable used to run the PAT language server."
+				}
+			}
+		}
+	},
+	"dependencies": {
+		"vscode-languageclient": "^9.0.1"
+	}
+}
