@@ -95,7 +95,9 @@ function lowerScript(instance: Svelte, source: string, reporter: Reporter): Scri
 	for (const statement of program.body) {
 		if (statement.type === 'ImportDeclaration') {
 			const from = statement.source.value;
-			if (/\.pat($|\?)/.test(from))
+			if (/\.(css|scss|sass|less|styl|stylus|pcss|postcss|sss)($|\?)/.test(from))
+				reporter.report(statement.source, 'stylesheets are not supported; use style={...} with $style({...}) values');
+			else if (/\.pat($|\?)/.test(from))
 				reporter.report(statement.source, 'importing .pat files is not supported yet; a PAT app is a single .pat file (import .ts/.js modules instead)');
 			// Vite only converts CommonJS for npm dependencies, not local files.
 			else if (/^\.{0,2}\/.*\.c[jt]s$/.test(from))
