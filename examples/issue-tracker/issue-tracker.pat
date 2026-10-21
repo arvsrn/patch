@@ -12,6 +12,20 @@
 		type Status
 	} from './data.ts';
 
+	type MenuKind = 'status' | 'priority' | 'assignee' | 'labels';
+	type Menu = { kind: MenuKind; issueId: number; anchor: string };
+	type MenuItem = {
+		key: string;
+		label: string;
+		selected: boolean;
+		pick: () => void;
+		status?: Status;
+		priority?: Priority;
+		member?: string | null;
+		color?: string;
+		create?: boolean;
+	};
+
 	let issues: Issue[] = $state(initialIssues);
 	let labels: Label[] = $state(initialLabels);
 	let nextId = $state(232);
@@ -20,19 +34,32 @@
 	let labelFilter: string | null = $state(null);
 	let selectedId: number | null = $state(null);
 	let hoveredId: number | null = $state(null);
-	let hoveredLabel: string | null = $state(null);
 
 	let composerStatus: Status | null = $state(null);
 	let draftTitle = $state('');
-	let composerInput = $state<HTMLInputElement>();
 
-	let labelPickerOpen = $state(false);
-	let labelQuery = $state('');
+	// One dropdown at a time, rendered into the overlay portal and anchored to
+	// the button that opened it.
+	let menu = $state<Menu | null>(null);
+	let menuQuery = $state('');
+	let menuIndex = $state(0);
 	let newLabelColor = $state(labelColors[6]);
+
+	let searchInput: HTMLInputElement | undefined;
+	let composerInput = $state<HTMLInputElement>();
+	let menuInput = $state<HTMLInputElement>();
+	let menuEl = $state<HTMLDivElement>();
+	let menuTrigger: Element | undefined;
 
 	const memberById = Object.fromEntries(members.map((m) => [m.id, m]));
 	const statusById = Object.fromEntries(statuses.map((s) => [s.id, s]));
 	const key = (id: number) => `ENG-${id}`;
+	const placeholders: Record<MenuKind, string> = {
+		status: 'Change status…',
+		priority: 'Set priority…',
+		assignee: 'Assign to…',
+		labels: 'Change or add labels…'
+	};
 
 	let labelById = $derived(Object.fromEntries(labels.map((l) => [l.id, l])));
 	let terms = $derived(query.trim().toLowerCase().split(/\s+/).filter(Boolean));
@@ -62,20 +89,42 @@
 	let labelCounts = $derived(
 		Object.fromEntries(labels.map((l) => [l.id, issues.filter((i) => i.labels.includes(l.id)).length]))
 	);
-
 	let selected = $derived(issues.find((i) => i.id === selectedId) ?? null);
-	let pickerLabels = $derived(labels.filter((l) => l.name.toLowerCase().includes(labelQuery.trim().toLowerCase())));
-	let canCreateLabel = $derived(
-		labelQuery.trim() !== '' && !labels.some((l) => l.name.toLowerCase() === labelQuery.trim().toLowerCase())
-	);
+	let menuIssue = $derived(menu ? (issues.find((i) => i.id === menu!.issueId) ?? null) : null);
+
+	let menuItems = $derived.by((): MenuItem[] => {
+		const issue = menuIssue;
+		if (!menu || !issue) return [];
+		const q = menuQuery.trim().toLowerCase();
+		const match = (text: string) => text.toLowerCase().includes(q);
+		if (menu.kind === 'status')
+			return statuses
+				.filter((s) => match(s.name))
+				.map((s) => ({ key: s.id, label: s.name, selected: issue.status === s.id, status: s.id, pick: () => choose({ status: s.id }) }));
+		if (menu.kind === 'priority')
+			return priorities
+				.filter((p) => match(p.name))
+				.map((p) => ({ key: String(p.id), label: p.name, selected: issue.priority === p.id, priority: p.id, pick: () => choose({ priority: p.id }) }));
+		if (menu.kind === 'assignee')
+			return [{ id: null, name: 'No assignee' }, ...members]
+				.filter((m) => match(m.name))
+				.map((m) => ({
+					key: m.id ?? 'none',
+					label: m.name,
+					selected: issue.assignee === m.id,
+					member: m.id,
+					pick: () => choose({ assignee: m.id })
+				}));
+		const items: MenuItem[] = labels
+			.filter((l) => match(l.name))
+			.map((l) => ({ key: l.id, label: l.name, selected: issue.labels.includes(l.id), color: l.color, pick: () => toggleLabel(issue, l.id) }));
+		if (q && !labels.some((l) => l.name.toLowerCase() === q))
+			items.push({ key: 'create', label: menuQuery.trim(), selected: false, color: newLabelColor, create: true, pick: () => createLabel(issue) });
+		return items;
+	});
 
 	function update(id: number, patch: Partial<Issue>) {
 		issues = issues.map((i) => (i.id === id ? { ...i, ...patch } : i));
-	}
-
-	function cycleStatus(issue: Issue) {
-		const order: Status[] = ['todo', 'progress', 'done'];
-		update(issue.id, { status: order[(order.indexOf(issue.status) + 1) % order.length] });
 	}
 
 	function toggleLabel(issue: Issue, labelId: string) {
@@ -87,14 +136,11 @@
 
 	function select(id: number) {
 		selectedId = selectedId === id ? null : id;
-		closePicker();
 	}
 
 	function openComposer(status: Status) {
 		composerStatus = status;
 		draftTitle = '';
-		// Already open: the input exists, but the click moved focus to the button.
-		composerInput?.focus();
 	}
 
 	function createIssue() {
@@ -106,35 +152,50 @@
 		composerStatus = null;
 		draftTitle = '';
 		selectedId = issue.id;
-		closePicker();
 	}
 
 	function deleteIssue(id: number) {
 		issues = issues.filter((i) => i.id !== id);
 		selectedId = null;
-		closePicker();
+		menu = null;
 	}
 
-	function closePicker() {
-		labelPickerOpen = false;
-		labelQuery = '';
+	function toggleMenu(kind: MenuKind, issueId: number, anchor: string, event: Event) {
+		event.stopPropagation();
+		if (menu?.anchor === anchor) {
+			menu = null;
+			return;
+		}
+		menu = { kind, issueId, anchor };
+		menuQuery = '';
+		menuIndex = 0;
+		menuTrigger = event.currentTarget as Element;
+	}
+
+	function choose(patch: Partial<Issue>) {
+		if (menu) update(menu.issueId, patch);
+		menu = null;
 	}
 
 	function createLabel(issue: Issue) {
-		const name = labelQuery.trim();
+		const name = menuQuery.trim();
 		if (!name) return;
 		const label: Label = { id: `label-${labels.length + 1}`, name, color: newLabelColor };
 		labels = [...labels, label];
 		update(issue.id, { labels: [...issue.labels, label.id] });
-		labelQuery = '';
+		menuQuery = '';
+		menuIndex = 0;
 		newLabelColor = labelColors[(labelColors.indexOf(newLabelColor) + 3) % labelColors.length];
 	}
 
-	function submitLabelQuery(issue: Issue) {
-		if (canCreateLabel) createLabel(issue);
-		else if (pickerLabels.length === 1) {
-			toggleLabel(issue, pickerLabels[0].id);
-			labelQuery = '';
+	function menuKey(event: KeyboardEvent) {
+		const count = menuItems.length;
+		if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+			event.preventDefault();
+			if (count) menuIndex = (menuIndex + (event.key === 'ArrowDown' ? 1 : count - 1)) % count;
+		} else if (event.key === 'Enter') {
+			event.preventDefault();
+			menuItems[Math.min(menuIndex, count - 1)]?.pick();
 		}
 	}
 
@@ -143,20 +204,37 @@
 		labelFilter = null;
 	}
 
-	// Escape backs out of whatever is open, innermost first.
+	// Escape backs out of whatever is open, innermost first. "/" jumps to search.
 	$effect(() => {
 		const onKey = (event: KeyboardEvent) => {
+			const typing = (event.target as HTMLElement).tagName === 'INPUT' || (event.target as HTMLElement).tagName === 'TEXTAREA';
+			if (event.key === '/' && !typing) {
+				event.preventDefault();
+				searchInput?.focus();
+			}
 			if (event.key !== 'Escape') return;
-			if (labelPickerOpen) closePicker();
+			if (menu) menu = null;
 			else if (composerStatus) composerStatus = null;
+			else if (typing) (event.target as HTMLElement).blur();
 			else selectedId = null;
 		};
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
 	});
 
-	// A newly opened composer's input takes focus as it mounts.
+	// A press outside the open dropdown and the button that opened it closes it.
+	$effect(() => {
+		const onPointerDown = (event: PointerEvent) => {
+			const target = event.target as Node;
+			if (!menu || menuEl?.contains(target) || menuTrigger?.contains(target)) return;
+			menu = null;
+		};
+		window.addEventListener('pointerdown', onPointerDown);
+		return () => window.removeEventListener('pointerdown', onPointerDown);
+	});
+
 	$effect(() => composerInput?.focus());
+	$effect(() => menuInput?.focus({ preventScroll: true }));
 
 	$effect(() => {
 		document.title = selected ? `${key(selected.id)} ${selected.title}` : 'Board · Engineering';
@@ -182,7 +260,6 @@
 		fontWeight: 500,
 		color: '#3c3c43'
 	});
-	const ghost = $style({ borderWidth: 1, borderColor: line, background: '#ffffff' });
 	const primary = $style({ background: accent, color: '#ffffff', shadow: { y: 1, blur: 2, color: '#1b1b1f26' } });
 	const iconButton = $style({
 		width: 24,
@@ -216,6 +293,7 @@
 		borderRadius: 999,
 		borderWidth: 1,
 		borderColor: line,
+		background: '#ffffff',
 		fontSize: 11.5,
 		fontWeight: 500,
 		color: '#3c3c43'
@@ -224,9 +302,10 @@
 
 	const column = $style({
 		width: 'fill',
+		height: 'fill',
 		minWidth: 240,
-		gap: 8,
-		padding: 8,
+		gap: 6,
+		padding: [8, 6, 0, 6],
 		borderRadius: 12,
 		background: '#f6f6f8'
 	});
@@ -320,56 +399,52 @@
 
 	const panel = $style({
 		width: 360,
-		gap: 18,
+		height: 'fill',
+		overflowY: 'auto',
+		gap: 20,
 		padding: 18,
 		borderRadius: 12,
 		borderWidth: 1,
 		borderColor: line,
 		background: '#ffffff',
-		shadow: [
-			{ y: 1, blur: 2, color: '#1b1b1f0d' },
-			{ y: 12, blur: 32, spread: -12, color: '#1b1b1f29' }
-		]
+		shadow: { y: 1, blur: 2, color: '#1b1b1f0d' }
 	});
-	const sectionLabel = $style({ fontSize: 11.5, fontWeight: 600, color: faint, letterSpacing: 0.2 });
-	const segment = $style({
-		width: 'fill',
+	const property = $style({ width: 'fill', flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 30 });
+	const propertyLabel = $style({ width: 76, fontSize: 12.5, color: muted });
+	const propertyButton = $style({
 		flexDirection: 'row',
 		alignItems: 'center',
-		justifyContent: 'center',
-		gap: 6,
-		padding: [7, 6],
-		borderRadius: 7,
-		borderWidth: 1,
-		borderColor: line,
-		background: '#ffffff',
-		fontSize: 12,
+		gap: 8,
+		padding: [5, 8],
+		borderRadius: 6,
+		fontSize: 13,
 		fontWeight: 500,
-		color: '#3c3c43'
+		color: ink
 	});
-	const segmentActive = $style({ background: '#eef0fc', borderColor: '#c5caf3', color: '#3a43a5' });
-	// Floats below the "+ Add label" button, above everything else.
-	const menu = $style({
+	const propertyOpen = $style({ background: '#f1f1f4' });
+
+	const menuBox = $style({
 		position: 'absolute',
-		anchor: 'label-picker',
-		anchorPosition: 'bottom-start',
-		anchorOffset: 6,
-		width: 300,
-		borderRadius: 9,
+		width: 248,
+		borderRadius: 10,
 		borderWidth: 1,
 		borderColor: line,
 		background: '#ffffff',
 		overflow: 'hidden',
-		shadow: { y: 6, blur: 18, spread: -6, color: '#1b1b1f29' }
+		color: ink,
+		fontSize: 13,
+		shadow: [
+			{ y: 2, blur: 4, color: '#1b1b1f0f' },
+			{ y: 12, blur: 32, spread: -8, color: '#1b1b1f33' }
+		]
 	});
 	const menuRow = $style({
 		width: 'fill',
 		flexDirection: 'row',
 		alignItems: 'center',
 		gap: 10,
-		padding: [7, 12],
-		fontSize: 13,
-		color: ink
+		padding: [7, 10],
+		borderRadius: 6
 	});
 	const checkbox = (on: boolean) =>
 		$style({
@@ -387,7 +462,7 @@
 		});
 </script>
 
-<main style={{ width: 'fill', color: ink, fontSize: 13 }}>
+<main style={{ width: 'fill', height: 'fill', color: ink, fontSize: 13 }}>
 	<!-- Top bar -->
 	<div style={[row, { width: 'fill', gap: 12, padding: [12, 24] }]}>
 		<div style={[row, { gap: 8 }]}>
@@ -399,14 +474,17 @@
 			<p style={{ fontWeight: 500 }}>Board</p>
 		</div>
 		<div style={spacer}></div>
-		<div style={[row, field, { width: 320, padding: [0, 4, 0, 10], gap: 4, height: 32 }]}>
+		<div style={[row, field, { width: 320, padding: [0, 6, 0, 10], gap: 6, height: 32 }]}>
 			<input
 				style={{ width: 'fill', fontSize: 13, color: ink }}
 				placeholder="Search issues, labels, people…"
 				bind:value={query}
+				bind:this={searchInput}
 			/>
 			{#if query}
-				<button style={[iconButton, { width: 22, height: 22, fontSize: 13 }]} onclick={() => (query = '')}>✕</button>
+				<button style={[iconButton, { width: 20, height: 20, fontSize: 12 }]} onclick={() => (query = '')}>✕</button>
+			{:else}
+				<div style={{ padding: [1, 6], borderRadius: 4, borderWidth: 1, borderColor: line, fontSize: 11, color: faint }}>/</div>
 			{/if}
 		</div>
 		<button style={[button, primary]} onclick={() => openComposer('todo')}>
@@ -441,12 +519,12 @@
 		{/if}
 	</div>
 
-	<div style={[row, { width: 'fill', gap: 16, padding: [0, 24, 32, 24], alignItems: 'start' }]}>
-		<!-- Board -->
-		<div style={[row, { width: 'fill', gap: 12, alignItems: 'start' }]}>
+	<div style={[row, { width: 'fill', height: 'fill', gap: 16, padding: [0, 24, 20, 24], alignItems: 'start' }]}>
+		<!-- Board: each column scrolls on its own -->
+		<div style={[row, { width: 'fill', height: 'fill', gap: 12, alignItems: 'start' }]}>
 			{#each columns as col (col.id)}
 				<div style={column}>
-					<div style={[row, { width: 'fill', gap: 8, padding: [4, 4, 2, 6] }]}>
+					<div style={[row, { width: 'fill', gap: 8, padding: [2, 6] }]}>
 						<div style={ring(col.id)}>
 							{#if col.id === 'progress'}
 								<div style={ringCore}></div>
@@ -460,105 +538,123 @@
 						<button style={iconButton} onclick={() => openComposer(col.id)}>+</button>
 					</div>
 
-					{#if composerStatus === col.id}
-						<div style={[card, cardSelected, { gap: 10 }]}>
-							<input
-								style={[field, { borderWidth: 0, padding: 0, fontWeight: 500 }]}
-								placeholder="Issue title"
-								bind:this={composerInput}
-								bind:value={draftTitle}
-								onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && createIssue()}
-							/>
-							<div style={[row, { width: 'fill', gap: 6 }]}>
-								<p style={{ color: faint, fontSize: 11.5 }}>Enter to create · Esc to cancel</p>
-								<div style={spacer}></div>
-								<button style={[button, { padding: [4, 8], fontSize: 12 }]} onclick={() => (composerStatus = null)}>
-									Cancel
-								</button>
-								<button
-									style={[button, primary, { padding: [4, 10], fontSize: 12 }, !draftTitle.trim() && { opacity: 0.5 }]}
-									disabled={!draftTitle.trim()}
-									onclick={createIssue}
-								>
-									Create
-								</button>
+					<div style={{ width: 'fill', height: 'fill', overflowY: 'auto', gap: 8, padding: [2, 2, 10, 2] }}>
+						{#if composerStatus === col.id}
+							<div style={[card, cardSelected, { gap: 10 }]}>
+								<input
+									style={[field, { borderWidth: 0, padding: 0, fontWeight: 500 }]}
+									placeholder="Issue title"
+									bind:value={draftTitle}
+									bind:this={composerInput}
+									onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && createIssue()}
+								/>
+								<div style={[row, { width: 'fill', gap: 6 }]}>
+									<p style={{ color: faint, fontSize: 11.5 }}>Enter to create · Esc to cancel</p>
+									<div style={spacer}></div>
+									<button style={[button, { padding: [4, 8], fontSize: 12 }]} onclick={() => (composerStatus = null)}>
+										Cancel
+									</button>
+									<button
+										style={[button, primary, { padding: [4, 10], fontSize: 12 }, !draftTitle.trim() && { opacity: 0.5 }]}
+										disabled={!draftTitle.trim()}
+										onclick={createIssue}
+									>
+										Create
+									</button>
+								</div>
 							</div>
-						</div>
-					{/if}
+						{/if}
 
-					{#each col.issues as issue (issue.id)}
-						<div
-							style={[card, hoveredId === issue.id && cardHover, selectedId === issue.id && cardSelected]}
-							onclick={() => select(issue.id)}
-							onpointerenter={() => (hoveredId = issue.id)}
-							onpointerleave={() => hoveredId === issue.id && (hoveredId = null)}
-						>
-							<div style={[row, { width: 'fill', gap: 8 }]}>
-								<button
-									style={[iconButton, { width: 16, height: 16 }]}
-									onclick={(e: Event) => {
-										e.stopPropagation();
-										cycleStatus(issue);
+						{#each col.issues as issue (issue.id)}
+							<div
+								style={[card, hoveredId === issue.id && cardHover, selectedId === issue.id && cardSelected]}
+								onclick={() => select(issue.id)}
+								onpointerenter={() => (hoveredId = issue.id)}
+								onpointerleave={() => hoveredId === issue.id && (hoveredId = null)}
+							>
+								<div style={[row, { width: 'fill', gap: 8 }]}>
+									<button
+										anchorName={`status-${issue.id}`}
+										style={[iconButton, { width: 18, height: 18 }, menu?.anchor === `status-${issue.id}` && propertyOpen]}
+										onclick={(e: Event) => toggleMenu('status', issue.id, `status-${issue.id}`, e)}
+									>
+										<div style={ring(issue.status)}>
+											{#if issue.status === 'progress'}
+												<div style={ringCore}></div>
+											{:else if issue.status === 'done'}
+												<span style={ringCheck}>✓</span>
+											{/if}
+										</div>
+									</button>
+									<p style={{ color: faint, fontSize: 12, fontWeight: 500 }}>{key(issue.id)}</p>
+									<div style={spacer}></div>
+									<button
+										anchorName={`assignee-${issue.id}`}
+										style={{ borderRadius: 11 }}
+										onclick={(e: Event) => toggleMenu('assignee', issue.id, `assignee-${issue.id}`, e)}
+									>
+										{#if issue.assignee}
+											<div style={avatar(memberById[issue.assignee].color, 20)}>{memberById[issue.assignee].initials}</div>
+										{:else}
+											<div style={noAvatar(20)}></div>
+										{/if}
+									</button>
+								</div>
+								<p
+									style={{
+										width: 'fill',
+										fontWeight: 500,
+										lineHeight: 18,
+										color: issue.status === 'done' ? muted : ink
 									}}
 								>
-									<div style={ring(issue.status)}>
-										{#if issue.status === 'progress'}
-											<div style={ringCore}></div>
-										{:else if issue.status === 'done'}
-											<span style={ringCheck}>✓</span>
-										{/if}
-									</div>
-								</button>
-								<p style={{ color: faint, fontSize: 12, fontWeight: 500 }}>{key(issue.id)}</p>
-								<div style={spacer}></div>
-								{#if issue.assignee}
-									<div style={avatar(memberById[issue.assignee].color, 20)}>{memberById[issue.assignee].initials}</div>
-								{:else}
-									<div style={noAvatar(20)}></div>
-								{/if}
-							</div>
-							<p
-								style={{
-									width: 'fill',
-									fontWeight: 500,
-									lineHeight: 18,
-									color: issue.status === 'done' ? muted : ink
-								}}
-							>
-								{issue.title}
-							</p>
-							<div style={[row, { width: 'fill', gap: 6, flexWrap: 'wrap' }]}>
-								<div style={[pill, { padding: [3, 5] }]}>
-									{#if issue.priority === 1}
-										<div style={urgent}>!</div>
-									{:else}
-										<div style={priorityBox}>
-											<div style={bars}>
-												{#each [1, 2, 3] as n (n)}
-													<div style={bar(issue.priority, n)}></div>
-												{/each}
+									{issue.title}
+								</p>
+								<div style={[row, { width: 'fill', gap: 6, flexWrap: 'wrap' }]}>
+									<button
+										anchorName={`priority-${issue.id}`}
+										style={[pill, { padding: [3, 5] }, menu?.anchor === `priority-${issue.id}` && propertyOpen]}
+										onclick={(e: Event) => toggleMenu('priority', issue.id, `priority-${issue.id}`, e)}
+									>
+										{#if issue.priority === 1}
+											<div style={urgent}>!</div>
+										{:else}
+											<div style={priorityBox}>
+												<div style={bars}>
+													{#each [1, 2, 3] as n (n)}
+														<div style={bar(issue.priority, n)}></div>
+													{/each}
+												</div>
 											</div>
-										</div>
+										{/if}
+									</button>
+									{#if issue.labels.length > 0}
+										<button
+											anchorName={`labels-${issue.id}`}
+											style={[row, { gap: 6, flexWrap: 'wrap', borderRadius: 999 }]}
+											onclick={(e: Event) => toggleMenu('labels', issue.id, `labels-${issue.id}`, e)}
+										>
+											{#each issue.labels as labelId (labelId)}
+												<div style={[pill, labelFilter === labelId && chipActive]}>
+													<div style={dot(labelById[labelId].color)}></div>
+													<span>{labelById[labelId].name}</span>
+												</div>
+											{/each}
+										</button>
 									{/if}
 								</div>
-								{#each issue.labels as labelId (labelId)}
-									<div style={[pill, labelFilter === labelId && chipActive]}>
-										<div style={dot(labelById[labelId].color)}></div>
-										<span>{labelById[labelId].name}</span>
-									</div>
-								{/each}
 							</div>
-						</div>
-					{/each}
+						{/each}
 
-					{#if col.issues.length === 0 && composerStatus !== col.id}
-						<div style={{ width: 'fill', padding: [20, 12], alignItems: 'center', gap: 4 }}>
-							<p style={{ color: muted, fontWeight: 500 }}>{filtering ? 'No matching issues' : 'No issues'}</p>
-							<p style={{ color: faint, fontSize: 12 }}>
-								{filtering ? 'Try a different search or label.' : 'Press + to add one.'}
-							</p>
-						</div>
-					{/if}
+						{#if col.issues.length === 0 && composerStatus !== col.id}
+							<div style={{ width: 'fill', padding: [20, 12], alignItems: 'center', gap: 4 }}>
+								<p style={{ color: muted, fontWeight: 500 }}>{filtering ? 'No matching issues' : 'No issues'}</p>
+								<p style={{ color: faint, fontSize: 12 }}>
+									{filtering ? 'Try a different search or label.' : 'Press + to add one.'}
+								</p>
+							</div>
+						{/if}
+					</div>
 				</div>
 			{/each}
 		</div>
@@ -576,167 +672,189 @@
 				</div>
 
 				<textarea
-					style={{ width: 'fill', height: 48, fontSize: 17, lineHeight: 24, fontWeight: 600, color: ink }}
+					style={{ width: 'fill', height: 50, fontSize: 17, lineHeight: 24, fontWeight: 600, color: ink }}
 					value={selected.title}
 					placeholder="Issue title"
 					oninput={(e: Event) => update(selected!.id, { title: (e.currentTarget as HTMLTextAreaElement).value })}
 				></textarea>
 
-				<div style={{ width: 'fill', gap: 8 }}>
-					<p style={sectionLabel}>STATUS</p>
-					<div style={[row, { width: 'fill', gap: 6 }]}>
-						{#each statuses as status (status.id)}
-							<button
-								style={[segment, selected.status === status.id && segmentActive]}
-								onclick={() => update(selected!.id, { status: status.id })}
-							>
-								<div style={ring(status.id)}>
-									{#if status.id === 'progress'}
-										<div style={ringCore}></div>
-									{:else if status.id === 'done'}
-										<span style={ringCheck}>✓</span>
-									{/if}
+				<div style={{ width: 'fill', gap: 6 }}>
+					<div style={property}>
+						<p style={propertyLabel}>Status</p>
+						<button
+							anchorName="panel-status"
+							style={[propertyButton, menu?.anchor === 'panel-status' && propertyOpen]}
+							onclick={(e: Event) => toggleMenu('status', selected!.id, 'panel-status', e)}
+						>
+							<div style={ring(selected.status)}>
+								{#if selected.status === 'progress'}
+									<div style={ringCore}></div>
+								{:else if selected.status === 'done'}
+									<span style={ringCheck}>✓</span>
+								{/if}
+							</div>
+							<span>{statusById[selected.status].name}</span>
+						</button>
+					</div>
+
+					<div style={property}>
+						<p style={propertyLabel}>Priority</p>
+						<button
+							anchorName="panel-priority"
+							style={[propertyButton, menu?.anchor === 'panel-priority' && propertyOpen]}
+							onclick={(e: Event) => toggleMenu('priority', selected!.id, 'panel-priority', e)}
+						>
+							{#if selected.priority === 1}
+								<div style={urgent}>!</div>
+							{:else}
+								<div style={priorityBox}>
+									<div style={bars}>
+										{#each [1, 2, 3] as n (n)}
+											<div style={bar(selected.priority, n)}></div>
+										{/each}
+									</div>
 								</div>
-								<span>{status.name}</span>
+							{/if}
+							<span>{priorities.find((p) => p.id === selected!.priority)?.name}</span>
+						</button>
+					</div>
+
+					<div style={property}>
+						<p style={propertyLabel}>Assignee</p>
+						<button
+							anchorName="panel-assignee"
+							style={[propertyButton, menu?.anchor === 'panel-assignee' && propertyOpen]}
+							onclick={(e: Event) => toggleMenu('assignee', selected!.id, 'panel-assignee', e)}
+						>
+							{#if selected.assignee}
+								<div style={avatar(memberById[selected.assignee].color, 20)}>{memberById[selected.assignee].initials}</div>
+								<span>{memberById[selected.assignee].name}</span>
+							{:else}
+								<div style={noAvatar(20)}></div>
+								<span style={{ color: muted }}>Unassigned</span>
+							{/if}
+						</button>
+					</div>
+
+					<div style={[property, { alignItems: 'start' }]}>
+						<p style={[propertyLabel, { marginTop: 7 }]}>Labels</p>
+						<div style={[row, { width: 'fill', gap: 6, flexWrap: 'wrap', paddingTop: 3 }]}>
+							{#each selected.labels as labelId (labelId)}
+								<div style={[pill, { padding: [3, 9], fontSize: 12 }]}>
+									<div style={dot(labelById[labelId].color)}></div>
+									<span>{labelById[labelId].name}</span>
+								</div>
+							{/each}
+							<button
+								anchorName="panel-labels"
+								style={[pill, { padding: [3, 9], fontSize: 12, color: muted }, menu?.anchor === 'panel-labels' && chipActive]}
+								onclick={(e: Event) => toggleMenu('labels', selected!.id, 'panel-labels', e)}
+							>
+								{selected.labels.length ? 'Edit' : '+ Add label'}
 							</button>
-						{/each}
+						</div>
 					</div>
 				</div>
 
-				<div style={{ width: 'fill', gap: 8 }}>
-					<div style={[row, { width: 'fill', gap: 6 }]}>
-						<p style={sectionLabel}>PRIORITY</p>
-						<div style={spacer}></div>
-						<p style={{ color: muted, fontSize: 12 }}>{priorities.find((p) => p.id === selected!.priority)?.name}</p>
-					</div>
-					<div style={[row, { width: 'fill', gap: 6 }]}>
-						{#each priorities as priority (priority.id)}
-							<button
-								style={[segment, { padding: [8, 6] }, selected.priority === priority.id && segmentActive]}
-								onclick={() => update(selected!.id, { priority: priority.id })}
-							>
-								{#if priority.id === 1}
+				<div style={divider}></div>
+				<p style={{ width: 'fill', fontSize: 12, lineHeight: 18, color: faint }}>
+					Click any status, priority, avatar or label on a card to change it in place. Press / to search, Esc to close.
+				</p>
+			</div>
+		{/if}
+	</div>
+
+	<!-- The open dropdown, painted above everything through the overlay portal -->
+	{#if menu && menuIssue}
+		<div
+			portal="overlay"
+			bind:this={menuEl}
+			style={[menuBox, { anchor: menu.anchor, anchorPosition: menu.anchor.startsWith('assignee-') || menu.anchor === 'panel-labels' ? 'bottom-end' : 'bottom-start', anchorOffset: 6 }]}
+		>
+			<div style={[row, { width: 'fill', gap: 8, padding: [9, 12] }]}>
+				<input
+					style={{ width: 'fill', fontSize: 13, lineHeight: 18, color: ink }}
+					placeholder={placeholders[menu.kind]}
+					value={menuQuery}
+					bind:this={menuInput}
+					oninput={(e: Event) => {
+						menuQuery = (e.currentTarget as HTMLInputElement).value;
+						menuIndex = 0;
+					}}
+					onkeydown={menuKey}
+				/>
+				<p style={{ fontSize: 11.5, color: faint }}>{key(menuIssue.id)}</p>
+			</div>
+			<div style={divider}></div>
+			<div style={{ width: 'fill', maxHeight: 280, overflowY: 'auto', padding: 4 }}>
+				{#each menuItems as item, i (item.key)}
+					<button
+						style={[menuRow, i === menuIndex && { background: '#f1f1f4' }]}
+						onclick={item.pick}
+						onpointermove={() => (menuIndex = i)}
+					>
+						{#if item.create}
+							<div style={dot(item.color!)}></div>
+							<p style={{ width: 'fill' }}>Create label <span style={{ fontWeight: 600 }}>“{item.label}”</span></p>
+						{:else}
+							{#if menu.kind === 'labels'}
+								<div style={checkbox(item.selected)}>{item.selected ? '✓' : ''}</div>
+								<div style={dot(item.color!)}></div>
+							{:else if item.status}
+								<div style={ring(item.status)}>
+									{#if item.status === 'progress'}
+										<div style={ringCore}></div>
+									{:else if item.status === 'done'}
+										<span style={ringCheck}>✓</span>
+									{/if}
+								</div>
+							{:else if menu.kind === 'priority'}
+								{#if item.priority === 1}
 									<div style={urgent}>!</div>
 								{:else}
 									<div style={priorityBox}>
 										<div style={bars}>
 											{#each [1, 2, 3] as n (n)}
-												<div style={bar(priority.id, n)}></div>
+												<div style={bar(item.priority ?? 0, n)}></div>
 											{/each}
 										</div>
 									</div>
 								{/if}
-							</button>
-						{/each}
-					</div>
-				</div>
-
-				<div style={{ width: 'fill', gap: 8 }}>
-					<div style={[row, { width: 'fill', gap: 6 }]}>
-						<p style={sectionLabel}>ASSIGNEE</p>
-						<div style={spacer}></div>
-						<p style={{ color: muted, fontSize: 12 }}>{selected.assignee ? memberById[selected.assignee].name : 'Unassigned'}</p>
-					</div>
-					<div style={[row, { gap: 8 }]}>
-						<button
-							style={[{ padding: 2, borderRadius: 16 }, selected.assignee === null && { borderWidth: 2, borderColor: accent }]}
-							onclick={() => update(selected!.id, { assignee: null })}
-						>
-							<div style={noAvatar(26)}></div>
-						</button>
-						{#each members as member (member.id)}
-							<button
-								style={[{ padding: 2, borderRadius: 16 }, selected.assignee === member.id && { borderWidth: 2, borderColor: accent }]}
-								onclick={() => update(selected!.id, { assignee: member.id })}
-							>
-								<div style={avatar(member.color, 26)}>{member.initials}</div>
-							</button>
-						{/each}
-					</div>
-				</div>
-
-				<div style={{ width: 'fill', gap: 8 }}>
-					<p style={sectionLabel}>LABELS</p>
-					<div style={[row, { width: 'fill', gap: 6, flexWrap: 'wrap' }]}>
-						{#each selected.labels as labelId (labelId)}
-							<div style={[pill, { padding: [3, 4, 3, 9], gap: 6, fontSize: 12 }]}>
-								<div style={dot(labelById[labelId].color)}></div>
-								<span>{labelById[labelId].name}</span>
-								<button
-									style={[iconButton, { width: 16, height: 16, fontSize: 10, borderRadius: 8 }]}
-									onclick={() => toggleLabel(selected!, labelId)}
-								>
-									✕
-								</button>
-							</div>
-						{/each}
-						<button
-							anchorName="label-picker"
-							style={[pill, { padding: [3, 9], fontSize: 12, color: muted }, labelPickerOpen && chipActive]}
-							onclick={() => (labelPickerOpen ? closePicker() : (labelPickerOpen = true))}
-						>
-							{labelPickerOpen ? 'Done' : '+ Add label'}
-						</button>
-					</div>
-
-					{#if labelPickerOpen}
-						<div portal="overlay" style={menu}>
-							<div style={{ width: 'fill', padding: [8, 12] }}>
-								<input
-									style={{ width: 'fill', fontSize: 13, lineHeight: 18, color: ink }}
-									placeholder="Change or create label…"
-									bind:value={labelQuery}
-									onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && submitLabelQuery(selected!)}
-								/>
-							</div>
-							<div style={divider}></div>
-							<div style={{ width: 'fill', padding: [4, 0] }}>
-								{#each pickerLabels as label (label.id)}
-									<button
-										style={[menuRow, hoveredLabel === label.id && { background: '#f6f6f8' }]}
-										onclick={() => toggleLabel(selected!, label.id)}
-										onpointerenter={() => (hoveredLabel = label.id)}
-										onpointerleave={() => hoveredLabel === label.id && (hoveredLabel = null)}
-									>
-										<div style={checkbox(selected.labels.includes(label.id))}>
-											{selected.labels.includes(label.id) ? '✓' : ''}
-										</div>
-										<div style={dot(label.color)}></div>
-										<span style={{ width: 'fill' }}>{label.name}</span>
-										<span style={{ color: faint, fontSize: 12 }}>{labelCounts[label.id]}</span>
-									</button>
-								{/each}
-								{#if pickerLabels.length === 0 && !canCreateLabel}
-									<div style={{ padding: [6, 12] }}><p style={{ color: faint }}>No labels</p></div>
-								{/if}
-							</div>
-							{#if canCreateLabel}
-								<div style={divider}></div>
-								<div style={{ width: 'fill', gap: 10, padding: [10, 12] }}>
-									<button style={[menuRow, { padding: 0 }]} onclick={() => createLabel(selected!)}>
-										<div style={dot(newLabelColor)}></div>
-										<p>Create label <span style={{ fontWeight: 600 }}>“{labelQuery.trim()}”</span></p>
-									</button>
-									<div style={[row, { gap: 6 }]}>
-										{#each labelColors as color (color)}
-											<button
-												style={[
-													{ width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-													color === newLabelColor && { borderWidth: 1.5, borderColor: color }
-												]}
-												onclick={() => (newLabelColor = color)}
-											>
-												<div style={[dot(color), { width: 12, height: 12, borderRadius: 6 }]}></div>
-											</button>
-										{/each}
-									</div>
-								</div>
+							{:else if item.member}
+								<div style={avatar(memberById[item.member].color, 18)}>{memberById[item.member].initials}</div>
+							{:else}
+								<div style={noAvatar(18)}></div>
 							{/if}
-						</div>
-					{/if}
-				</div>
+							<p style={{ width: 'fill' }}>{item.label}</p>
+							{#if menu.kind === 'labels'}
+								<p style={{ color: faint, fontSize: 12 }}>{labelCounts[item.key]}</p>
+							{:else if item.selected}
+								<p style={{ color: accent, fontSize: 12, fontWeight: 700 }}>✓</p>
+							{/if}
+						{/if}
+					</button>
+				{/each}
+				{#if menuItems.length === 0}
+					<div style={{ padding: [8, 10] }}><p style={{ color: faint }}>No results</p></div>
+				{/if}
 			</div>
-		{/if}
-	</div>
+			{#if menuItems.some((item) => item.create)}
+				<div style={divider}></div>
+				<div style={[row, { width: 'fill', gap: 6, padding: [10, 12] }]}>
+					{#each labelColors as color (color)}
+						<button
+							style={[
+								{ width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+								color === newLabelColor && { borderWidth: 1.5, borderColor: color }
+							]}
+							onclick={() => (newLabelColor = color)}
+						>
+							<div style={[dot(color), { width: 12, height: 12, borderRadius: 6 }]}></div>
+						</button>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	{/if}
 </main>
 <portal id="overlay" />

@@ -1,19 +1,45 @@
 <script lang="ts">
-	import { respond, seedChats, suggestions, toolPart, uid, type Chat, type Message, type Part, type Step, type ToolStep } from './scenarios.ts';
+	import {
+		models,
+		respond,
+		seedChats,
+		suggestions,
+		toolPart,
+		tools,
+		uid,
+		type Chat,
+		type Message,
+		type Part,
+		type Step,
+		type ToolStep
+	} from './scenarios.ts';
 
 	type Streaming = { chatId: number; messageId: number };
+	type Menu = { kind: 'model' | 'tools' | 'chat'; anchor: string; chatId?: number };
 
 	let chats: Chat[] = $state(seedChats());
 	let activeId: number | null = $state(null);
 	let draft = $state('');
-	let streaming: Streaming | null = $state(null);
+	let streaming = $state<Streaming | null>(null);
 	let now = $state(0);
+	let modelId = $state('atlas-2');
 	let copiedId: number | null = $state(null);
 	let hoveredChat: number | null = $state(null);
 	let hoveredSuggestion: string | null = $state(null);
+	let menu = $state<Menu | null>(null);
+	let menuRow: string | null = $state(null);
+	// Keep the newest message in view until the reader scrolls up.
+	let follow = $state(true);
+
+	let composer = $state<HTMLTextAreaElement>();
+	let bottom = $state<HTMLDivElement>();
+	let menuEl = $state<HTMLDivElement>();
+	let menuTrigger: Element | undefined;
 
 	let activeChat = $derived(chats.find((c) => c.id === activeId) ?? null);
+	let model = $derived(models.find((m) => m.id === modelId) ?? models[0]);
 	let canSend = $derived(draft.trim() !== '' && streaming === null);
+	let streamingHere = $derived(streaming !== null && streaming.chatId === activeId);
 
 	// Every playback gets a token; stopping or starting another one makes the
 	// old playback's pending steps bail out.
@@ -34,7 +60,13 @@
 		edit(chatId, messageId, (m) => ({ ...m, parts: [...m.parts, ...parts] }));
 	}
 
-	async function streamText(chatId: number, messageId: number, step: Extract<Step, { kind: 'text' | 'code' }>, alive: () => boolean) {
+	async function streamText(
+		chatId: number,
+		messageId: number,
+		step: Extract<Step, { kind: 'text' | 'code' }>,
+		pace: number,
+		alive: () => boolean
+	) {
 		const part: Part =
 			step.kind === 'text' ? { id: uid(), kind: 'text', text: '' } : { id: uid(), kind: 'code', lang: step.lang, code: '' };
 		addParts(chatId, messageId, [part]);
@@ -47,38 +79,46 @@
 			editPart(chatId, messageId, part.id, (p) =>
 				p.kind === 'text' ? { ...p, text: p.text + chunk } : p.kind === 'code' ? { ...p, code: p.code + chunk } : p
 			);
-			await wait(step.kind === 'code' ? 30 : 25 + Math.random() * 45);
+			await wait((step.kind === 'code' ? 30 : 25 + Math.random() * 45) * pace);
 		}
-		await wait(250);
+		await wait(250 * pace);
 	}
 
-	async function runTools(chatId: number, messageId: number, tools: ToolStep[], alive: () => boolean) {
+	async function runTools(chatId: number, messageId: number, steps: ToolStep[], pace: number, alive: () => boolean) {
 		now = Date.now();
-		const parts = tools.map((tool) => toolPart(tool, now));
+		const parts = steps.map((tool) => toolPart(tool, now));
 		addParts(chatId, messageId, parts);
 		await Promise.all(
-			tools.map(async (tool, i) => {
-				await wait(tool.ms);
+			steps.map(async (tool, i) => {
+				await wait(tool.ms * pace);
 				if (!alive()) return;
 				editPart(chatId, messageId, parts[i].id, (p) =>
 					p.kind === 'tool'
-						? { ...p, status: tool.error ? 'error' : 'done', ms: tool.ms, result: tool.result ?? null, error: tool.error ?? null }
+						? {
+								...p,
+								status: tool.error ? 'error' : 'done',
+								ms: Math.round(tool.ms * pace),
+								result: tool.result ?? null,
+								error: tool.error ?? null
+							}
 						: p
 				);
 			})
 		);
-		await wait(400);
+		await wait(400 * pace);
 	}
 
 	async function play(chatId: number, messageId: number, steps: Step[]) {
 		const token = ++run;
 		const alive = () => token === run;
+		const { pace, think } = model;
 		streaming = { chatId, messageId };
-		await wait(700);
+		now = Date.now();
+		await wait(think);
 		for (const step of steps) {
 			if (!alive()) return;
-			if (step.kind === 'text' || step.kind === 'code') await streamText(chatId, messageId, step, alive);
-			else await runTools(chatId, messageId, step.kind === 'parallel' ? step.tools : [step], alive);
+			if (step.kind === 'text' || step.kind === 'code') await streamText(chatId, messageId, step, pace, alive);
+			else await runTools(chatId, messageId, step.kind === 'parallel' ? step.tools : [step], pace, alive);
 		}
 		if (!alive()) return;
 		edit(chatId, messageId, (m) => ({ ...m, streaming: false }));
@@ -110,16 +150,18 @@
 			chats = [chat, ...chats];
 			chatId = activeId = chat.id;
 		}
-		const user: Message = { id: uid(), role: 'user', text: prompt, parts: [], streaming: false, stopped: false };
-		const reply: Message = { id: uid(), role: 'assistant', text: '', parts: [], streaming: true, stopped: false };
+		const user: Message = { id: uid(), role: 'user', text: prompt, parts: [], streaming: false, stopped: false, model: '' };
+		const reply: Message = { id: uid(), role: 'assistant', text: '', parts: [], streaming: true, stopped: false, model: model.name };
 		chats = chats.map((c) => (c.id === chatId ? { ...c, when: 'now', messages: [...c.messages, user, reply] } : c));
 		draft = '';
+		follow = true;
 		play(chatId, reply.id, respond(prompt));
 	}
 
 	function regenerate(chatId: number, messageId: number, prompt: string) {
 		if (streaming) return;
-		edit(chatId, messageId, (m) => ({ ...m, parts: [], streaming: true, stopped: false }));
+		edit(chatId, messageId, (m) => ({ ...m, parts: [], streaming: true, stopped: false, model: model.name }));
+		follow = true;
 		play(chatId, messageId, respond(prompt));
 	}
 
@@ -136,9 +178,32 @@
 		setTimeout(() => copiedId === message.id && (copiedId = null), 1500);
 	}
 
-	function newChat() {
-		activeId = null;
-		draft = '';
+	function openChat(id: number | null) {
+		activeId = id;
+		follow = true;
+	}
+
+	function deleteChat(id: number) {
+		if (streaming?.chatId === id) stop();
+		chats = chats.filter((c) => c.id !== id);
+		if (activeId === id) openChat(null);
+		menu = null;
+	}
+
+	function jumpToLatest() {
+		follow = true;
+		bottom?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+	}
+
+	function toggleMenu(next: Menu, event: Event) {
+		event.stopPropagation();
+		if (menu?.anchor === next.anchor) {
+			menu = null;
+			return;
+		}
+		menu = next;
+		menuRow = null;
+		menuTrigger = event.currentTarget as Element;
 	}
 
 	// Paragraphs and "- " bullets, one block per line.
@@ -161,21 +226,39 @@
 		return () => clearInterval(id);
 	});
 
+	// Re-runs on every change to the open conversation, including each streamed
+	// chunk. It waits a frame so the scroll lands after the new content is laid out.
 	$effect(() => {
-		document.title = activeChat ? `${activeChat.title} · Atlas` : 'Atlas';
+		void activeChat;
+		const end = bottom;
+		if (!follow || !end) return;
+		const frame = requestAnimationFrame(() => end.scrollIntoView({ block: 'end' }));
+		return () => cancelAnimationFrame(frame);
 	});
 
-	// Opening a chat or adding a message brings the newest message into view.
-	// Streaming into the last one does not, so reading earlier messages is not interrupted.
-	let historyEnd = $state<HTMLDivElement>();
-	let shown = '';
 	$effect(() => {
-		const at = `${activeId}:${activeChat?.messages.length ?? 0}`;
-		const end = historyEnd;
-		if (!end || at === shown) return;
-		shown = at;
-		// Once the frame is laid out, so a history that just opened has its height.
-		requestAnimationFrame(() => end.scrollIntoView({ block: 'end' }));
+		void activeId;
+		composer?.focus();
+	});
+
+	// A press outside the open menu and the button that opened it closes it.
+	$effect(() => {
+		const onPointerDown = (event: PointerEvent) => {
+			const target = event.target as Node;
+			if (!menu || menuEl?.contains(target) || menuTrigger?.contains(target)) return;
+			menu = null;
+		};
+		const onKey = (event: KeyboardEvent) => event.key === 'Escape' && (menu = null);
+		window.addEventListener('pointerdown', onPointerDown);
+		window.addEventListener('keydown', onKey);
+		return () => {
+			window.removeEventListener('pointerdown', onPointerDown);
+			window.removeEventListener('keydown', onKey);
+		};
+	});
+
+	$effect(() => {
+		document.title = activeChat ? `${activeChat.title} · Atlas` : 'Atlas';
 	});
 
 	const ink = '#1f1f1d';
@@ -264,6 +347,30 @@
 		fontWeight: 500,
 		color: muted
 	});
+	const pillButton = $style({
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 6,
+		padding: [4, 10],
+		borderRadius: 999,
+		fontSize: 12.5,
+		color: muted
+	});
+	const popover = $style({
+		position: 'absolute',
+		padding: 4,
+		borderRadius: 12,
+		borderWidth: 1,
+		borderColor: line,
+		background: '#ffffff',
+		color: ink,
+		fontSize: 14,
+		shadow: [
+			{ y: 2, blur: 4, color: '#1f1f1d0f' },
+			{ y: 12, blur: 32, spread: -8, color: '#1f1f1d33' }
+		]
+	});
+	const popoverRow = $style({ width: 'fill', flexDirection: 'row', alignItems: 'center', gap: 10, padding: [8, 10], borderRadius: 8 });
 </script>
 
 <main style={{ width: 'fill', height: 'fill', flexDirection: 'row', color: ink, fontSize: 15 }}>
@@ -279,36 +386,53 @@
 				sidebarItem,
 				{ borderWidth: 1, borderColor: line, background: '#ffffff', fontWeight: 500, shadow: { y: 1, blur: 2, color: '#1f1f1d0d' } }
 			]}
-			onclick={newChat}
+			onclick={() => openChat(null)}
 		>
 			<span style={{ fontSize: 17, lineHeight: 18, color: muted }}>+</span>
 			<span>New chat</span>
 		</button>
 
-		<div style={{ width: 'fill', gap: 2 }}>
-			<p style={[caption, { margin: [4, 10] }]}>RECENT</p>
+		<div style={{ width: 'fill', height: 'fill', gap: 4 }}>
+		<p style={[caption, { margin: [4, 10] }]}>RECENT</p>
+		<div style={{ width: 'fill', height: 'fill', overflowY: 'auto', gap: 2 }}>
 			{#each chats as chat (chat.id)}
-				<button
+				<div
 					style={[
 						sidebarItem,
+						{ padding: [4, 4, 4, 10] },
 						hoveredChat === chat.id && { background: '#efeeea' },
 						activeId === chat.id && { background: '#e9e7e1', color: ink, fontWeight: 500 }
 					]}
-					onclick={() => (activeId = chat.id)}
+					onclick={() => openChat(chat.id)}
 					onpointerenter={() => (hoveredChat = chat.id)}
 					onpointerleave={() => hoveredChat === chat.id && (hoveredChat = null)}
 				>
 					<p style={{ width: 'fill' }}>{chat.title}</p>
-					{#if streaming?.chatId === chat.id}
-						<div style={[badge, { width: 8, height: 8, background: badgeColor.running }]}></div>
+					{#if hoveredChat === chat.id || menu?.chatId === chat.id}
+						<button
+							anchorName={`chat-${chat.id}`}
+							style={[
+								{ width: 26, height: 26, borderRadius: 6, alignItems: 'center', justifyContent: 'center', color: muted, fontSize: 15 },
+								menu?.chatId === chat.id && { background: '#dddbd4' }
+							]}
+							onclick={(e: Event) => toggleMenu({ kind: 'chat', anchor: `chat-${chat.id}`, chatId: chat.id }, e)}
+						>
+							⋯
+						</button>
+					{:else if streaming?.chatId === chat.id}
+						<div style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center' }}>
+							<div style={[badge, { width: 8, height: 8, background: badgeColor.running }]}></div>
+						</div>
 					{:else}
-						<p style={{ fontSize: 12, color: faint, fontWeight: 400 }}>{chat.when}</p>
+						<div style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center' }}>
+							<p style={{ fontSize: 12, color: faint, fontWeight: 400 }}>{chat.when}</p>
+						</div>
 					{/if}
-				</button>
+				</div>
 			{/each}
 		</div>
+		</div>
 
-		<div style={{ height: 'fill' }}></div>
 		<div style={[row, { width: 'fill', gap: 10, padding: [8, 8] }]}>
 			<div style={avatar('#5e6ad2', 30)}>MO</div>
 			<div style={{ gap: 2 }}>
@@ -321,27 +445,25 @@
 
 	<!-- Conversation -->
 	<div style={{ width: 'fill', height: 'fill' }}>
-		<div style={[row, { width: 'fill', gap: 10, padding: [14, 24] }]}>
+		<div style={[row, { width: 'fill', gap: 10, padding: [12, 24] }]}>
 			<p style={{ fontSize: 15, fontWeight: 600 }}>{activeChat ? activeChat.title : 'New chat'}</p>
 			<div style={spacer}></div>
-			<div style={[row, { gap: 6, padding: [4, 10], borderRadius: 999, borderWidth: 1, borderColor: line, fontSize: 12.5, color: muted }]}>
+			<button
+				anchorName="model"
+				style={[pillButton, { borderWidth: 1, borderColor: line }, menu?.kind === 'model' && { background: '#f3f2ee' }]}
+				onclick={(e: Event) => toggleMenu({ kind: 'model', anchor: 'model' }, e)}
+			>
 				<div style={[badge, { width: 7, height: 7, background: streaming ? badgeColor.running : badgeColor.done }]}></div>
-				<span>Atlas 2 · simulated</span>
-			</div>
+				<span style={{ color: ink, fontWeight: 500 }}>{model.name}</span>
+				<span style={{ fontSize: 10 }}>▾</span>
+			</button>
 		</div>
 		<div style={divider}></div>
 
 		{#if activeChat}
-			<!-- The history scrolls; the auto margin keeps a short conversation next to the composer. -->
 			<div
-				style={{
-					width: 'fill',
-					height: 'fill',
-					flexDirection: 'row',
-					justifyContent: 'center',
-					overflowY: 'auto',
-					padding: [0, 32]
-				}}
+				style={{ width: 'fill', height: 'fill', flexDirection: 'row', justifyContent: 'center', overflowY: 'auto', padding: [0, 32] }}
+				onwheel={(e: WheelEvent) => e.deltaY < 0 && (follow = false)}
 			>
 				<div style={[column, { gap: 28, padding: [32, 0, 24, 0], marginTop: 'auto' }]}>
 					{#each activeChat.messages as message, i (message.id)}
@@ -365,7 +487,7 @@
 													]}
 												></div>
 											{/each}
-											<p style={{ fontSize: 14, color: muted }}>Thinking</p>
+											<p style={{ fontSize: 14, color: muted }}>{message.model === 'Atlas 2 Pro' ? 'Thinking it through' : 'Thinking'}</p>
 										</div>
 									{/if}
 
@@ -390,7 +512,7 @@
 												</div>
 												<div style={{ width: 'fill', padding: [12, 14] }}>
 													<p style={{ width: 'fill', fontFamily: mono, fontSize: 13, lineHeight: 20, color: '#ecebe6' }}>
-														{part.code}{message.streaming && message.parts[message.parts.length - 1] === part ? '▍' : ''}
+														{part.code}{caret(message, part)}
 													</p>
 												</div>
 											</div>
@@ -480,13 +602,14 @@
 											{#if message.stopped}
 												<p style={{ fontSize: 12.5, color: faint }}>Stopped</p>
 											{/if}
+											<p style={{ fontSize: 12.5, color: faint }}>{message.model}</p>
 										</div>
 									{/if}
 								</div>
 							</div>
 						{/if}
 					{/each}
-					<div bind:this={historyEnd}></div>
+					<div bind:this={bottom}></div>
 				</div>
 			</div>
 		{:else}
@@ -524,6 +647,7 @@
 		<div style={{ width: 'fill', flexDirection: 'row', justifyContent: 'center', padding: [0, 32, 16, 32] }}>
 			<div style={[column, { gap: 8, alignItems: 'center' }]}>
 				<div
+					anchorName="composer"
 					style={{
 						width: 'fill',
 						gap: 6,
@@ -542,6 +666,7 @@
 						style={{ width: 'fill', height: 46, lineHeight: 22, paddingRight: 6 }}
 						placeholder={activeChat ? 'Reply to Atlas…' : 'Ask Atlas anything…'}
 						bind:value={draft}
+						bind:this={composer}
 						onkeydown={(e: KeyboardEvent) => {
 							if (e.key !== 'Enter' || e.shiftKey) return;
 							e.preventDefault();
@@ -549,10 +674,14 @@
 						}}
 					></textarea>
 					<div style={[row, { width: 'fill', gap: 8 }]}>
-						<div style={[row, { gap: 6, padding: [4, 10], borderRadius: 999, background: '#f3f2ee', fontSize: 12.5, color: muted }]}>
+						<button
+							anchorName="tools"
+							style={[pillButton, { background: menu?.kind === 'tools' ? '#e9e7e1' : '#f3f2ee' }]}
+							onclick={(e: Event) => toggleMenu({ kind: 'tools', anchor: 'tools' }, e)}
+						>
 							<span style={{ fontFamily: mono, fontSize: 11 }}>{'{ }'}</span>
-							<span>8 tools</span>
-						</div>
+							<span>{tools.length} tools</span>
+						</button>
 						<p style={{ fontSize: 12.5, color: faint }}>Shift + Enter for a new line</p>
 						<div style={spacer}></div>
 						{#if streaming}
@@ -572,4 +701,80 @@
 			</div>
 		</div>
 	</div>
+
+	{#if streamingHere && !follow}
+		<button
+			portal="overlay"
+			style={[
+				pillButton,
+				{
+					position: 'absolute',
+					anchor: 'composer',
+					anchorPosition: 'top',
+					anchorOffset: 12,
+					padding: [7, 14],
+					background: ink,
+					color: '#ffffff',
+					fontWeight: 500,
+					shadow: { y: 4, blur: 12, color: '#1f1f1d40' }
+				}
+			]}
+			onclick={jumpToLatest}
+		>
+			↓ Jump to latest
+		</button>
+	{/if}
+
+	{#if menu}
+		<div
+			portal="overlay"
+			bind:this={menuEl}
+			style={[
+				popover,
+				menu.kind === 'model' && { anchor: 'model', anchorPosition: 'bottom-end', anchorOffset: 6, width: 280 },
+				menu.kind === 'tools' && { anchor: 'tools', anchorPosition: 'top-start', anchorOffset: 8, width: 320 },
+				menu.kind === 'chat' && { anchor: menu.anchor, anchorPosition: 'right-start', anchorOffset: 6, width: 180 }
+			]}
+		>
+			{#if menu.kind === 'model'}
+				{#each models as option (option.id)}
+					<button
+						style={[popoverRow, menuRow === option.id && { background: '#f3f2ee' }]}
+						onclick={() => {
+							modelId = option.id;
+							menu = null;
+						}}
+						onpointerenter={() => (menuRow = option.id)}
+					>
+						<div style={{ width: 'fill', gap: 2 }}>
+							<p style={{ fontWeight: 500 }}>{option.name}</p>
+							<p style={{ fontSize: 12.5, color: muted }}>{option.detail}</p>
+						</div>
+						<p style={{ width: 14, color: accent, fontWeight: 700 }}>{option.id === modelId ? '✓' : ''}</p>
+					</button>
+				{/each}
+			{:else if menu.kind === 'tools'}
+				<div style={{ padding: [8, 10, 6, 10] }}>
+					<p style={caption}>AVAILABLE TOOLS</p>
+				</div>
+				<div style={{ width: 'fill', maxHeight: 300, overflowY: 'auto' }}>
+					{#each tools as tool (tool.name)}
+						<div style={[popoverRow, { padding: [6, 10], gap: 2, flexDirection: 'column', alignItems: 'start' }]}>
+							<p style={{ fontFamily: mono, fontSize: 12.5, fontWeight: 600 }}>{tool.name}</p>
+							<p style={{ fontSize: 12.5, color: muted }}>{tool.detail}</p>
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<button
+					style={[popoverRow, { color: '#c0392b' }, menuRow === 'delete' && { background: '#fbefec' }]}
+					onclick={() => deleteChat(menu!.chatId!)}
+					onpointerenter={() => (menuRow = 'delete')}
+				>
+					Delete chat
+				</button>
+			{/if}
+		</div>
+	{/if}
 </main>
+<portal id="overlay" />

@@ -45,6 +45,7 @@ export type Message = {
 	parts: Part[];
 	streaming: boolean;
 	stopped: boolean;
+	model: string;
 };
 
 export type Chat = { id: number; title: string; when: string; messages: Message[] };
@@ -316,14 +317,15 @@ export function respond(prompt: string): Step[] {
 	return fallback(prompt);
 }
 
-const user = (text: string): Message => ({ id: uid(), role: 'user', text, parts: [], streaming: false, stopped: false });
+const user = (text: string): Message => ({ id: uid(), role: 'user', text, parts: [], streaming: false, stopped: false, model: '' });
 const assistant = (steps: Step[]): Message => ({
 	id: uid(),
 	role: 'assistant',
 	text: '',
 	parts: finished(steps),
 	streaming: false,
-	stopped: false
+	stopped: false,
+	model: 'Atlas 2'
 });
 
 export const seedChats = (): Chat[] => [
@@ -356,6 +358,25 @@ export const seedChats = (): Chat[] => [
 		when: 'Mon',
 		messages: [user("What's the weather in Lisbon this weekend? Trying to plan what to do each day."), assistant(weather)]
 	}
+];
+
+/** `pace` scales how long tokens and tools take; `think` is the pause before the first output. */
+export const models = [
+	{ id: 'atlas-2', name: 'Atlas 2', detail: 'Balanced speed and depth', pace: 1, think: 700 },
+	{ id: 'atlas-2-mini', name: 'Atlas 2 Mini', detail: 'Fastest replies for quick questions', pace: 0.4, think: 250 },
+	{ id: 'atlas-2-pro', name: 'Atlas 2 Pro', detail: 'Thinks longer before it answers', pace: 1.3, think: 2600 }
+];
+
+export const tools = [
+	{ name: 'web_search', detail: 'Search the public web' },
+	{ name: 'get_weather', detail: 'Forecasts for any city' },
+	{ name: 'query_database', detail: 'Read-only SQL on the analytics warehouse' },
+	{ name: 'query_logs', detail: 'Search production logs' },
+	{ name: 'http_request', detail: 'Call internal and public HTTP endpoints' },
+	{ name: 'search_flights', detail: 'Fares and schedules' },
+	{ name: 'search_hotels', detail: 'Availability and nightly rates' },
+	{ name: 'get_calendar', detail: 'Your events, read-only' },
+	{ name: 'send_slack_message', detail: 'Post to channels you belong to' }
 ];
 
 export const suggestions = [
