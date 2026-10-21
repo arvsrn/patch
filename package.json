@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "pat": "./index.ts"
+    "patch": "./index.ts"
   },
   "scripts": {
     "dev": "bun index.ts dev",

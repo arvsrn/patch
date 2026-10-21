@@ -4,10 +4,10 @@ import { compile } from './compiler';
 import { renderRunic, toRunicClipboard, toRunicHtml } from './runic-adapter';
 
 const usage = `usage:
-  pat dev <input.pat> [--port 5173]
-  pat build <input.pat> [output.html]
-  pat runic <input.pat> [--state name=value]... [--viewport WxH | Wxhug] [--stdout | --output file.json | file.html]
-  pat lsp
+  patch dev <input.pat> [--port 5173]
+  patch build <input.pat> [output.html]
+  patch runic <input.pat> [--state name=value]... [--viewport WxH | Wxhug] [--stdout | --output file.json | file.html]
+  patch lsp
 
 dev serves the app with Vite and reloads the browser when the file changes.
 build bundles the app and its imports into one standalone HTML file (compile is an alias).
@@ -16,7 +16,8 @@ runic copies the evaluated design to the clipboard for pasting into Runic.
   --state   values are parsed as JSON, falling back to a plain string
   --stdout  print the clipboard payload instead of copying it
   --output  write the node graph as JSON, or as HTML for Runic's write_html import
-lsp runs the PAT language server over stdio.`;
+lsp runs the PAT language server over stdio.
+Any other arguments are passed to the system patch(1).`;
 
 const fail = (message: string): never => {
 	console.error(message);
@@ -24,6 +25,15 @@ const fail = (message: string): never => {
 };
 
 const [command, ...rest] = process.argv.slice(2);
+const commands = ['dev', 'build', 'compile', 'runic', 'lsp', 'help'];
+
+// `patch` is also the standard Unix tool. Anything that is not one of our
+// commands (e.g. `patch -p1 < fix.diff`) goes to the system binary unchanged.
+const system = '/usr/bin/patch';
+if (!commands.includes(command) && (command !== undefined || !process.stdin.isTTY) && (await Bun.file(system).exists())) {
+	const proc = Bun.spawn([system, ...process.argv.slice(2)], { stdio: ['inherit', 'inherit', 'inherit'] });
+	process.exit(await proc.exited);
+}
 
 try {
 	if (command === 'lsp') (await import('./lsp')).startLanguageServer();

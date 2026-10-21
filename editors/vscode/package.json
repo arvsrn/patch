@@ -1,7 +1,7 @@
 {
 	"name": "pat",
 	"displayName": "PAT",
-	"description": "PAT language support (development build)",
+	"description": "PAT language support: highlighting and compiler diagnostics",
 	"version": "0.0.1",
 	"private": true,
 	"publisher": "local",
@@ -38,13 +38,24 @@
 		"configuration": {
 			"title": "PAT",
 			"properties": {
-				"pat.bun": {
+				"patch.bun": {
 					"type": "string",
-					"default": "bun",
-					"description": "Path to the bun executable used to run the PAT language server."
+					"default": "",
+					"description": "Path to bun. Defaults to ~/.bun/bin/bun, then bun on PATH."
+				},
+				"patch.entry": {
+					"type": "string",
+					"default": "",
+					"description": "Path to the patch CLI entry (index.ts). Defaults to the `patch` command installed by `bun link`."
 				}
 			}
 		}
+	},
+	"scripts": {
+		"package": "vsce package --allow-missing-repository --skip-license -o pat.vsix"
+	},
+	"devDependencies": {
+		"@vscode/vsce": "^3.2.2"
 	},
 	"dependencies": {
 		"vscode-languageclient": "^9.0.1"
