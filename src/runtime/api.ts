@@ -13,7 +13,7 @@ export type ApiOptions = {
 
 export function createApi(r: Reactive, { overrides = {}, design = false }: ApiOptions = {}): RuntimeApi {
 	return {
-		state: (id, initial) => r.cell(Object.prototype.hasOwnProperty.call(overrides, id) ? overrides[id] : initial),
+		state: (id, initial) => r.cell(Object.prototype.hasOwnProperty.call(overrides, id) ? overrides[id] : initial?.()),
 		derived: r.derived,
 		effect: (fn) => {
 			if (!design) r.deferredEffect(fn);

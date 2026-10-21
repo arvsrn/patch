@@ -15,7 +15,8 @@ export type Cell<T = unknown> = { readonly v: T };
 
 /** `$$rt`: what compiled scripts call. */
 export type RuntimeApi = {
-	state: (id: string, initial?: unknown) => { v: unknown };
+	/** `initial` computes the initial value; it is not called when the state is overridden. */
+	state: (id: string, initial?: () => unknown) => { v: unknown };
 	derived: <T>(fn: () => T) => Cell<T>;
 	effect: (fn: () => unknown) => void;
 	style: (input: unknown) => Style;

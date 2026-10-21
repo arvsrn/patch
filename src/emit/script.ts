@@ -5,7 +5,7 @@
 //   reading or assigning `count`      → `count.v`
 //   `{ count }`                       → `{ count: count.v }`
 //   `todos[0].done = true`            → `$$rt.mutate(todos, todos.v[0].done = true)`
-//   `$state(x)` / `$state()`          → `$$rt.state("name", x)` / `$$rt.state("name")`
+//   `$state(x)` / `$state()`          → `$$rt.state("name", () => (x))` / `$$rt.state("name")`
 //   `$derived(expr)`                  → `$$rt.derived(() => (expr))`
 //   `$derived.by` / `$effect` / `$style` → `$$rt.derived` / `$$rt.effect` / `$$rt.style`
 //   `style={{ gap: 4 }}`              → `style={$$rt.style({ gap: 4 })}`
@@ -52,8 +52,10 @@ export function emitScript(component: Component, bindings: Bindings, styles: Sty
 		const [first] = node.arguments;
 		if (name === '$state') {
 			const id = JSON.stringify(stateIds.get(node));
-			if (first) edits.before(first.start, `${id}, `);
-			else edits.before(node.end - 1, id);
+			if (first) {
+				edits.before(first.start, `${id}, () => (`);
+				edits.after(first.end, ')');
+			} else edits.before(node.end - 1, id);
 		} else if (name === '$derived') {
 			edits.before(first.start, '() => (');
 			edits.after(first.end, ')');
