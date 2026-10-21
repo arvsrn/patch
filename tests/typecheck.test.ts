@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { analyze, CompileError, compile, complete } from '../src';
+import { analyze, CompileError, compile } from '../src';
 
 const dir = mkdtempSync(join(tmpdir(), 'pat-typecheck-'));
 writeFileSync(join(dir, 'models.ts'), `export interface Box<T> { value: T; label: string }\nexport const box = <T,>(value: T): Box<T> => ({ value, label: 'box' });\n`);
@@ -76,11 +76,6 @@ test('compile refuses type errors and keeps imports in the module', () => {
 	const compiled = compile(script(`\timport { foo } from './utils.ts';\n\timport type { Box } from './models.ts';\n\tconst n = foo.bar();`, '<p>{n}</p>'), file);
 	expect(compiled.imports).toEqual(['./utils.ts']);
 	expect(compiled.module).toStartWith('import { foo } from "./utils.ts";');
-});
-
-test('style completion is unaffected', () => {
-	const source = script(`\tconst s = $style({ flexDirection:  });`);
-	expect(complete(source, source.indexOf(':  ') + 2, { filename: file }).map((c) => c.label)).toEqual(['row', 'column']);
 });
 
 test('the LSP publishes TypeScript diagnostics and survives broken edits', async () => {

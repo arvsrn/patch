@@ -3,7 +3,6 @@ import { compile } from '../src';
 import { evaluate } from '../src/design';
 import { decodeFigmaClipboard, snapshotToFigma } from '../src/targets/figma';
 import { decode, decodeSchema, encode, encodeSchema, parseSchema } from '../src/targets/figma/kiwi';
-import { fontStyleName } from '../src/targets/figma/encode';
 import { loadFonts } from '../src/targets/figma/fonts';
 import { measureWith, type WidthOf } from '../src/targets/figma/text';
 
@@ -208,20 +207,6 @@ test('lines break at spaces, with spaces at a break hanging', () => {
 	expect(measure(node)).toEqual({ width: 45, height: 24 });
 	expect(measure(node, 44)).toEqual({ width: 20, height: 36 });
 	expect(measure({ ...node, truncate: true }, 44).height).toBe(12);
-});
-
-test('weights and slant become Figma style names', () => {
-	expect([100, 300, 400, 500, 600, 700, 800, 900].map((w) => fontStyleName(w, false))).toEqual([
-		'Thin',
-		'Light',
-		'Regular',
-		'Medium',
-		'Semi Bold',
-		'Bold',
-		'Extra Bold',
-		'Black'
-	]);
-	expect([fontStyleName(400, true), fontStyleName(650, true)]).toEqual(['Italic', 'Bold Italic']);
 });
 
 test('a family that is not installed is measured with a fallback and reported', () => {

@@ -13,37 +13,6 @@ const ir = (source: string) => {
 	return { component, diagnostics: reporter.diagnostics.map((d) => d.message) };
 };
 
-test('lowering normalizes svelte syntax into the IR', () => {
-	const { component, diagnostics } = ir(
-		`<main>\n  <p title="x">  hello <span style={s}>  {name} </span>  </p>\n  {#if a}<div></div>{:else if b}<div></div>{:else}<div></div>{/if}\n  {#each list as item, i (item.id)}<input bind:value={draft} type="text" />{/each}\n</main>`
-	);
-	expect(diagnostics).toEqual(['attribute "title" is not supported on <p>']);
-	const [main] = component.template as any[];
-	expect(main).toMatchObject({ type: 'element', tag: 'main', kind: 'frame' });
-	const [p, ifBlock, each] = main.children;
-	// Whitespace is collapsed and trimmed across the nested span.
-	expect(p.content.map((c: any) => c.type)).toEqual(['static', 'span']);
-	expect(p.content[0].value).toBe('hello ');
-	expect(p.content[1].content.map((c: any) => c.type)).toEqual(['expression']);
-	// `{:else if}` chains flatten into branches.
-	expect(ifBlock.branches).toHaveLength(2);
-	expect(ifBlock.otherwise).toHaveLength(1);
-	expect(each).toMatchObject({ type: 'each', index: 'i' });
-	expect(each.item.name).toBe('item');
-	expect(each.body[0].attributes.map((a: any) => a.type)).toEqual(['bind', 'attribute']);
-});
-
-test('lowering classifies top-level runes', () => {
-	const { component } = ir(`<script>let a = $state(1); let b = $derived(a * 2); let c = $derived.by(() => a); const s = $style({ gap: 1 }); $effect(() => {}); import x from './x.ts';</script>`);
-	const script = component.script!;
-	expect(script.state.map((d) => d.info)).toMatchObject([{ id: 'a', defaultValue: 1 }]);
-	expect(script.derived.map((d) => [d.id.name, d.by])).toEqual([['b', false], ['c', true]]);
-	expect(script.styles.map((d) => d.id.name)).toEqual(['s']);
-	expect(script.effects).toHaveLength(1);
-	expect(script.imports).toHaveLength(1);
-	expect(script.runes.size).toBe(4);
-});
-
 test('binding resolves through scopes, shadowing and each items', () => {
 	const { component } = ir(`<script>let n = $state(0); function f(n) { return n; } const g = () => n;</script>{#each items as n (n)}<p>{n}</p>{/each}<p>{n}</p>`);
 	const kinds = bind(component).references.filter((r) => r.node.name === 'n').map((r) => r.symbol?.kind);

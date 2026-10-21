@@ -10,8 +10,8 @@ const SOURCE = `<script lang="ts">
 </script>
 <main><p>{filter} {ran}</p></main>`;
 
-/** Mounts into a minimal document stand-in; returns the rendered text after effects had their chance. */
-async function render(options?: Parameters<typeof mount>[2]) {
+/** Runs `start` against a minimal document stand-in; returns the rendered text after effects had their chance. */
+async function render(start: (root: any) => void) {
 	const text: { data: string }[] = [];
 	const node = (): any => ({
 		style: { setProperty() {}, removeProperty() {} },
@@ -20,12 +20,12 @@ async function render(options?: Parameters<typeof mount>[2]) {
 		insertBefore: (n: any) => n,
 		addEventListener() {}
 	});
-	const doc = { head: node(), createElement: node, createComment: () => ({}), createTextNode: (data: string) => (text.push({ data }), text.at(-1)) };
+	const root = node();
+	const doc = { head: node(), getElementById: () => root, createElement: node, createComment: () => ({}), createTextNode: (data: string) => (text.push({ data }), text.at(-1)) };
 	const previous = (globalThis as any).document;
 	(globalThis as any).document = doc;
 	try {
-		const program = new Function(`return (${compile(SOURCE, 'html.pat').module.replace(/^export default /m, '')})`)();
-		mount(program, node(), options);
+		start(root);
 		await new Promise((resolve) => setTimeout(resolve, 0));
 	} finally {
 		(globalThis as any).document = previous;
@@ -33,9 +33,14 @@ async function render(options?: Parameters<typeof mount>[2]) {
 	return text.map((t) => t.data).join('');
 }
 
+const mountSource = (options?: Parameters<typeof mount>[2]) => (root: any) => {
+	const program = new Function(`return (${compile(SOURCE, 'html.pat').module.replace(/^export default /m, '')})`)();
+	mount(program, root, options);
+};
+
 test('mounting from overridden state skips effects; a plain mount runs them', async () => {
-	expect(await render({ overrides: { filter: 'done' }, design: true })).toBe('done no');
-	expect(await render()).toBe('all yes');
+	expect(await render(mountSource({ overrides: { filter: 'done' }, design: true }))).toBe('done no');
+	expect(await render(mountSource())).toBe('all yes');
 });
 
 test('an HTML snapshot bundles the app with its state baked into the mount', async () => {
@@ -44,8 +49,8 @@ test('an HTML snapshot bundles the app with its state baked into the mount', asy
 	try {
 		const html = await buildStandalone(path, { overrides: { filter: 'done' }, design: true });
 		expect(html).toStartWith('<!doctype html>');
-		expect(html).toMatch(/overrides:\{filter:[`"']done[`"']\}/);
-		expect(html).toContain('design:!0');
+		const script = /<script type="module">\n([\s\S]*)\n<\/script>/.exec(html)![1];
+		expect(await render(() => new Function(script)())).toBe('done no');
 	} finally {
 		await Bun.file(path).delete();
 	}

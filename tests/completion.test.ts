@@ -15,6 +15,16 @@ test('inline $style in a style= attribute uses the element kind', () => {
 	expect(labels(`<div style={[{ gap: 4 }, $style({ | })]}></div>`)).toEqual(legal('frame'));
 });
 
+test('direct style objects use the element kind', () => {
+	expect(labels(`<p>a <span style={{\n  |\n}}>b</span></p>`)).toEqual(legal('inline'));
+	expect(labels(`<input style={{\n  |\n}} />`)).toEqual(legal('input'));
+	expect(labels(`<div style={[{ gap: 4 }, { | }]}></div>`)).toEqual(legal('frame'));
+});
+
+test('a shared $style uses the kind of the element it is applied to', () => {
+	expect(labels(`<script>const s = $style({ | })</script><p>a <span style={s}>b</span></p>`)).toEqual(legal('inline'));
+});
+
 test('standalone $style keeps the general vocabulary', () => {
 	expect(labels(`<script>const s = $style({ | })</script>`)).toEqual(legal('frame'));
 });
