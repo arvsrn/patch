@@ -162,7 +162,13 @@ $effect(() => {
 - Use `$effect(fn)` only as a top-level expression statement. It takes exactly one function.
 - Effects first run **after the initial render**, in declaration order.
 - An effect re-runs whenever a `$state` or `$derived` that it read during its last run changes. Dependencies are collected only while `fn` runs synchronously. Reads after an `await` are not tracked.
-- If `fn` returns a function, that function runs before the next run. Cleanup code that reads state sees the **current** values, not the values from the run being cleaned up.
+- If `fn` returns a function, that function runs before the next run and when the app is torn down. Like every closure, it reads state **live**: it sees the current values, not the values from the run being cleaned up. Capture a value in a local to keep the one from that run:
+  ```ts
+  $effect(() => {
+  	const valueAtRun = count;
+  	return () => console.log(valueAtRun);
+  });
+  ```
 - Effects may write state. An effect that writes state it also reads triggers itself again. After 1000 such rounds the runtime throws `Reactive loop`.
 - An error thrown inside an effect is logged with `console.error`, and the other effects still run.
 - In TS, async effect functions are a type error. In JS they are accepted, and the returned promise is ignored.
