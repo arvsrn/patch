@@ -42,9 +42,9 @@ Standard JS and TS work: functions, classes, closures, `async` functions, `try`/
 | undeclared identifiers starting with `$` (`$props`, `$state.raw`, `$inspect`, `$store`, …) | error |
 | references to identifiers starting with `$$` | error (reserved) |
 
-**No DOM rendering access.** The template and `style={...}` are the only way to affect what renders. Script and template expressions cannot create, query, measure, or restyle DOM nodes, and code that tries is a compile error. Other browser APIs (`fetch`, `localStorage`, `setTimeout`, `document.title`, `window`) are allowed.
+**No DOM rendering access.** The template and `style={...}` are the only way to affect what renders. Script and template expressions cannot create, query, measure, or restyle DOM nodes, and code that tries is a compile error. Other browser APIs (`fetch`, `localStorage`, `setTimeout`, `document.title`, `window`) are allowed, and so are the rest of a DOM node's own API, such as `el.focus()` on an element from [`bind:this`](#bindthis).
 
-The check applies to values that may come from the DOM: the DOM globals (`document`, `window`, `self`, `globalThis`, …), event objects (in template `on…=` handlers and `addEventListener` callbacks), values typed or cast as DOM types in TS (`HTMLElement`, `Event`, …), and anything read, called, or stored from those. The same property names on ordinary objects are fine. On those values, these are rejected:
+The check applies to values that may come from the DOM: the DOM globals (`document`, `window`, `self`, `globalThis`, …), event objects (in template `on…=` handlers and `addEventListener` callbacks), `bind:this` variables, values typed or cast as DOM types in TS (`HTMLElement`, `Event`, …), and anything read, called, or stored from those. The same property names on ordinary objects are fine. On those values, these are rejected:
 
 - Accessing any of these properties:
   ```
@@ -87,7 +87,7 @@ declare function $style(style: { readonly [property: string]: unknown }): PatSty
 
 Type errors fail `patch build` and `patch snapshot`. `patch dev` shows them in the browser overlay.
 
-**Only the script is type-checked.** Template expressions are checked for names only, in JS and TS alike: a name that is not a script binding, an `{#each}` name or a global is an error. Their types are not checked. With `lang="ts"`, template expressions may use TS syntax such as `name as Filter`. Without it, TS syntax in the template is a parse error.
+**Only the script is type-checked.** Template expressions are checked for names only, in JS and TS alike: a name that is not a script binding, an `{#each}` name or a global is an error. Their types are not checked. The one exception is `bind:this`: its variable must accept both the element's type and `undefined` (see [`bind:this`](#bindthis)). With `lang="ts"`, template expressions may use TS syntax such as `name as Filter`. Without it, TS syntax in the template is a parse error.
 
 ### Where the script runs
 
@@ -287,7 +287,7 @@ The first branch whose test is truthy is rendered. When the selected branch chan
 
 These are not supported: `{#await}`, `{#key}`, `{#snippet}`, `{@render}`, `{@html}`, `{@const}`, `{@debug}`, and `{@attach}`.
 
-## Events and `bind:value`
+## Events and bindings
 
 ```svelte
 <button onclick={() => count++}>+</button>
@@ -315,7 +315,44 @@ These are not supported: `{#await}`, `{#key}`, `{#snippet}`, `{@render}`, `{@htm
 - `bind:value` is allowed only on `<input>` and `<textarea>`. Its target must be a **top-level `$state` identifier**. A derived value, a member (`form.name`), or an each item is not allowed.
 - It is equivalent to `value={query}` plus an `input` handler that sets `query = event.currentTarget.value`. The bound value is always a string.
 - You cannot combine it with `value=` or `oninput=` on the same element.
-- No other bindings exist (`bind:checked`, `bind:this`, …).
+
+### `bind:this`
+
+`bind:this` puts an element's underlying DOM node in a variable. The value is the real element, such as an `HTMLInputElement`, not a wrapper, so you use the DOM's own API on it:
+
+```svelte
+<script lang="ts">
+	let open = $state(false);
+	let input = $state<HTMLInputElement>();
+
+	// Runs when the input mounts (and again when it unmounts).
+	$effect(() => input?.focus());
+</script>
+<button onclick={() => (open = true)}>Search</button>
+{#if open}
+	<input style={{ width: 240 }} bind:this={input} />
+{/if}
+```
+
+- `bind:this` works on any element except an inline span. Its target must be a **top-level `let` identifier**, either plain or `$state`. A `const`, a derived value, a member (`refs.input`), or an each item is not allowed. You can combine it with `bind:value`.
+- The variable holds the element while the element is mounted. Before the element mounts and after it unmounts, it holds `undefined`. When an `{#if}` branch is destroyed, its elements unmount; when an `{#each}` item is removed, its elements unmount.
+- It is set as the element mounts, during the render that follows a state change, which is **after** the event handler that made the change returns (see [Batching](#batching)). So in `open = true; input?.focus()`, the input does not exist yet. To act on a newly mounted element, bind a `$state` variable and read it in an `$effect`, as above. A plain `let` is not reactive; use it for elements that you only reach from handlers once they exist.
+- If several mounted elements bind the same variable, for example one in each `{#each}` item, it holds the most recently mounted one. When that element unmounts, the variable becomes `undefined`, even if others are still mounted.
+- In TS, the variable must accept the element's type and `undefined`: `$state<HTMLInputElement>()` or `let input: HTMLInputElement | undefined`. A type that rejects `undefined`, such as `HTMLInputElement | null`, is a type error. Each tag is typed as follows:
+
+  | Tag | Type |
+  | --- | --- |
+  | `<main>` | `HTMLElement` |
+  | `<div>` | `HTMLDivElement` |
+  | `<button>` | `HTMLButtonElement` |
+  | `<p>` | `HTMLParagraphElement` |
+  | `<span>` | `HTMLSpanElement` |
+  | `<input>` | `HTMLInputElement` |
+  | `<textarea>` | `HTMLTextAreaElement` |
+- The [DOM rendering rules](#supported-jsts) still apply to the element: `input.focus()`, `input.select()`, and `input.value` are fine, but `input.querySelector(…)`, `input.getBoundingClientRect()`, and `input.style.color = …` are compile errors.
+- Figma snapshots have no DOM, so the variable stays `undefined`.
+
+No other bindings exist (`bind:checked`, `bind:group`, …).
 
 ## Styles
 
@@ -615,7 +652,7 @@ The Figma target approximates what Figma cannot express, and prints a warning ea
 | `{:else}` in `{#each}` | `{#if list.length === 0}` |
 | unkeyed `{#each}`, destructured items | `{#each list as item (item.id)}` |
 | `{#key}`, `{#snippet}`, `{@render}`, `{@html}`, `{@const}`, `{@debug}`, `{@attach}` | none |
-| `bind:` other than `bind:value` on inputs | `value=` plus a handler |
+| `bind:` other than `bind:value` on inputs and `bind:this` | `value=` plus a handler |
 | `on:click` / `onClick` | `onclick` |
 | transitions, animations, actions (`use:`) | none |
 | spread attributes, arbitrary HTML attributes | none |

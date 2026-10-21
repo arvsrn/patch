@@ -7,7 +7,7 @@
 // default-exports `program($$rt)` (see schema/program.ts).
 
 import { basename, resolve } from 'node:path';
-import { bind, type Bindings } from './bind';
+import { bind, isSignal, type Bindings } from './bind';
 import { checkScript } from './check/script';
 import { checkStyles } from './check/styles';
 import { checkTemplate, checkTemplateNames } from './check/template';
@@ -15,11 +15,11 @@ import { CompileError, Reporter, type Diagnostic } from './diagnostics';
 import { Edits } from './emit/edits';
 import { emitScript } from './emit/script';
 import { TemplateEmitter } from './emit/template';
-import type { Component, StateInfo } from './ir';
+import { elements, type Component, type StateInfo, type Tag } from './ir';
 import { lower } from './lower';
 import { parse } from './parse';
 import { collectStyles, type Styles } from './styles';
-import { globalNames, typecheck } from './typecheck';
+import { globalNames, typecheck, type TemplateWrite } from './typecheck';
 
 export type Compiled = {
 	filename: string;
@@ -47,6 +47,28 @@ export function front(source: string, reporter: Reporter): Front | null {
 	return { component, bindings, styles: collectStyles(component, bindings) };
 }
 
+const ELEMENT_TYPES: Record<Tag, string> = {
+	main: 'HTMLElement',
+	div: 'HTMLDivElement',
+	button: 'HTMLButtonElement',
+	p: 'HTMLParagraphElement',
+	span: 'HTMLSpanElement',
+	input: 'HTMLInputElement',
+	textarea: 'HTMLTextAreaElement'
+};
+
+/** What each `bind:this` assigns to its variable: the element while mounted, else `undefined`. */
+function boundElements(component: Component, bindings: Bindings): TemplateWrite[] {
+	const writes: TemplateWrite[] = [];
+	for (const element of elements(component.template)) {
+		if (element.type !== 'element') continue;
+		for (const a of element.attributes)
+			if (a.type === 'bind' && a.name === 'this' && bindings.reference(a.expression)?.symbol)
+				writes.push({ name: a.expression.name, type: `${ELEMENT_TYPES[element.tag]} | undefined`, ...a.span });
+	}
+	return writes;
+}
+
 function check(source: string, filename: string, reporter: Reporter): Front | null {
 	const result = front(source, reporter);
 	if (!result) return null;
@@ -62,9 +84,11 @@ function check(source: string, filename: string, reporter: Reporter): Front | nu
 	const script = component.script;
 	if (script?.lang === 'ts') {
 		const pat = reporter.diagnostics.filter((d) => d.severity === 'error');
-		for (const d of typecheck(source, resolve(filename), script.span.start, script.span.end)) {
+		const writes = boundElements(component, bindings);
+		for (const { write, ...d } of typecheck(source, resolve(filename), script.span.start, script.span.end, writes)) {
 			if (pat.some((p) => p.start <= d.start && d.start < p.end)) continue;
-			reporter.diagnostics.push({ ...d, source: 'typescript', ...reporter.position(d.start) });
+			const message = write === undefined ? d.message : `bind:this sets "${writes[write].name}" to ${writes[write].type}: ${d.message}`;
+			reporter.diagnostics.push({ ...d, message, source: 'typescript', ...reporter.position(d.start) });
 		}
 	}
 	return result;
@@ -90,10 +114,14 @@ export function compile(source: string, filename = 'app.pat'): Compiled {
 
 	const edits = new Edits(source);
 	const script = emitScript(component, bindings, styles, source, edits);
-	const nodes = new TemplateEmitter(edits, (offset) => {
-		const { line, column } = reporter.position(offset);
-		return `${line}:${column}`;
-	}).nodes(component.template);
+	const nodes = new TemplateEmitter(
+		edits,
+		(offset) => {
+			const { line, column } = reporter.position(offset);
+			return `${line}:${column}`;
+		},
+		(node) => (isSignal(bindings.reference(node)?.symbol) ? `${node.name}.v` : node.name)
+	).nodes(component.template);
 	const ts = `${script.imports.join('\n')}\nexport default function program($$rt) {\n${script.code}\nreturn [${nodes.join(',\n')}];\n}\n`;
 	const module = new Bun.Transpiler({ loader: 'ts', target: 'browser' }).transformSync(ts);
 	const imports = new Bun.Transpiler({ loader: 'js' }).scanImports(module).map((i) => i.path);

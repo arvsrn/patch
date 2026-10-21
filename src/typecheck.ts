@@ -121,21 +121,41 @@ export function checkValues(
 	}
 }
 
-/** Type-checks `source.slice(start, end)` as the script of the .pat file at `path`. */
-export function typecheck(source: string, path: string, start: number, end: number): TypeDiagnostic[] {
+/**
+ * An assignment the template makes to a top-level variable of the script
+ * (`bind:this`): `name = <a value of type>`, reported at `start`–`end`.
+ */
+export type TemplateWrite = { name: string; type: string; start: number; end: number };
+
+/**
+ * Type-checks `source.slice(start, end)` as the script of the .pat file at
+ * `path`, together with the `writes` the template makes. A diagnostic for a
+ * write carries its index.
+ */
+export function typecheck(source: string, path: string, start: number, end: number, writes: TemplateWrite[] = []): (TypeDiagnostic & { write?: number })[] {
 	const { service, files } = project(path);
 	const blank = (text: string) => text.replace(/[^\r\n]/g, ' ');
-	const text = blank(source.slice(0, start)) + source.slice(start, end) + blank(source.slice(end));
+	// The writes go in a function declaration after the script, so TypeScript
+	// also knows the variables change outside the script.
+	const lines = writes.map((w) => `${w.name} = undefined as unknown as ${w.type};\n`);
+	const tail = lines.length ? '\n;function __pat_template_writes() {\n' : '';
+	const text = blank(source.slice(0, start)) + source.slice(start, end) + blank(source.slice(end)) + tail + lines.join('') + (tail && '}\n');
+	const offsets = lines.map((_, i) => source.length + tail.length + lines.slice(0, i).join('').length);
 	const virtual = `${path}.ts`;
 	const previous = files.get(virtual);
 	if (previous?.text !== text) files.set(virtual, { text, version: (previous?.version ?? 0) + 1 });
 	return [...service.getSyntacticDiagnostics(virtual), ...service.getSemanticDiagnostics(virtual)]
 		.filter((d) => d.start !== undefined && (d.category === ts.DiagnosticCategory.Error || d.category === ts.DiagnosticCategory.Warning))
-		.map((d) => ({
-			message: ts.flattenDiagnosticMessageText(d.messageText, '\n'),
-			severity: d.category === ts.DiagnosticCategory.Error ? 'error' : 'warning',
-			start: d.start!,
-			end: d.start! + Math.max(1, d.length ?? 1),
-			code: d.code
-		}));
+		.flatMap((d) => {
+			const inScript = d.start! < source.length;
+			const write = inScript ? -1 : offsets.findLastIndex((o) => o <= d.start!);
+			if (!inScript && write < 0) return [];
+			const span = inScript ? { start: d.start!, end: d.start! + Math.max(1, d.length ?? 1) } : { start: writes[write].start, end: writes[write].end, write };
+			return [{
+				message: ts.flattenDiagnosticMessageText(d.messageText, '\n'),
+				severity: d.category === ts.DiagnosticCategory.Error ? ('error' as const) : ('warning' as const),
+				...span,
+				code: d.code
+			}];
+		});
 }

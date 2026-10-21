@@ -108,6 +108,8 @@ export function createReactive() {
 		}
 	};
 	const untrack = <T>(fn: () => T): T => within(owner, null, fn);
+	/** Runs `fn` when the current owner is reset or disposed. */
+	const onCleanup = (fn: () => void) => owner?.cleanups.push(fn);
 
 	const cell = <T>(initial: T): Cell<T> => {
 		const subs = new Set<Owner>();
@@ -178,5 +180,5 @@ export function createReactive() {
 		if (!batchDepth) flush();
 	};
 
-	return { newOwner, dispose, within, batch, untrack, cell, derived, effect, deferredEffect };
+	return { newOwner, dispose, within, batch, untrack, onCleanup, cell, derived, effect, deferredEffect };
 }

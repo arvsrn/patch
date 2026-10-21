@@ -76,7 +76,7 @@ export type Element = Frame | TextElement | Input;
 export type Attribute =
 	| { type: 'attribute'; name: string; span: Span; nameSpan: Span; value: AttributeValue }
 	| { type: 'event'; name: string; span: Span; nameSpan: Span; handler: Estree }
-	| { type: 'bind'; span: Span; nameSpan: Span; expression: Estree };
+	| { type: 'bind'; name: 'value' | 'this'; span: Span; nameSpan: Span; expression: Estree };
 
 /** `disabled` (true), `value={x}` (an expression), or `title="a {b} c"` (parts). */
 export type AttributeValue = true | { expression: Estree } | { parts: (string | Estree)[] };

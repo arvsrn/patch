@@ -30,6 +30,8 @@ export type Symbol = {
 	type?: Estree;
 	/** A parameter receiving a DOM event: the first one of a template `on…=` handler. */
 	event?: boolean;
+	/** Given an element by a template `bind:this`. */
+	element?: boolean;
 };
 
 /** Reactive symbols: reads become `.v`. */
@@ -374,7 +376,14 @@ class Binder {
 						const fn = this.functionOf(a.handler, scope);
 						if (fn) this.callbacks.push({ fn, receiver: null, reducer: false });
 					}
-					else if (a.type === 'bind') this.visit(a.expression, scope);
+					else if (a.type === 'bind') {
+						this.visit(a.expression, scope);
+						const symbol = a.name === 'this' && a.expression.type === 'Identifier' ? scope.get(a.expression.name) : null;
+						if (symbol) {
+							symbol.element = true;
+							symbol.reassigned = true;
+						}
+					}
 					else if (a.value !== true) {
 						if ('expression' in a.value) this.visit(a.value.expression, scope);
 						else for (const part of a.value.parts) if (typeof part !== 'string') this.visit(part, scope);

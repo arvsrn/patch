@@ -13,7 +13,9 @@ export class TemplateEmitter {
 	constructor(
 		private edits: Edits,
 		/** `line:column` of an offset: node ids. */
-		private id: (offset: number) => string
+		private id: (offset: number) => string,
+		/** How a top-level variable is read and written: `name.v` for state, else `name`. */
+		private variable: (node: Estree) => string
 	) {}
 
 	private expression(node: Estree) {
@@ -35,9 +37,13 @@ export class TemplateEmitter {
 	private element(node: Element) {
 		const attrs: [string, string][] = [];
 		const on: [string, string][] = [];
+		let ref = 'null';
 		for (const a of node.attributes) {
 			if (a.type === 'event') on.push([a.name, this.getter(a.handler)]);
-			else if (a.type === 'bind') {
+			else if (a.type === 'bind' && a.name === 'this') {
+				const target = this.variable(a.expression);
+				ref = `{get: () => (${target}), set: (node) => { ${target} = node }}`;
+			} else if (a.type === 'bind') {
 				const name = a.expression.name;
 				attrs.push(['value', `() => (${name}.v)`]);
 				on.push(['input', `() => (event) => { ${name}.v = event.currentTarget.value }`]);
@@ -45,7 +51,7 @@ export class TemplateEmitter {
 		}
 		const kids = node.kind === 'frame' ? this.nodes(node.children).join(',') : node.kind === 'text' ? this.inline(node.content) : '';
 		const style = node.style ? this.getter(node.style) : 'null';
-		return `{t:"el",tag:${str(node.tag)},kind:"${node.kind}",id:${str(this.id(node.span.start))},style:${style},attrs:${record(attrs)},on:${record(on)},kids:[${kids}]}`;
+		return `{t:"el",tag:${str(node.tag)},kind:"${node.kind}",id:${str(this.id(node.span.start))},style:${style},attrs:${record(attrs)},on:${record(on)},ref:${ref},kids:[${kids}]}`;
 	}
 
 	private attributeValue(value: Extract<Element['attributes'][number], { type: 'attribute' }>['value']) {

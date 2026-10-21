@@ -24,6 +24,7 @@
 
 	let composerStatus: Status | null = $state(null);
 	let draftTitle = $state('');
+	let composerInput = $state<HTMLInputElement>();
 
 	let labelPickerOpen = $state(false);
 	let labelQuery = $state('');
@@ -92,6 +93,8 @@
 	function openComposer(status: Status) {
 		composerStatus = status;
 		draftTitle = '';
+		// Already open: the input exists, but the click moved focus to the button.
+		composerInput?.focus();
 	}
 
 	function createIssue() {
@@ -151,6 +154,9 @@
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
 	});
+
+	// A newly opened composer's input takes focus as it mounts.
+	$effect(() => composerInput?.focus());
 
 	$effect(() => {
 		document.title = selected ? `${key(selected.id)} ${selected.title}` : 'Board · Engineering';
@@ -454,6 +460,7 @@
 							<input
 								style={[field, { borderWidth: 0, padding: 0, fontWeight: 500 }]}
 								placeholder="Issue title"
+								bind:this={composerInput}
 								bind:value={draftTitle}
 								onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && createIssue()}
 							/>

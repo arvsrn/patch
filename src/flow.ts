@@ -75,8 +75,8 @@ const isDomType = (t: Estree): boolean => {
 
 /**
  * Whether `expr`'s value may come from the DOM: a DOM global, an event
- * handler's event, a value typed or cast as a DOM type, or anything read or
- * called from one of those.
+ * handler's event, a `bind:this` variable, a value typed or cast as a DOM
+ * type, or anything read or called from one of those.
  */
 export function fromDom(bindings: Bindings, expr: Estree, seen = new Set<Symbol>()): boolean {
 	if (!expr) return false;
@@ -87,7 +87,9 @@ export function fromDom(bindings: Bindings, expr: Estree, seen = new Set<Symbol>
 		case 'Identifier': {
 			const symbol = bindings.reference(e)?.symbol;
 			if (!symbol) return DOM_GLOBALS.has(e.name);
-			if (seen.has(symbol) || isSignal(symbol)) return false;
+			if (seen.has(symbol)) return false;
+			if (symbol.element) return true;
+			if (isSignal(symbol)) return false;
 			seen.add(symbol);
 			return !!symbol.event || isDomType(symbol.type) || symbol.defs.some((d) => from(d.value));
 		}

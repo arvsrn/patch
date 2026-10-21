@@ -154,7 +154,7 @@ const moveRange = (start: Node, end: Node, before: Node) => {
  */
 export function mount(program: Program, target: HTMLElement, options: ApiOptions = {}): () => void {
 	const r = createReactive();
-	const { effect, newOwner, dispose, within, untrack, batch, cell } = r;
+	const { effect, newOwner, dispose, within, untrack, onCleanup, batch, cell } = r;
 	const root = newOwner();
 	const { api, startEffects } = createApi(r, options);
 	const interact = () => batch(() => within(root, null, startEffects));
@@ -246,6 +246,12 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 				if (d.kind === 'frame') mountNodes(d.kids, el, null);
 				else if (d.kind === 'text') mountInline(d.kids, el);
 				parent.insertBefore(el, before);
+				const ref = d.ref;
+				if (ref) {
+					ref.set(el);
+					// Another element may have taken the variable since.
+					onCleanup(() => untrack(ref.get) === el && ref.set(undefined));
+				}
 			} else if (d.t === 'if') mountIf(d, parent, before);
 			else if (d.t === 'each') mountEach(d, parent, before);
 		}

@@ -44,6 +44,8 @@ type ElementBase = {
 	attrs: Record<string, Getter>;
 	/** Event name (without `on`) → getter returning the handler. */
 	on: Record<string, Getter>;
+	/** `bind:this`: reads and writes the bound variable. It holds the element while mounted, else `undefined`. */
+	ref: { get: Getter; set: (node: unknown) => void } | null;
 };
 export type FrameElement = ElementBase & { kind: 'frame'; kids: ProgramNode[] };
 export type TextElement = ElementBase & { kind: 'text'; kids: InlinePart[] };

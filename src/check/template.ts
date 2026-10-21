@@ -1,6 +1,6 @@
 // Rules for template constructs that the IR can express but PAT rejects.
 
-import { forEachNode } from '../ast';
+import { forEachNode, patternNames, type Estree } from '../ast';
 import type { Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
 import { elements, expressions, type Component, type TemplateNode } from '../ir';
@@ -8,13 +8,19 @@ import { elements, expressions, type Component, type TemplateNode } from '../ir'
 const INPUT_TYPES = ['text', 'password', 'email', 'search', 'url', 'tel'];
 
 export function checkTemplate(component: Component, bindings: Bindings, reporter: Reporter) {
+	const lets = new Set(
+		(component.script?.body ?? []).flatMap((s) => (s.type === 'VariableDeclaration' && s.kind === 'let' ? s.declarations.flatMap((d: Estree) => patternNames(d.id)) : []))
+	);
 	for (const element of elements(component.template)) {
 		if (element.type !== 'element') continue;
-		const bound = element.attributes.find((a) => a.type === 'bind');
+		const bound = element.attributes.some((a) => a.type === 'bind' && a.name === 'value');
 		for (const a of element.attributes) {
 			if (a.type === 'bind') {
 				const symbol = a.expression.type === 'Identifier' ? bindings.reference(a.expression)?.symbol : null;
-				if (symbol?.kind !== 'state') reporter.report(a.nameSpan, 'bind:value needs a top-level $state variable');
+				if (a.name === 'value') {
+					if (symbol?.kind !== 'state') reporter.report(a.nameSpan, 'bind:value needs a top-level $state variable');
+				} else if (!(symbol?.kind === 'state' || (symbol?.kind === 'local' && lets.has(symbol.name))))
+					reporter.report(a.nameSpan, 'bind:this needs a top-level `let` variable (plain or $state)');
 			} else if (bound && ((a.type === 'attribute' && a.name === 'value') || (a.type === 'event' && a.name === 'input'))) {
 				reporter.report(a.nameSpan, 'bind:value cannot be combined with value= or oninput=');
 			} else if (a.type === 'attribute' && a.name === 'type') {

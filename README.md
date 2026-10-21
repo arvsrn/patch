@@ -92,7 +92,7 @@ Patch currently supports single-file apps (one `.pat` file) with:
 - `$state`, `$derived`, and `$effect`
 - `{#if}`, `{:else if}`, `{:else}`, and keyed `{#each list as item (item.id)}`
 - `<main>`, `<div>`, `<button>`, `<p>`, `<span>`, `<input>`, and `<textarea>`
-- `onclick={...}`-style event handlers and `bind:value` on inputs
+- `onclick={...}`-style event handlers, `bind:value` on inputs, and `bind:this` for the underlying DOM element
 - Flex layout with fixed, `hug`, and `fill` sizing
 - Typography, fills, borders, radii, opacity, shadows, and positioning
 - A Vite dev server with live reload, and production builds to a single standalone HTML file

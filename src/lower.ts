@@ -240,9 +240,9 @@ class TemplateLowering {
 		for (const a of node.attributes) {
 			const span = spanOf(a);
 			if (a.type === 'BindDirective') {
-				if (a.name !== 'value' || (kind !== 'input' && kind !== 'textarea'))
-					this.reporter.report(nameSpan(a), 'only bind:value on <input>/<textarea> is supported');
-				else attributes.push({ type: 'bind', span, nameSpan: nameSpan(a), expression: a.expression });
+				if (a.name === 'this' ? inText : a.name !== 'value' || (kind !== 'input' && kind !== 'textarea'))
+					this.reporter.report(nameSpan(a), inText ? `bind:${a.name} is not supported on ${where}` : 'only bind:value on <input>/<textarea> and bind:this are supported');
+				else attributes.push({ type: 'bind', name: a.name, span, nameSpan: nameSpan(a), expression: a.expression });
 			} else if (a.type !== 'Attribute') {
 				this.reporter.report(nameSpan(a), UNSUPPORTED_DIRECTIVES[a.type] ?? `${a.type} is not supported`);
 			} else if (a.name === 'style') {
