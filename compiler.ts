@@ -593,6 +593,14 @@ class Compiler {
 			case 'Identifier':
 				if (kind && scope.get(expr.name) === 'local' && this.styleDecls.has(expr.name))
 					this.checkStyleExpression(this.styleDecls.get(expr.name), kind, scope);
+				return;
+			case 'CallExpression': {
+				// An inline `$style({...})` is validated by `call()` without an element
+				// kind; record which element it styles so completion can respect it.
+				const arg = unwrap(expr.arguments[0]);
+				if (kind && arg?.type === 'ObjectExpression' && this.runeName(expr.callee, scope) === '$style')
+					this.styleObjects.push({ node: arg, kind });
+			}
 		}
 	}
 
