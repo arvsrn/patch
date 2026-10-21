@@ -1,89 +1,93 @@
-# PAT
+Patch is a compiled UI framework built for agents. With Patch, agents can inspect an interface and put it into any state directly from the source, without tracing styles through layers of CSS or replaying interactions to reach a particular screen.
 
-A single-file reactive UI language (`.pat`) with a deliberately small visual
-model. The same app can run in the browser or be rendered into
-[Runic](../runic.design) at any concrete state.
+- **Local styling.** An element's styles are attached directly to it. There are no selectors, classes, or cascade, so nothing elsewhere in the tree can restyle it, and only a small, well-defined set of properties is supported.
+- **Observable state.** App state can be read and overridden from outside the app, which makes it easy to set up fixtures, reproduce bugs, write tests, and export designs.
+
+### Syntax
+
+Markup and reactivity work like Svelte. Use `$style` for reusable styles and inline objects for one-offs.
+
+```svelte
+<script lang="ts">
+  let count = $state(0)
+
+  const button = $style({
+    padding: [8, 12],
+    borderRadius: 6
+  })
+</script>
+
+<button
+  style={button}
+  onclick={() => count++}
+>
+  Count: {count}
+</button>
+```
+
+Inline styles are validated the same way as `$style`:
+
+```svelte
+<div
+  style={{
+    width: "fill",
+    padding: 12,
+    gap: 8
+  }}
+>
+  ...
+</div>
+```
+
+### Usage
+
+Link the CLI locally:
 
 ```sh
-bun install
-bun link                                           # installs the `patch` command (~/.bun/bin/patch)
-
-patch dev examples/tasks.pat                       # Vite dev server on http://localhost:5173
-patch build examples/tasks.pat                     # → examples/tasks.html (standalone, imports bundled)
-patch runic examples/tasks.pat                     # copy to the clipboard, then paste in Runic
-patch runic examples/tasks.pat \
-  --state filter='"done"' --state loading=true     # paste a specific design-time state
-patch runic examples/tasks.pat --stdout            # print the clipboard payload instead
-patch runic examples/tasks.pat --output out.html   # write_html-ready Runic nodes (or .json)
-patch lsp                                          # language server over stdio
+bun link
 ```
 
-Without linking, `bun src/cli.ts <command>` does the same. `patch` is also the
-name of the standard Unix tool: anything that is not one of the commands above
-(`patch -p1 < fix.diff`, `patch --version`) is passed through to `/usr/bin/patch`.
-
-`<script lang="ts">` may import npm packages and local `.ts`/`.js`/`.mjs`
-modules (Vite resolves them in `dev` and bundles them in `build`). Importing
-`.pat` files is not supported yet. The script is type-checked with TypeScript
-(using the nearest `tsconfig.json`); type errors appear in the editor and the
-dev overlay, and fail `build` and `runic`.
-
-`compile` is kept as an alias for `build`.
-
-## Layout
-
-```
-source ─ parse ─ lower ─► IR ─ bind ─┬─ check/* + typecheck ─► diagnostics
-                                     └─ emit/* (no errors) ──► ES module ─┬─ runtime/dom.ts     (browser)
-                                                                          └─ runtime/realize.ts (Runic)
-```
-
-Compiler (`src/`):
-
-- `parse.ts`: source → svelte's AST. The only module that imports svelte.
-- `lower.ts`: svelte's AST → the PAT IR (`ir.ts`), reporting everything the IR cannot express
-- `bind.ts`: name resolution: what every identifier refers to, member writes, rune calls
-- `styles.ts`: every statically known style object and the element kind it styles
-- `check/`: `script.ts` (reactivity rules, escape hatches), `template.ts`, `styles.ts`; they only report
-- `typecheck.ts`: TypeScript Language Service over the script (rune declarations, diagnostics in .pat offsets)
-- `emit/`: `script.ts` rewrites the script onto `$$rt`, `template.ts` prints the program description
-- `compile.ts`: `analyze()` and `compile()`; `complete.ts`: style completion; `diagnostics.ts`; `index.ts`: public API
-
-Shared contracts (`src/schema/`): `style.ts` (the one style schema validation, the runtime and completion
-share), `program.ts` (what `emit` generates and the runtime executes), `concrete.ts` (one evaluated state).
-
-Everything else:
-
-- `src/runtime/`: `reactive.ts` (signals), `api.ts` (`$$rt`), `dom.ts` (browser mounting), `realize.ts` (design-time evaluation)
-- `src/targets/browser/`: Vite plugin for `dev` (server, full-page reload, error overlay) and `build` (one bundled HTML file)
-- `src/targets/runic/`: `load.ts` (run a compiled module at a state), `adapter.ts` (concrete tree → Runic nodes), `clipboard.ts`
-- `src/lsp/server.ts`: publishes `analyze()` diagnostics and `complete()` style completions for open `.pat` documents
-- `src/cli.ts`: CLI
-- `editors/vscode/`: VS Code extension (language registration, highlighting, LSP client)
-- `tests/`: `bun test`
-
-`patch runic` writes what copying nodes inside Runic writes: plain text holding a
-JSON array of Runic nodes (`pbcopy` on macOS, `wl-copy`/`xclip` on Linux).
-
-The Runic adapter imports `../runic.design/packages/types` (the `@runic/types`
-path in `tsconfig.json`), so the `runic` command expects a checkout of
-runic.design (with installed dependencies) next to this repo.
-
-## Editor
-
-Install the extension (highlighting and diagnostics for `.pat` files):
+Start the dev server:
 
 ```sh
-bun link                                   # the extension starts `patch lsp`
-cd editors/vscode && bun install && bun run package
-cursor --install-extension pat.vsix        # or: code --install-extension pat.vsix
+patch dev app.patch
 ```
 
-Rebuild and reinstall the `.vsix` only when files in `editors/vscode/` change;
-compiler and language server changes in the repo are picked up on the next
-editor restart because the extension runs the linked `patch` command.
+Build for production:
 
-The extension runs bun from `~/.bun/bin/bun` (else `bun` on PATH). Override with
-the `patch.bun` and `patch.entry` settings. For extension development, run the
-"PAT extension" launch configuration (F5), which uses this repo's `src/cli.ts`
-directly.
+```sh
+patch build app.patch
+```
+
+Take a static snapshot of the app and copy it to the clipboard, ready to paste into Figma:
+
+```sh
+patch snapshot app.patch
+```
+
+Snapshots render the app from its initial state. You can override any `$state` value:
+
+```sh
+patch snapshot app.patch \
+  --state loading=true \
+  --state filter=done
+```
+
+Since state can be set from outside, an agent can jump straight to the screen it wants to look at instead of clicking through the app, mocking network requests, or seeding a database to get there. The same mechanism is what fixtures are built on.
+
+### Scope
+
+Patch currently supports single-file apps with:
+
+- TS/JS in `<script>`, with type checking
+- Imports from npm packages and local TS/JS modules
+- `$state`, `$derived`, and `$effect`
+- `{#if}`, `{:else if}`, `{:else}`, and keyed `{#each list as item (item.id)}`
+- `<main>`, `<div>`, `<button>`, `<p>`, `<span>`, `<input>`, and `<textarea>`
+- `onclick={...}`-style event handlers and `bind:value` on inputs
+- Flex layout with fixed, `hug`, and `fill` sizing
+- Typography, fills, borders, radii, opacity, shadows, and positioning
+- A Vite dev server with live reload, and production builds to a single standalone HTML file
+- Editable Figma snapshot export
+
+Still WIP. 
