@@ -73,9 +73,14 @@ export function createReactive() {
 		}
 		if (!batchDepth) flush();
 	};
+	/** One run of an effect. An error is logged and leaves the effect subscribed to what it read, on the first run as on later ones. */
 	const run = (c: Owner) => {
 		reset(c);
-		within(c, c, c.fn!);
+		try {
+			within(c, c, c.fn!);
+		} catch (error) {
+			console.error(error);
+		}
 	};
 	const flush = () => {
 		if (flushing) return;
@@ -86,14 +91,7 @@ export function createReactive() {
 				if (++rounds > 1000) throw new Error('Reactive loop: effects keep invalidating each other');
 				const pending = [...queue].sort((a, b) => a.id! - b.id!);
 				queue.clear();
-				for (const c of pending) {
-					if (c.disposed) continue;
-					try {
-						run(c);
-					} catch (error) {
-						console.error(error);
-					}
-				}
+				for (const c of pending) if (!c.disposed) run(c);
 			}
 		} finally {
 			queue.clear();
