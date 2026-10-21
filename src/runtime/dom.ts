@@ -5,7 +5,8 @@
 import type { ElementNode, InlinePart, Program, ProgramNode, SpanNode } from '../schema/program';
 import { effectiveSizing, SHORTHANDS, sizingOf, type ElementKind, type Sizing, type Style } from '../schema/style';
 import { createApi, type ApiOptions } from './api';
-import { eachList, elementStyle, toText, withId } from './evaluate';
+import { eachList, elementStyle, portalName, toText, withId } from './evaluate';
+import { createPortals } from './portals';
 import { createReactive, type Cell, type Owner } from './reactive';
 
 const BASE_CSS = `
@@ -157,6 +158,7 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 	const { effect, newOwner, dispose, within, untrack, onCleanup, batch, cell } = r;
 	const root = newOwner();
 	const { api, startEffects } = createApi(r, options);
+	const portals = createPortals();
 	const interact = () => batch(() => within(root, null, startEffects));
 
 	// Sizing depends on parents and siblings, so it is resolved in one pass
@@ -245,7 +247,8 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 				const el = element(d, d.tag, d.kind);
 				if (d.kind === 'frame') mountNodes(d.kids, el, null);
 				else if (d.kind === 'text') mountInline(d.kids, el);
-				parent.insertBefore(el, before);
+				if (d.portal) mountPortaled(d, el, parent, before);
+				else parent.insertBefore(el, before);
 				const ref = d.ref;
 				if (ref) {
 					ref.set(el);
@@ -254,7 +257,27 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 				}
 			} else if (d.t === 'if') mountIf(d, parent, before);
 			else if (d.t === 'each') mountEach(d, parent, before);
+			else if (d.t === 'portal') onCleanup(portals.portal(d.name, d.id, parent, before));
 		}
+	};
+
+	// The element belongs here (`home` marks the spot) but renders into its
+	// portal. On an invalid value it stays where it was, or in place at first.
+	const mountPortaled = (d: ElementNode, el: HTMLElement, parent: Node, before: Node | null) => {
+		const home = parent.insertBefore(document.createComment('portaled'), before);
+		let name: string | null = null;
+		effect(() => {
+			try {
+				name = withId(d.id, () => portalName(d.portal!()));
+			} finally {
+				untrack(() => portals.place(el, home, name, d.id));
+				resizeLater();
+			}
+		});
+		onCleanup(() => {
+			portals.release(el);
+			home.remove();
+		});
 	};
 
 	// A false branch is unmounted; re-entering it creates it again.

@@ -22,6 +22,8 @@ const KINDS: Record<Tag, Element['kind']> = {
 	input: 'input',
 	textarea: 'textarea'
 };
+/** Attributes every element accepts (not an inline <span>). */
+const UNIVERSAL_ATTRIBUTES = ['portal'];
 /** Attributes (other than style= and on*=) each tag accepts. */
 const ATTRIBUTES: Partial<Record<Tag, string[]>> = {
 	button: ['disabled'],
@@ -211,6 +213,7 @@ class TemplateLowering {
 	/** One element, or (for an unsupported tag) its lowered children so their problems are reported too. */
 	private element(node: Svelte): TemplateNode[] {
 		const tag = node.name;
+		if (tag === 'portal') return this.portal(node);
 		if (!isTag(tag)) {
 			this.reporter.report(nameSpan(node), `<${tag}> is not supported (use main, div, button, p, span, input, textarea)`);
 			return this.children(node.fragment.nodes);
@@ -224,6 +227,28 @@ class TemplateLowering {
 		if (nodes.some((n: Svelte) => n.type !== 'Text' || n.data.trim()))
 			this.reporter.report(nameSpan(node), `<${tag}> cannot have children; use value={...}`);
 		return [{ ...base, kind }];
+	}
+
+	/** `<portal id="name" />`: only a static, non-empty id. */
+	private portal(node: Svelte): TemplateNode[] {
+		const needsId = '<portal> needs a static id: <portal id="name" />';
+		let name: string | null = null;
+		let id: Svelte = null;
+		for (const a of node.attributes) {
+			if (a.type === 'Attribute' && a.name === 'id') {
+				id = a;
+				const value = Array.isArray(a.value) && a.value.length === 1 && a.value[0].type === 'Text' ? a.value[0].data : '';
+				if (value) name = value;
+				else this.reporter.report(nameSpan(a), needsId);
+			} else {
+				const what = a.type === 'Attribute' ? `attribute "${a.name}"` : (UNSUPPORTED_DIRECTIVES[a.type] ?? a.type);
+				this.reporter.report(nameSpan(a), `${what} is not supported on <portal>; it only takes id="..."`);
+			}
+		}
+		if (!id) this.reporter.report(nameSpan(node), needsId);
+		if (node.fragment.nodes.some((n: Svelte) => n.type !== 'Text' || n.data.trim()))
+			this.reporter.report(nameSpan(node), '<portal> cannot have children; elements render into it with portal="..."');
+		return name === null ? [] : [{ type: 'portal', span: spanOf(node), nameSpan: nameSpan(node), name }];
 	}
 
 	/** `kind` is null for a <span> nested in text, which only takes style=. */
@@ -254,7 +279,7 @@ class TemplateLowering {
 			} else if (/^on[a-z]+$/.test(a.name) && !inText) {
 				const handler = expressionOf(a);
 				if (handler) attributes.push({ type: 'event', name: a.name.slice(2), span, nameSpan: nameSpan(a), handler });
-			} else if (!inText && ATTRIBUTES[node.name as Tag]?.includes(a.name)) {
+			} else if (!inText && (UNIVERSAL_ATTRIBUTES.includes(a.name) || ATTRIBUTES[node.name as Tag]?.includes(a.name))) {
 				attributes.push({ type: 'attribute', name: a.name, span, nameSpan: nameSpan(a), value: attributeValue(a) });
 			} else {
 				this.reporter.report(nameSpan(a), `attribute "${a.name}" is not supported on ${where}`);

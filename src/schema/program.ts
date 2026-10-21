@@ -25,7 +25,7 @@ export type RuntimeApi = {
 
 export type Program = (rt: RuntimeApi) => ProgramNode[];
 
-export type ProgramNode = TextNode | ElementNode | IfNode | EachNode;
+export type ProgramNode = TextNode | ElementNode | IfNode | EachNode | PortalNode;
 
 /** A piece of text content: static text, an expression, or a nested <span>. */
 export type InlinePart = string | Getter | SpanNode;
@@ -46,6 +46,8 @@ type ElementBase = {
 	on: Record<string, Getter>;
 	/** `bind:this`: reads and writes the bound variable. It holds the element while mounted, else `undefined`. */
 	ref: { get: Getter; set: (node: unknown) => void } | null;
+	/** `portal="name"`: the portal it renders into; a nullish or `false` value renders it in place. */
+	portal: Getter | null;
 };
 export type FrameElement = ElementBase & { kind: 'frame'; kids: ProgramNode[] };
 export type TextElement = ElementBase & { kind: 'text'; kids: InlinePart[] };
@@ -63,3 +65,6 @@ export type EachNode = {
 	key: (item: Cell, index: Cell<number>) => unknown;
 	kids: (item: Cell, index: Cell<number>) => ProgramNode[];
 };
+
+/** `<portal id="name" />`: where elements with `portal="name"` render, in no element of its own. */
+export type PortalNode = { t: 'portal'; id: string; name: string };

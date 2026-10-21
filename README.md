@@ -92,6 +92,7 @@ Patch currently supports single-file apps (one `.pat` file) with:
 - `$state`, `$derived`, and `$effect`
 - `{#if}`, `{:else if}`, `{:else}`, and keyed `{#each list as item (item.id)}`
 - `<main>`, `<div>`, `<button>`, `<p>`, `<span>`, `<input>`, and `<textarea>`
+- Portals: `<portal id="overlay" />` and `portal="overlay"` render an element elsewhere without changing where it belongs
 - `onclick={...}`-style event handlers, `bind:value` on inputs, and `bind:this` for the underlying DOM element
 - Flex layout with fixed, `hug`, and `fill` sizing
 - Typography, fills, borders, radii, opacity, shadows, and positioning

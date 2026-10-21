@@ -397,7 +397,7 @@ class Binder {
 					this.template(branch.body, scope);
 				}
 				if (node.otherwise) this.template(node.otherwise, scope);
-			} else {
+			} else if (node.type === 'each') {
 				this.visit(node.list, scope);
 				const inner = new Scope(scope);
 				inner.declare(node.item.name, 'item');

@@ -200,6 +200,7 @@ async function later() { await x; n++; n++; }          // effects re-run twice
 | `<main>`, `<div>`, `<button>` | container | elements, text, blocks |
 | `<p>`, `<span>` | text | text, `{expressions}`, nested `<span>` |
 | `<input>`, `<textarea>` | input | none |
+| `<portal>` | [portal](#portals) | none |
 
 Any other tag (`<img>`, `<section>`, `<h1>`, `<a>`, components, …) is an error.
 
@@ -234,7 +235,8 @@ Elements accept only these attributes, plus `style=` and event handlers (`on…`
 | `<button>` | `disabled` |
 | `<input>` | `value`, `placeholder`, `disabled`, `type` |
 | `<textarea>` | `value`, `placeholder`, `disabled` |
-| everything else | none |
+| every element except inline spans | [`portal`](#portals) |
+| `<portal>` | only a static `id` |
 
 You can write an attribute value in these forms:
 
@@ -247,7 +249,7 @@ You can write an attribute value in these forms:
 - `disabled` is applied as `!!value`, so `disabled="false"` disables the element.
 - `type` must be a static string: `text`, `password`, `email`, `search`, `url`, or `tel`. The default is `text`.
 - `value` sets the field's current value. It is one-way: typing changes the field but not your state. The field is reset only when the expression's value changes.
-- Not allowed: `class`, `id`, `title`, `aria-*`, any other attribute, spread attributes (`{...props}`), `class:`, `style:`, `on:event`, `use:`, `transition:`, `animate:`, and `{@attach}`.
+- Not allowed: `class`, `id` (except on `<portal>`), `title`, `aria-*`, any other attribute, spread attributes (`{...props}`), `class:`, `style:`, `on:event`, `use:`, `transition:`, `animate:`, and `{@attach}`.
 
 ### `{#if}`
 
@@ -282,6 +284,34 @@ The first branch whose test is truthy is rendered. When the selected branch chan
 - An item whose key is still present keeps its rendered content and is moved into the new order. Its item value updates when the new element is a different value (`Object.is`), and its index updates too. Items whose keys disappear are destroyed. New keys are created.
 - The item and index are read-only. You cannot assign to them or mutate through them, for example with `task.done = true`. Update the source array instead.
 - `{:else}` inside `{#each}` is not supported. Use `{#if list.length === 0}`.
+
+### Portals
+
+A portal renders an element somewhere other than where it is written. `<portal id="name" />` marks a destination, and any element with `portal="name"` renders there:
+
+```svelte
+<script lang="ts">
+	let open = $state(false);
+</script>
+<main style={{ width: 'fill', height: 'fill' }}>
+	<div style={{ overflow: 'hidden' }}>
+		<button onclick={() => (open = !open)}>Labels</button>
+		{#if open}
+			<div portal="overlay" style={{ position: 'absolute', padding: 8, background: '#ffffff' }}>…</div>
+		{/if}
+	</div>
+</main>
+<portal id="overlay" />
+```
+
+- `<portal>` renders nothing of its own. Elements rendered into it take its place among its parent's children: they are laid out, clipped and painted as children of that parent, and inherit typography from it. Later siblings paint above earlier ones, so a portal written last in the app puts its content above everything else.
+- The element still **belongs where it is written**. Its expressions read the same names, its event handlers run as before, it mounts and unmounts with its enclosing `{#if}` or `{#each}`, and `bind:this` sets its variable as usual. Only where it renders changes. Events bubble through the elements it renders in, as in the DOM.
+- `portal=` works on every element except an inline span. Its value can be an expression. A nullish or `false` value renders the element in place, so `portal={floating ? 'overlay' : null}` works, and changing the value moves the element.
+- Portal ids are app-wide. Several elements can render into one portal. They are kept in the order they were rendered into it (document order on the first render; an element rendered into it later goes last). Do not rely on that order to layer them.
+- `<portal>` needs a static, non-empty `id` and takes no other attributes or children. It cannot be repeated by `{#each}` (directly, not inside an `{#if}` in the item), because it would be declared once per item.
+- When an element's portal is not rendered, for example because it is in an `{#if}` branch that is not shown, the element is not shown either. It stays mounted and appears as soon as the portal is rendered again. The browser logs an error the first time this happens. A snapshot fails.
+
+These are compile errors: two `<portal>`s with the same id that can be rendered at the same time (they may share an id in different branches of one `{#if}`), a static `portal="name"` with no `<portal id="name">` in the app, a bare `portal` attribute, and a `<portal>` inside the element that renders into it. At runtime, a second portal with an id that is already rendered is logged as an error, and content keeps rendering into the first one.
 
 ### Other blocks and tags
 
@@ -556,7 +586,7 @@ A child sized by its content this way is a hugging parent to its own children, s
 - **Borders do not affect layout.** A border is drawn inside the element's box, on top of the padding area, on all four sides, as a solid line. Setting `borderColor` without `borderWidth` draws nothing.
 - `borderRadius` rounds the corners of the background, border, and shadow. `overflow: 'hidden'` clips children to the box, including its radius. Inputs always clip.
 - `opacity` applies to the element together with its contents.
-- Paint order follows source order: later siblings paint above earlier ones. There is no `zIndex`.
+- Paint order follows source order: later siblings paint above earlier ones. There is no `zIndex`; render an element into a [portal](#portals) to paint it above other content.
 
 ### Absolute positioning
 

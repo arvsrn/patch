@@ -51,7 +51,7 @@ export type StateInfo = {
 
 // ---------------------------------------------------------------- template
 
-export type TemplateNode = Element | Text | If | Each;
+export type TemplateNode = Element | Text | If | Each | Portal;
 
 /** The tags PAT supports. */
 export type Tag = 'main' | 'div' | 'button' | 'p' | 'span' | 'input' | 'textarea';
@@ -110,6 +110,12 @@ export type Each = {
 	body: TemplateNode[];
 };
 
+/**
+ * `<portal id="name" />`: where elements with `portal="name"` render. It
+ * renders nothing of its own. Names are app-wide.
+ */
+export type Portal = { type: 'portal'; span: Span; nameSpan: Span; name: string };
+
 /** Every element and inline <span> in a template, depth first. */
 export function* elements(nodes: TemplateNode[]): Generator<Element | Extract<Inline, { type: 'span' }>> {
 	for (const node of nodes) {
@@ -121,7 +127,7 @@ export function* elements(nodes: TemplateNode[]): Generator<Element | Extract<In
 		else if (node.type === 'if') {
 			for (const branch of node.branches) yield* elements(branch.body);
 			if (node.otherwise) yield* elements(node.otherwise);
-		} else yield* elements(node.body);
+		} else if (node.type === 'each') yield* elements(node.body);
 	}
 }
 
@@ -161,7 +167,7 @@ export function* expressions(nodes: TemplateNode[]): Generator<Estree> {
 				yield* expressions(branch.body);
 			}
 			if (node.otherwise) yield* expressions(node.otherwise);
-		} else {
+		} else if (node.type === 'each') {
 			yield node.list;
 			if (node.key) yield node.key;
 			yield* expressions(node.body);

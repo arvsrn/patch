@@ -8,6 +8,7 @@
 
 import { basename, resolve } from 'node:path';
 import { bind, isSignal, type Bindings } from './bind';
+import { checkNames } from './check/names';
 import { checkScript } from './check/script';
 import { checkStyles } from './check/styles';
 import { checkTemplate, checkTemplateNames } from './check/template';
@@ -76,6 +77,7 @@ function check(source: string, filename: string, reporter: Reporter): Front | nu
 	checkScript(component, bindings, reporter);
 	checkTemplate(component, bindings, reporter);
 	checkTemplateNames(component, bindings, globalNames(resolve(filename)), reporter);
+	checkNames(component.template, reporter);
 	checkStyles(styles, reporter);
 	reporter.diagnostics.sort((a, b) => a.start - b.start);
 
