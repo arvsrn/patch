@@ -6,7 +6,7 @@
 
 import { literal, NOT_STATIC, propertyName, type Estree } from '../ast';
 import type { Reporter } from '../diagnostics';
-import { checkKey, normalizeStyle, rulesFor, SHORTHANDS, styleLiterals, type ElementKind, type StyleRule } from '../schema/style';
+import { checkKey, normalizeStyle, OFFSETS, rulesFor, SHORTHANDS, styleLiterals, type ElementKind, type StyleRule } from '../schema/style';
 import type { StyledElement, StyleShape, Styles } from '../styles';
 
 export function checkStyles(styles: Styles, reporter: Reporter) {
@@ -70,7 +70,10 @@ function combinations(shape: StyleShape): Combination[] | null {
 	}
 }
 
-/** Merged longhands: a value, or UNKNOWN. `open`: an absent key may still have a value nobody can see. */
+/**
+ * Merged longhands: a value, UNKNOWN, or undefined (known to be absent).
+ * `open`: a key not in `values` may still have a value nobody can see.
+ */
 type Merged = { values: Map<string, unknown>; open: boolean };
 
 /** Merges entries the way `resolveStyle` does, keeping what is not visible as UNKNOWN. */
@@ -85,6 +88,11 @@ function merge(entries: (Estree | null)[]): Merged {
 			unknownAll();
 			continue;
 		}
+		// `position: 'flow'` discards offsets from earlier entries (known absent, even when open).
+		const position = entry.properties.find((p: Estree) => p.type === 'Property' && !p.computed && propertyName(p) === 'position');
+		const mode = position ? literal(position.value) : undefined;
+		if (mode === 'flow') for (const key of OFFSETS) merged.values.set(key, undefined);
+		else if (mode === NOT_STATIC) for (const key of OFFSETS) if (merged.values.has(key) || merged.open) merged.values.set(key, UNKNOWN);
 		for (const p of entry.properties) {
 			if (p.type !== 'Property' || p.computed) {
 				unknownAll();

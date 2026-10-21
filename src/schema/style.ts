@@ -132,13 +132,22 @@ export function normalizeStyle(input: unknown): Style {
 	return Object.freeze(out);
 }
 
-/** `style={a}`, `style={[a, cond && b]}`: merges left to right, skipping falsy entries. */
+/** Fields of absolute positioning: an entry switching to `position: 'flow'` discards earlier ones. */
+export const OFFSETS = ['left', 'top'];
+
+/**
+ * `style={a}`, `style={[a, cond && b]}`: merges left to right, skipping falsy
+ * entries. A null or undefined property does not override; `position:
+ * 'flow'` leaves absolute positioning, discarding offsets set before it.
+ */
 export function resolveStyle(value: unknown): Style {
 	const out: Style = {};
 	const add = (v: unknown) => {
 		if (!v) return;
-		if (Array.isArray(v)) v.forEach(add);
-		else Object.assign(out, normalizeStyle(v));
+		if (Array.isArray(v)) return v.forEach(add);
+		const st = normalizeStyle(v);
+		if (st.position === 'flow') for (const key of OFFSETS) delete out[key];
+		Object.assign(out, st);
 	};
 	add(value);
 	return out;

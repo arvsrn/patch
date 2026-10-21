@@ -349,7 +349,14 @@ The merge rules are:
    ```
 3. `borderRadius` and `shadow` are replaced as a whole.
 4. A property whose value is `null` or `undefined` is ignored. It does **not** unset an earlier value. To override something, set an explicit neutral value: `width: 'hug'`, `gap: 0`, `borderWidth: 0`, `shadow: []`, `opacity: 1`, or `background: '#0000'`.
-5. [Combination rules](#combination-rules) are checked on the **merged** result, so `[row, { justifyContent: 'space-between', gap: 0 }]` is valid even if `row` sets a gap.
+5. `left` and `top` belong to absolute positioning. An entry with `position: 'flow'` leaves that mode and discards `left`/`top` set by earlier entries, so switching back to `'absolute'` later does not bring them back:
+   ```ts
+   [{ position: 'absolute', left: 4 }, { position: 'flow' }]                          // { position: 'flow' }
+   [{ position: 'absolute', left: 4 }, { position: 'flow' }, { position: 'absolute' }] // { position: 'absolute' }
+   [{ position: 'absolute', left: 4 }, { position: 'absolute', top: 2 }]              // keeps left: 4
+   ```
+   One object that sets `position: 'flow'` together with `left` or `top` is an error.
+6. [Combination rules](#combination-rules) are checked on the **merged** result, so `[row, { justifyContent: 'space-between', gap: 0 }]` is valid even if `row` sets a gap.
 
 Strings are never styles. A string or template literal in a style position is a compile error, and that includes `''`. For example, `cond ? card : ''` fails. Use `false` or `null` instead.
 
@@ -601,9 +608,8 @@ The Figma target approximates what Figma cannot express, and prints a warning ea
 
 These behaviors in the current implementation are inconsistent or unclear. They are documented as they behave today, but they have not been settled.
 
-1. **Properties cannot be unset in a merge.** A `null` or `undefined` value is ignored. In most cases a neutral value works around this. But once `left` or `top` is set, `position: 'flow'` cannot be applied later in the array without failing the "left/top require absolute" rule. The compiler reports this when it is certain, but there is no way to write it correctly.
-2. **Template expression types are not checked**, even with `lang="ts"`. Names are checked; a type error in the template fails at runtime.
-3. **`''` in a style expression is a compile error** ("CSS strings are not supported"), while other falsy values are allowed and skipped.
-4. **Text and attribute interpolation differ for `false`.** `{false}` renders as nothing in text, but `"a {false}"` in an attribute renders `"a false"`. Separately, `disabled="false"` disables the element.
-5. **Script top-level code runs in Bun for Figma snapshots**, so browser globals used outside `$effect` break `snapshot figma` but not `snapshot html`.
-6. **Declaring `const $$x` is allowed**, but any reference to it is an error.
+1. **Template expression types are not checked**, even with `lang="ts"`. Names are checked; a type error in the template fails at runtime.
+2. **`''` in a style expression is a compile error** ("CSS strings are not supported"), while other falsy values are allowed and skipped.
+3. **Text and attribute interpolation differ for `false`.** `{false}` renders as nothing in text, but `"a {false}"` in an attribute renders `"a false"`. Separately, `disabled="false"` disables the element.
+4. **Script top-level code runs in Bun for Figma snapshots**, so browser globals used outside `$effect` break `snapshot figma` but not `snapshot html`.
+5. **Declaring `const $$x` is allowed**, but any reference to it is an error.
