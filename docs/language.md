@@ -42,14 +42,22 @@ Standard JS and TS work: functions, classes, closures, `async` functions, `try`/
 | undeclared identifiers starting with `$` (`$props`, `$state.raw`, `$inspect`, `$store`, …) | error |
 | references to identifiers starting with `$$` | error (reserved) |
 
-**Visual escape hatches** are rejected wherever they appear in the script or in template expressions, on values that may come from the DOM: the DOM globals (`document`, `window`, `self`, `globalThis`, …), event handler events (template `on…=` handlers and `addEventListener` callbacks), values typed or cast as DOM types in TS (`HTMLElement`, `Event`, …), and anything read, called or stored from those. The same property names on ordinary objects are fine.
+**No DOM rendering access.** The template and `style={...}` are the only way to affect what renders. Script and template expressions cannot create, query, measure, or restyle DOM nodes, and code that tries is a compile error. Other browser APIs (`fetch`, `localStorage`, `setTimeout`, `document.title`, `window`) are allowed.
 
-- Accessing a property with one of these names: `querySelector`, `querySelectorAll`, `getElementById`, `getElementsByClassName`, `getElementsByTagName`, `getElementsByName`, `createElement`, `createElementNS`, `createTextNode`, `createDocumentFragment`, `appendChild`, `insertBefore`, `removeChild`, `replaceChild`, `replaceChildren`, `replaceWith`, `insertAdjacentHTML`, `insertAdjacentElement`, `insertAdjacentText`, `innerHTML`, `outerHTML`, `innerText`, `textContent`, `setProperty`, `cssText`, `classList`, `className`, `attachShadow`, `getComputedStyle`, `getBoundingClientRect`, `adoptedStyleSheets`, `styleSheets`.
+The check applies to values that may come from the DOM: the DOM globals (`document`, `window`, `self`, `globalThis`, …), event objects (in template `on…=` handlers and `addEventListener` callbacks), values typed or cast as DOM types in TS (`HTMLElement`, `Event`, …), and anything read, called, or stored from those. The same property names on ordinary objects are fine. On those values, these are rejected:
+
+- Accessing any of these properties:
+  ```
+  querySelector  querySelectorAll  getElementById  getElementsByClassName  getElementsByTagName
+  getElementsByName  createElement  createElementNS  createTextNode  createDocumentFragment
+  appendChild  insertBefore  removeChild  replaceChild  replaceChildren  replaceWith
+  insertAdjacentHTML  insertAdjacentElement  insertAdjacentText  innerHTML  outerHTML
+  innerText  textContent  setProperty  cssText  classList  className  attachShadow
+  getComputedStyle  getBoundingClientRect  adoptedStyleSheets  styleSheets
+  ```
 - `document.body`, `document.documentElement`, `document.head`, `document.write`, `document.writeln` (also through `window.document`).
 - The global `getComputedStyle`.
 - Assigning through the `.style` of a DOM value, for example `el.style.color = …`.
-
-Other browser APIs (`fetch`, `localStorage`, `setTimeout`, `document.title`, `window`) are allowed.
 
 ### Imports
 
@@ -172,7 +180,7 @@ $effect(() => {
 - Effects may write state. An effect that writes state it also reads triggers itself again. After 1000 such rounds the runtime throws `Reactive loop`.
 - An error thrown inside an effect is logged with `console.error`, and the other effects still run.
 - In TS, async effect functions are a type error. In JS they are accepted, and the returned promise is ignored.
-- **Effects do not run in snapshots' initial state.** Figma snapshots never run them. HTML snapshots start them at the first interaction, just before the first event handler runs; from then on the snapshot behaves like the app.
+- **Snapshots render before any effect runs.** Figma snapshots never run them. HTML snapshots start them at the first interaction, just before the first event handler runs; from then on the snapshot behaves like the app.
 
 ### Batching
 
@@ -368,7 +376,11 @@ Strings are never styles. A string or template literal in a style position is a 
 
 ### When styles are validated
 
-The compiler checks property names, and values written as literals, for the element kind each style is used on. It follows a `style=` expression through:
+Every style is checked against the same rules: property names, values, the properties [allowed on the element](#allowed-properties-by-element), and the [combination rules](#combination-rules). What the compiler can resolve is checked at compile time. Everything else is checked at runtime.
+
+**At runtime**, a style error is logged to the console. On first render the element is shown without its style, and the rest of the page still renders. On update the element keeps its previous style. Either way, the style applies once its value becomes valid. In snapshots, a style error fails the snapshot.
+
+**At compile time**, the compiler checks property names and literal values, following a `style=` expression through:
 
 - object literals, arrays, `&&`, `||`, `??`, and ternaries
 - `$style({...})` calls (also checked on their own, where any property is allowed)
@@ -376,9 +388,9 @@ The compiler checks property names, and values written as literals, for the elem
 - members of object constants (`variants.primary`, and every value for `variants[name]`)
 - calls of functions declared once, through their `return` values
 
-It also checks the [combination rules](#combination-rules) on each element's merged style wherever the outcome is certain: in every way the style can evaluate, or in every way that takes one particular branch. Object and array literals reached through a name may be changed later, so only their keys and literal values are checked, not their combinations. `$style` values are frozen.
+Combination rules are checked on each element's merged style wherever the outcome is certain: in every way the style can evaluate, or in every way that takes one particular branch. Object and array literals reached through a name may be changed later, so only their keys and literal values are checked, not their combinations. `$style` values are frozen.
 
-Everything else is validated **at runtime**, with the same rules: non-literal values, computed keys, spread entries, reassigned names, and other expressions. A runtime style error is logged to the console. On first render the element is shown without its style, and the rest of the page still renders. On update the element keeps its previous style. Either way, the style applies once its value becomes valid. In snapshots, a style error fails the snapshot.
+Anything the compiler cannot follow is left to runtime: non-literal values, computed keys, spread entries, reassigned names, and other expressions.
 
 ## Style properties
 
@@ -476,7 +488,7 @@ Each axis of each element is sized one of three ways:
 - **Fixed** (a number): exactly that many pixels. Padding is included, so `width: 100, padding: 10` leaves 80 for content.
 - **`hug`** (the default): the size of the content plus padding.
   - Text that hugs its width stays on one line and never wraps. It breaks only at `\n` characters in expression values. If the parent is too narrow, it overflows.
-  - An `<input>` or `<textarea>` that ends up hugging (see below: it cannot be authored as `hug`) is the size of what it shows: its value (masked as `•` for passwords), else its placeholder, measured like text, plus padding. A textarea's height is its lines, wrapped at its width. The size follows the value as it changes.
+  - An `<input>` or `<textarea>` that ends up hugging (see below: it cannot be authored as `hug`) is the size of what it shows: its value (masked as `•` for passwords), else its placeholder, measured like text, plus padding. A textarea's height is its lines, wrapped at its width, and at least one line: an empty textarea is one line plus padding. The size follows the value as it changes.
 - **`fill`**:
   - On the parent's **main axis**: the element takes an equal share of the space left after fixed and hugging siblings and gaps.
   - On the parent's **cross axis**: the element stretches to the parent's inner size. This overrides `alignSelf` and `alignItems` for that axis.
@@ -613,10 +625,7 @@ The Figma target approximates what Figma cannot express, and prints a warning ea
 
 ## Open questions
 
-These behaviors in the current implementation are inconsistent or unclear. They are documented as they behave today, but they have not been settled.
+Semantics that are documented as they behave today but have not been settled.
 
-1. **Template expression types are not checked**, even with `lang="ts"`. Names are checked; a type error in the template fails at runtime.
-2. **`''` in a style expression is a compile error** ("CSS strings are not supported"), while other falsy values are allowed and skipped.
-3. **Text and attribute interpolation differ for `false`.** `{false}` renders as nothing in text, but `"a {false}"` in an attribute renders `"a false"`. Separately, `disabled="false"` disables the element.
-4. **Script top-level code runs in Bun for Figma snapshots**, so browser globals used outside `$effect` break `snapshot figma` but not `snapshot html`.
-5. **Declaring `const $$x` is allowed**, but any reference to it is an error.
+1. **Should `''` be skipped in a style expression like other falsy values?** Today it is a compile error ([Composition and merging](#composition-and-merging)).
+2. **Should `false` interpolate the same in attributes as in text?** `{false}` renders as nothing in text, but `"a {false}"` in an attribute renders `"a false"` ([Text and whitespace](#text-and-whitespace), [Attributes](#attributes)).

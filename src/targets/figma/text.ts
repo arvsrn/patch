@@ -74,7 +74,7 @@ export function measureWith(widthOf: WidthOf): TextMeasure {
 		const lines = breakLines(node, widthOf, maxWidth);
 		const width = Math.max(0, ...lines.map((l) => l.width));
 		const empty = node.runs.every((r) => !r.text);
-		const count = node.truncate ? 1 : empty ? 0 : lines.length;
+		const count = node.truncate ? 1 : empty ? (node.editable ? 1 : 0) : lines.length;
 		return { width: Math.ceil(width * 100) / 100, height: count * node.lineHeight };
 	};
 }

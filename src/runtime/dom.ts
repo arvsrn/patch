@@ -99,7 +99,8 @@ let mirror: HTMLElement | null = null;
  * The content size of a form control that hugs, as for any text: what it
  * shows (its value, masked for passwords, else its placeholder) at its
  * font, plus padding. Width is the widest line, unwrapped; a textarea's
- * height is its lines, wrapped at its width unless the width hugs too.
+ * height is its lines, wrapped at its width unless the width hugs too, and
+ * at least one line.
  * Browsers would size such a control by its `size`/`rows` instead.
  */
 function sizeControl(el: HTMLInputElement | HTMLTextAreaElement, width: boolean, height: boolean) {
@@ -122,7 +123,9 @@ function sizeControl(el: HTMLInputElement | HTMLTextAreaElement, width: boolean,
 			mirror.style.whiteSpace = 'pre-wrap';
 			mirror.style.width = `${el.clientWidth - px(cs.paddingLeft) - px(cs.paddingRight)}px`;
 		}
-		el.style.setProperty('--hug-h', `${mirror.getBoundingClientRect().height + px(cs.paddingTop) + px(cs.paddingBottom)}px`);
+		// An empty textarea still has its insertion line.
+		const lines = Math.max(mirror.getBoundingClientRect().height, px(cs.lineHeight));
+		el.style.setProperty('--hug-h', `${lines + px(cs.paddingTop) + px(cs.paddingBottom)}px`);
 	}
 }
 

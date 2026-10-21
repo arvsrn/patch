@@ -66,6 +66,8 @@ export type FigmaText = Layer & {
 	textAlign: 'LEFT' | 'CENTER' | 'RIGHT';
 	/** One line, cut with an ellipsis (input values). */
 	truncate: boolean;
+	/** At least one line tall even when empty: a textarea's insertion line. */
+	editable?: boolean;
 	/** The laid-out glyphs Figma draws the layer from (glyphs.ts). */
 	derived?: DerivedText;
 };
@@ -185,7 +187,7 @@ class Converter {
 			const multiline = n.tag === 'textarea';
 			const shown = n.value ? (n.inputType === 'password' ? '•'.repeat(n.value.length) : n.value) : n.placeholder;
 			const text = this.text(n, layerName(shown), [{ text: shown, font: n.font }], n.font, n.value ? 1 : 0.5);
-			Object.assign(text, { width: { kind: 'FILL' }, height: { kind: 'HUG' }, opacity: 1, truncate: !multiline });
+			Object.assign(text, { width: { kind: 'FILL' }, height: { kind: 'HUG' }, opacity: 1, truncate: !multiline, editable: multiline });
 			for (const key of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'alignSelf', 'absolute'] as const) delete text[key];
 			node = this.frame(n, n.tag, { ...n.style, flexDirection: multiline ? 'column' : 'row', alignItems: multiline ? 'start' : 'center', overflow: 'hidden' }, [text]);
 		}
