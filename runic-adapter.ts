@@ -240,9 +240,9 @@ export function toRunicClipboard(result: RunicResult): string {
 }
 
 /** Renders one concrete state of a compiled app as a validated Runic node graph. */
-export function renderRunic(compiled: Compiled, options: RunicOptions = {}): RunicResult {
+export async function renderRunic(compiled: Compiled, options: RunicOptions = {}): Promise<RunicResult> {
 	const viewport = options.viewport ?? { width: 1280, height: 800 };
-	const tree = evaluate(compiled, { state: options.state });
+	const tree = await evaluate(compiled, { state: options.state });
 	const converter = new Converter();
 	const children = tree.map((n) => converter.convert(n));
 	// The viewport the browser host provides: a white column flex frame.

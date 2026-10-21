@@ -1,8 +1,5 @@
-// Runtime shared by the browser bundle and design-time evaluation.
-//
-// `createRuntime` must stay self-contained (no imports, no references to
-// module-level values): the compiler embeds `createRuntime.toString()` in the
-// browser output.
+// Runtime shared by the browser bundle (imported by the Vite entry) and
+// design-time evaluation.
 
 export type Style = Record<string, any>;
 export type Font = {

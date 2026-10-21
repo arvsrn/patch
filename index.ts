@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { basename, extname } from 'node:path';
-import { compile, toHtml } from './compiler';
+import { extname } from 'node:path';
+import { compile } from './compiler';
 import { renderRunic, toRunicClipboard, toRunicHtml } from './runic-adapter';
 
 const usage = `usage:
@@ -10,7 +10,8 @@ const usage = `usage:
   pat lsp
 
 dev serves the app with Vite and reloads the browser when the file changes.
-build writes a standalone HTML file (compile is an alias).
+build bundles the app and its imports into one standalone HTML file (compile is an alias).
+Type errors fail build and runic; dev shows them in the browser overlay.
 runic copies the evaluated design to the clipboard for pasting into Runic.
   --state   values are parsed as JSON, falling back to a plain string
   --stdout  print the clipboard payload instead of copying it
@@ -37,7 +38,7 @@ try {
 async function dev(args: string[]) {
 	const { positional, flags } = parse(args, ['--port']);
 	if (positional.length !== 1) fail(usage);
-	await (await import('./dev')).startDevServer(positional[0], flags['--port'] ? Number(flags['--port']) : undefined);
+	await (await import('./vite-plugin')).startDevServer(positional[0], flags['--port'] ? Number(flags['--port']) : undefined);
 }
 
 async function build(args: string[]) {
@@ -46,7 +47,7 @@ async function build(args: string[]) {
 	if (!input || positional.length > 2) fail(usage);
 	const stem = input.slice(0, input.length - extname(input).length);
 	const out = output ?? `${stem}.html`;
-	await Bun.write(out, toHtml(compile(await Bun.file(input).text(), basename(input)), basename(stem)));
+	await Bun.write(out, await (await import('./vite-plugin')).buildStandalone(input));
 	console.error(`wrote ${out}`);
 }
 
@@ -60,8 +61,8 @@ async function runic(args: string[]) {
 		viewport = { width: Number(w), height: h === 'hug' ? 'hug' : Number(h) };
 	}
 
-	const compiled = compile(await Bun.file(input).text(), basename(input));
-	const result = renderRunic(compiled, { state, viewport });
+	const compiled = compile(await Bun.file(input).text(), input);
+	const result = await renderRunic(compiled, { state, viewport });
 	const count = Object.keys(result.nodes).length;
 	console.error(`state: ${compiled.state.map((s) => `${s.id}=${JSON.stringify(s.id in state ? state[s.id] : s.defaultValue ?? s.defaultSource)}`).join(' ')}`);
 

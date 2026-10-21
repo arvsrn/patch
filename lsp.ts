@@ -24,18 +24,20 @@ export function startLanguageServer() {
 	const connection = createConnection(new StreamMessageReader(process.stdin), new StreamMessageWriter(process.stdout));
 	const documents = new TextDocuments(TextDocument);
 
+	// The .pat path: the script's imports and tsconfig are found from it.
 	const filename = (uri: string) => {
 		try {
-			return basename(uri.startsWith('file:') ? fileURLToPath(uri) : uri);
+			return uri.startsWith('file:') ? fileURLToPath(uri) : basename(uri);
 		} catch {
-			return uri;
+			return basename(uri);
 		}
 	};
 
 	const toLsp = (document: TextDocument, d: Diagnostic): LspDiagnostic => ({
 		range: { start: document.positionAt(d.start), end: document.positionAt(d.end) },
 		severity: d.severity === 'warning' ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
-		source: 'pat',
+		source: d.source,
+		...(d.code === undefined ? {} : { code: d.code }),
 		message: d.message
 	});
 

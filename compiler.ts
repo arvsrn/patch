@@ -1,13 +1,16 @@
-// source → svelte/compiler parse → validate + rewrite → program function
+// source → svelte/compiler parse → validate + type-check + rewrite → ES module
 //
-// The compiled program is one JS function `program($$rt)` that runs the
-// script (with `$state` / `$derived` / `$effect` rewritten onto `$$rt`) and
-// returns a static description of the template whose dynamic parts are
-// closures. The runtime either mounts that description into the DOM with
-// fine-grained effects, or evaluates it once into a concrete tree.
+// The compiled module keeps the script's imports at the top and default-exports
+// one function `program($$rt)` that runs the rest of the script (with `$state`
+// / `$derived` / `$effect` rewritten onto `$$rt`) and returns a static
+// description of the template whose dynamic parts are closures. The runtime
+// either mounts that description into the DOM with fine-grained effects, or
+// evaluates it once into a concrete tree.
 
+import { basename, resolve } from 'node:path';
 import { parse } from 'svelte/compiler';
 import { createRuntime, type Concrete } from './runtime';
+import { typecheck } from './typecheck';
 
 export type { Concrete, Font, Run, Style } from './runtime';
 
@@ -24,14 +27,21 @@ export type StateInfo = {
 
 export type Compiled = {
 	filename: string;
-	/** JS source of `function program($$rt) { ... }`. */
-	program: string;
+	/** Absolute path of the .pat file; the script's relative imports resolve from it. */
+	path: string;
+	/** ES module source: the script's imports, then `export default function program($$rt) { ... }`. */
+	module: string;
+	/** Specifiers the module still imports after type-only imports are removed. */
+	imports: string[];
 	state: StateInfo[];
 };
 
 export type Diagnostic = {
 	message: string;
 	severity: 'error' | 'warning';
+	source: 'pat' | 'typescript';
+	/** TypeScript's diagnostic code. */
+	code?: number;
 	/** UTF-16 offsets into the source, end exclusive. */
 	start: number;
 	end: number;
@@ -52,7 +62,8 @@ export class CompileError extends Error {
 export function formatDiagnostic(d: Diagnostic, source: string, filename: string): string {
 	const text = source.split('\n')[d.line - 1] ?? '';
 	const width = Math.max(1, Math.min(d.end - d.start, text.length - d.column + 1));
-	return `${filename}:${d.line}:${d.column}: ${d.severity}: ${d.message}\n  ${text}\n  ${' '.repeat(d.column - 1)}${'^'.repeat(width)}`;
+	const code = d.code === undefined ? '' : ` TS${d.code}`;
+	return `${filename}:${d.line}:${d.column}: ${d.severity}${code}: ${d.message}\n  ${text}\n  ${' '.repeat(d.column - 1)}${'^'.repeat(width)}`;
 }
 
 // Thrown by `error()` to abandon the current construct; caught by `recover()`.
@@ -190,6 +201,7 @@ class Compiler {
 	private runeCalls = new Map<any, 'state' | 'derived' | 'derived.by' | 'effect'>();
 	private styleDecls = new Map<string, any>();
 	private stateIds = new Map<any, string>();
+	private imports: string[] = [];
 	private styles = createRuntime({}, true);
 	state: StateInfo[] = [];
 	/** Every style object literal checked, with the element kind it was checked for. */
@@ -229,7 +241,7 @@ class Compiler {
 		const [start, end] = this.range(at);
 		// A $style const is checked where it is declared and again where it is used.
 		if (this.diagnostics.some((d) => d.start === start && d.end === end && d.message === message)) return;
-		this.diagnostics.push({ message, severity, start, end, ...this.position(start) });
+		this.diagnostics.push({ message, severity, source: 'pat', start, end, ...this.position(start) });
 	}
 
 	/** Records an error and abandons the current construct. */
@@ -250,8 +262,8 @@ class Compiler {
 
 	// ------------------------------------------------------------------ script
 
-	/** Validates and generates code. `program` is only set when there are no errors. */
-	run(emit: boolean): Analysis & { program?: string } {
+	/** Validates and generates code. `module` is only set when there are no errors. */
+	run(emit: boolean, types = true): Analysis & { module?: string; imports?: string[] } {
 		let ast: any;
 		try {
 			ast = parse(this.source, { modern: true });
@@ -267,24 +279,52 @@ class Compiler {
 		const top = new Scope();
 		const script = ast.instance ? this.script(ast.instance.content, top) : '';
 		const nodes = this.children(ast.fragment.nodes, new Scope(top));
+		const lang = ast.instance?.attributes.find((a: any) => a.name === 'lang')?.value?.[0]?.data;
+		if (types && lang === 'ts') this.typecheck(ast.instance.content);
 		const result = { diagnostics: this.diagnostics, state: this.state };
 		if (!emit || this.diagnostics.some((d) => d.severity === 'error')) return result;
-		const ts = `export default function program($$rt) {\n${script}\nreturn [${nodes.join(',\n')}];\n}\n`;
-		const js = new Bun.Transpiler({ loader: 'ts', target: 'browser' }).transformSync(ts);
-		return { ...result, program: js.replace(/^export default /m, '').trim() };
+		const ts = `${this.imports.join('\n')}\nexport default function program($$rt) {\n${script}\nreturn [${nodes.join(',\n')}];\n}\n`;
+		const module = new Bun.Transpiler({ loader: 'ts', target: 'browser' }).transformSync(ts);
+		const imports = new Bun.Transpiler({ loader: 'js' }).scanImports(module).map((i) => i.path);
+		return { ...result, module, imports };
+	}
+
+	// TypeScript diagnostics for the script. A PAT error already covering the
+	// same spot wins (e.g. an `import "./App.pat"` is not also "Cannot find module").
+	private typecheck(script: any) {
+		const pat = this.diagnostics.filter((d) => d.severity === 'error');
+		for (const d of typecheck(this.source, resolve(this.filename), script.start, script.end)) {
+			if (pat.some((p) => p.start <= d.start && d.start < p.end)) continue;
+			this.diagnostics.push({ ...d, source: 'typescript', ...this.position(d.start) });
+		}
 	}
 
 	private script(program: any, top: Scope): string {
 		const declared = program.body.filter((s: any) => this.recover(() => (this.declare(s, top), true), false));
 		this.hoist(program.body, top);
-		for (const statement of declared) this.recover(() => this.walk(statement, top), undefined);
+		for (const statement of declared) {
+			// Imports move to the top of the compiled module, outside `program`.
+			if (statement.type === 'ImportDeclaration') {
+				this.imports.push(this.source.slice(statement.start, statement.end));
+				this.edits.replace(statement.start, statement.end, '');
+			} else this.recover(() => this.walk(statement, top), undefined);
+		}
 		return this.edits.render(program.start, program.end);
 	}
 
 	// Top-level declarations: which names are state/derived, where runes may appear.
 	private declare(statement: any, top: Scope) {
-		if (/^(Import|Export)/.test(statement.type))
-			this.error(statement, 'imports/exports are not supported in v0 (single-file apps, no props)');
+		if (statement.type === 'ImportDeclaration') {
+			if (/\.pat($|\?)/.test(statement.source.value))
+				this.error(statement.source, 'importing .pat files is not supported yet; a PAT app is a single .pat file (import .ts/.js modules instead)');
+			// Vite only converts CommonJS for npm dependencies, not local files.
+			if (/^\.{0,2}\/.*\.c[jt]s$/.test(statement.source.value))
+				this.error(statement.source, 'local CommonJS modules are not supported; use an ES module (.ts, .js, .mjs). CommonJS npm packages are fine');
+			return;
+		}
+		if (statement.type === 'TSImportEqualsDeclaration') this.error(statement, '`import x = require(...)` is not supported; use an ES import');
+		if (/^(Export|TSExport)/.test(statement.type))
+			this.error(statement, 'exports are not supported (a .pat file is a single app with no props)');
 		if (statement.type === 'VariableDeclaration') {
 			for (const d of statement.declarations) {
 				const init = unwrap(d.init);
@@ -331,7 +371,9 @@ class Compiler {
 					? s.declarations.flatMap((d: any) => patternNames(d.id))
 					: (s.type === 'FunctionDeclaration' || s.type === 'ClassDeclaration') && s.id
 						? [s.id.name]
-						: [];
+						: s.type === 'ImportDeclaration'
+							? s.specifiers.map((sp: any) => sp.local.name)
+							: [];
 			for (const name of names) if (!scope.vars.has(name)) scope.vars.set(name, 'local');
 		}
 	}
@@ -842,7 +884,7 @@ export function complete(source: string, offset: number, options: { filename?: s
 	const hole = value ? `0${comma}` : /^\s*:/.test(rest) ? HOLE : `${HOLE}: 0${comma}`;
 
 	const compiler = new Compiler(source.slice(0, start) + hole + rest, options.filename ?? 'app.pat');
-	compiler.run(false);
+	compiler.run(false, false);
 	const kinds = new Set<string>();
 	let object: any;
 	let property: any;
@@ -873,22 +915,15 @@ export function complete(source: string, offset: number, options: { filename?: s
 	return legal.filter((p) => !present.has(p.name)).map((p) => ({ label: p.name, kind: 'property', detail: p.hint }));
 }
 
-/** Validation plus code generation. Throws a CompileError listing every diagnostic. */
+/**
+ * Validation, type checking and code generation. `filename` is the .pat path
+ * (relative to the working directory or absolute). Throws a CompileError
+ * listing every diagnostic.
+ */
 export function compile(source: string, filename = 'app.pat'): Compiled {
 	const result = new Compiler(source, filename).run(true);
-	if (!result.program) throw new CompileError(result.diagnostics, source, filename);
-	return { filename, program: result.program, state: result.state };
-}
-
-/** A standalone HTML document that runs the app. */
-export function toHtml(compiled: Compiled, title = 'App'): string {
-	const script = `const createRuntime = ${createRuntime.toString()};\n${mountScript(compiled)}`;
-	return htmlPage(title, `<script type="module">\n${script.replace(/<\/script/gi, '<\\/script')}\n</script>`);
-}
-
-/** Mounts the compiled program into #app; expects `createRuntime` in scope. */
-export function mountScript(compiled: Compiled): string {
-	return `const program = ${compiled.program};\ncreateRuntime().mount(program, document.getElementById("app"));`;
+	if (!result.module) throw new CompileError(result.diagnostics, source, filename);
+	return { filename: basename(filename), path: resolve(filename), module: result.module, imports: result.imports!, state: result.state };
 }
 
 /** The host document: fonts, the #app element, and the given script tag. */
@@ -912,13 +947,30 @@ ${script}
 
 /**
  * Design-time evaluation: initialize state, apply overrides, evaluate derived
- * values and the template once. `$effect`s never run here.
+ * values and the template once. `$effect`s never run here. A program with
+ * imports is loaded as a module so its imports resolve from the .pat file.
  */
-export function evaluate(compiled: Compiled, options: { state?: Record<string, unknown> } = {}): Concrete[] {
+export async function evaluate(compiled: Compiled, options: { state?: Record<string, unknown> } = {}): Promise<Concrete[]> {
 	const overrides = options.state ?? {};
 	const known = compiled.state.map((s) => s.id);
 	for (const id of Object.keys(overrides))
 		if (!known.includes(id)) throw new Error(`Unknown state "${id}". Available: ${known.join(', ') || '(none)'}`);
-	const program = new Function(`return (${compiled.program})`)();
+	const program = compiled.imports.length
+		? await importProgram(compiled)
+		: new Function(`return (${compiled.module.replace(/^export default /m, '')})`)();
 	return createRuntime(overrides, true).realize(program);
+}
+
+// Compiled modules served to Bun's loader by path.
+const loaded = new Map<string, string>();
+async function importProgram(compiled: Compiled) {
+	if (!loaded.size)
+		Bun.plugin({
+			name: 'pat',
+			setup(build) {
+				build.onLoad({ filter: /\.pat$/ }, ({ path }) => ({ contents: loaded.get(path) ?? '', loader: 'js' }));
+			}
+		});
+	loaded.set(compiled.path, compiled.module);
+	return (await import(compiled.path)).default;
 }
