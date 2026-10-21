@@ -3,7 +3,7 @@
 // each element's own style becomes inline CSS.
 
 import type { ElementNode, InlinePart, Program, ProgramNode, SpanNode } from '../schema/program';
-import { SHORTHANDS, type ElementKind, type Style } from '../schema/style';
+import { effectiveSizing, SHORTHANDS, sizingOf, type ElementKind, type Sizing, type Style } from '../schema/style';
 import { createApi, type ApiOptions } from './api';
 import { eachList, elementStyle, toText, withId } from './evaluate';
 import { createReactive, type Cell, type Owner } from './reactive';
@@ -26,13 +26,14 @@ button[data-p]{cursor:pointer}
 const FLEX_VALUE: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', 'space-between': 'space-between' };
 const px = (v: unknown) => (v === 'auto' ? 'auto' : `${v}px`);
 
-/** A validated style as inline CSS, plus the data-* attributes the stylesheet keys sizing on. */
+/**
+ * A validated style as inline CSS, plus data-* attributes: the authored
+ * sizing (`sw`/`sh`, resolved into the `w`/`h` the stylesheet keys on by
+ * `resolveSizing`) and the flex direction.
+ */
 function toCss(kind: ElementKind, st: Style) {
 	const css: Record<string, string> = {};
-	const data: Record<string, string> = {
-		w: typeof st.width === 'number' ? 'fixed' : (st.width ?? 'hug'),
-		h: typeof st.height === 'number' ? 'fixed' : (st.height ?? 'hug')
-	};
+	const data: Record<string, string> = { sw: sizingOf(st.width), sh: sizingOf(st.height) };
 	if (kind === 'frame') data.dir = st.flexDirection ?? 'column';
 	if (typeof st.width === 'number') css.width = px(st.width);
 	if (typeof st.height === 'number') css.height = px(st.height);
@@ -67,6 +68,27 @@ function toCss(kind: ElementKind, st: Style) {
 	return { css, data };
 }
 
+/**
+ * Writes every element's effective sizing (`data-w`/`data-h`) from its
+ * authored sizing, its parent's effective sizing and its flow siblings, top
+ * down from a frame whose own sizing is `w` × `h`.
+ */
+function resolveSizing(frame: Element, w: Sizing, h: Sizing) {
+	if (!frame.children) return;
+	const row = frame.getAttribute('data-dir') === 'row';
+	const kids = [...frame.children].filter((k) => k.hasAttribute('data-p'));
+	const flow = kids.filter((k) => (k as HTMLElement).style.position !== 'absolute');
+	for (const k of kids) {
+		const only = flow.length === 1 && flow[0] === k;
+		const authored = (axis: string) => (k.getAttribute(`data-s${axis}`) as Sizing | null) ?? 'hug';
+		const kw = effectiveSizing(authored('w'), w, row, only);
+		const kh = effectiveSizing(authored('h'), h, !row, only);
+		if (k.getAttribute('data-w') !== kw) k.setAttribute('data-w', kw);
+		if (k.getAttribute('data-h') !== kh) k.setAttribute('data-h', kh);
+		if (k.getAttribute('data-p') === 'frame') resolveSizing(k, kw, kh);
+	}
+}
+
 const removeRange = (start: Node, end: Node) => {
 	let node: Node | null = start;
 	while (node) {
@@ -92,6 +114,18 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 	const r = createReactive();
 	const { effect, newOwner, dispose, within, untrack, batch, cell } = r;
 
+	// Sizing depends on parents and siblings, so it is resolved in one pass
+	// after styles or structure change, before the browser paints.
+	let sizingQueued = false;
+	const resizeLater = () => {
+		if (sizingQueued) return;
+		sizingQueued = true;
+		queueMicrotask(() => {
+			sizingQueued = false;
+			resolveSizing(target, 'fixed', 'fixed');
+		});
+	};
+
 	const bindStyle = (el: HTMLElement, d: ElementNode | SpanNode, kind: ElementKind) => {
 		let prev: Record<string, string> = {};
 		effect(() => {
@@ -100,6 +134,7 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 			for (const [k, v] of Object.entries(css)) if (prev[k] !== v) el.style.setProperty(k, v);
 			for (const [k, v] of Object.entries(data)) el.setAttribute(`data-${k}`, v);
 			prev = css;
+			resizeLater();
 		});
 	};
 
@@ -186,6 +221,7 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 					within(o, null, () => mountNodes(kids, parent, end));
 					branch = { start, owner: o };
 				});
+				resizeLater();
 			})
 		);
 	};
@@ -238,6 +274,7 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 					}
 					items = next;
 				});
+				resizeLater();
 			})
 		);
 	};

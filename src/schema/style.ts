@@ -164,6 +164,22 @@ export function checkStyle(kind: ElementKind, st: Style) {
 	if (kind === 'textarea' && (st.height ?? 'hug') === 'hug') throw new Error('<textarea> needs height: <number> or "fill"');
 }
 
+export type Sizing = 'fixed' | 'hug' | 'fill';
+
+/** How a `width`/`height` style value sizes its element. */
+export const sizingOf = (value: unknown): Sizing => (typeof value === 'number' ? 'fixed' : value === 'fill' ? 'fill' : 'hug');
+
+/**
+ * How a flow child is actually sized along one axis. Fill takes space its
+ * parent has; a parent that hugs that axis has none to give, so the child is
+ * sized by its content: along the parent's main axis always, and across it
+ * when it is the only flow child (it would stretch to itself). The result is
+ * what the child's own children see as their parent's sizing.
+ */
+export function effectiveSizing(own: Sizing, parent: Sizing, mainAxis: boolean, onlyFlowChild: boolean): Sizing {
+	return own === 'fill' && parent === 'hug' && (mainAxis || onlyFlowChild) ? 'hug' : own;
+}
+
 export type StyleProperty = { name: string; hint: string; values: string[] };
 
 /** The keys `checkKey` accepts for one element kind (shorthands included), with hints and accepted string literals. */

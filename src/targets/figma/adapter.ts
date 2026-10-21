@@ -8,7 +8,7 @@
 // degraded with a warning. Positions and resolved sizes come from layout.ts.
 
 import type { Concrete, Font, Run } from '../../schema/concrete';
-import type { Style } from '../../schema/style';
+import { effectiveSizing, type Style } from '../../schema/style';
 import type { DerivedText } from './glyphs';
 
 export type Sizing = { kind: 'FIXED'; value: number } | { kind: 'HUG' } | { kind: 'FILL' };
@@ -91,6 +91,7 @@ const paint = (hex: string, opacity = 1): Paint => {
 };
 
 const sizing = (value: unknown): Sizing => (typeof value === 'number' ? { kind: 'FIXED', value } : { kind: value === 'fill' ? 'FILL' : 'HUG' });
+const KIND = { FIXED: 'fixed', HUG: 'hug', FILL: 'fill' } as const;
 const ALIGN: Record<string, Align> = { start: 'MIN', center: 'CENTER', end: 'MAX' };
 const TEXT_ALIGN = { start: 'LEFT', center: 'CENTER', end: 'RIGHT' } as const;
 
@@ -244,22 +245,18 @@ class Converter {
 	}
 
 	/**
-	 * A fill child of a frame that hugs along that axis is sized by its
-	 * content, as in the browser; Figma cannot hold that combination along the
-	 * main axis, so it is written as hug. An only child filling across a
-	 * hugging frame is its content size too.
+	 * Writes each flow child's effective sizing (see `effectiveSizing`): a
+	 * fill that resolves to its content size is written as hug, which is also
+	 * the only form Figma can hold for it. Runs top-down, so a rewritten child
+	 * is a hugging parent to its own children.
 	 */
 	normalize(frame: FigmaFrame) {
 		const flow = frame.children.filter((c) => !c.absolute);
-		const main = frame.direction === 'HORIZONTAL' ? 'width' : 'height';
-		const cross = main === 'width' ? 'height' : 'width';
-		for (const child of flow) {
-			if (frame[main].kind === 'HUG' && child[main].kind === 'FILL') {
-				child[main] = { kind: 'HUG' };
-				if (child.name !== 'margin' || child.type !== 'FRAME') this.warnings.push(`"${child.name}" fills a ${frame.name} that hugs its ${main}; it is written as hug`);
+		for (const child of flow)
+			for (const axis of ['width', 'height'] as const) {
+				const main = (axis === 'width') === (frame.direction === 'HORIZONTAL');
+				if (effectiveSizing(KIND[child[axis].kind], KIND[frame[axis].kind], main, flow.length === 1) === 'hug') child[axis] = { kind: 'HUG' };
 			}
-			if (frame[cross].kind === 'HUG' && child[cross].kind === 'FILL' && flow.length === 1) child[cross] = { kind: 'HUG' };
-		}
 		for (const child of frame.children) if (child.type === 'FRAME') this.normalize(child);
 	}
 }
