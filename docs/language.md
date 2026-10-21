@@ -38,16 +38,16 @@ Standard JS and TS work: functions, classes, closures, `async` functions, `try`/
 | TS `enum` and `namespace` | error |
 | dynamic `import()` | error |
 | `import x = require(...)` | error |
-| top-level `await` | compilation fails with a parse error and no Patch diagnostic |
+| `await` outside a function (in the script or a template expression) | error |
 | undeclared identifiers starting with `$` (`$props`, `$state.raw`, `$inspect`, `$store`, …) | error |
 | references to identifiers starting with `$$` | error (reserved) |
 
-**Visual escape hatches** are rejected wherever they appear in the script or in template expressions:
+**Visual escape hatches** are rejected wherever they appear in the script or in template expressions, on values that may come from the DOM: the DOM globals (`document`, `window`, `self`, `globalThis`, …), event handler events (template `on…=` handlers and `addEventListener` callbacks), values typed or cast as DOM types in TS (`HTMLElement`, `Event`, …), and anything read, called or stored from those. The same property names on ordinary objects are fine.
 
-- Accessing a property with one of these names, on **any** object: `querySelector`, `querySelectorAll`, `getElementById`, `getElementsByClassName`, `getElementsByTagName`, `getElementsByName`, `createElement`, `createElementNS`, `createTextNode`, `createDocumentFragment`, `appendChild`, `insertBefore`, `removeChild`, `replaceChild`, `replaceChildren`, `replaceWith`, `insertAdjacentHTML`, `insertAdjacentElement`, `insertAdjacentText`, `innerHTML`, `outerHTML`, `innerText`, `textContent`, `setProperty`, `cssText`, `classList`, `className`, `attachShadow`, `getComputedStyle`, `getBoundingClientRect`, `adoptedStyleSheets`, `styleSheets`.
-- `document.body`, `document.documentElement`, `document.head`, `document.write`, `document.writeln`.
+- Accessing a property with one of these names: `querySelector`, `querySelectorAll`, `getElementById`, `getElementsByClassName`, `getElementsByTagName`, `getElementsByName`, `createElement`, `createElementNS`, `createTextNode`, `createDocumentFragment`, `appendChild`, `insertBefore`, `removeChild`, `replaceChild`, `replaceChildren`, `replaceWith`, `insertAdjacentHTML`, `insertAdjacentElement`, `insertAdjacentText`, `innerHTML`, `outerHTML`, `innerText`, `textContent`, `setProperty`, `cssText`, `classList`, `className`, `attachShadow`, `getComputedStyle`, `getBoundingClientRect`, `adoptedStyleSheets`, `styleSheets`.
+- `document.body`, `document.documentElement`, `document.head`, `document.write`, `document.writeln` (also through `window.document`).
 - The global `getComputedStyle`.
-- Assigning through `.style`, for example `el.style.color = …`.
+- Assigning through the `.style` of a DOM value, for example `el.style.color = …`.
 
 Other browser APIs (`fetch`, `localStorage`, `setTimeout`, `document.title`, `window`) are allowed.
 
@@ -62,6 +62,7 @@ import { load, type Task } from './api.ts'; // local ES module (.ts, .js, .mjs)
 - Type-only imports are removed from the output.
 - You cannot import `.pat` files. An app is one file.
 - You cannot import local CommonJS files (`.cjs`, `.cts`). CommonJS npm packages work.
+- You cannot import stylesheets (`.css`, `.scss`, `.sass`, `.less`, `.styl`, `.pcss`, …).
 
 ### TypeScript checking
 
@@ -78,7 +79,7 @@ declare function $style(style: { readonly [property: string]: unknown }): PatSty
 
 Type errors fail `patch build` and `patch snapshot`. `patch dev` shows them in the browser overlay.
 
-**Only the script is type-checked.** Template expressions are not, so a misspelled name in the template compiles and throws at runtime. With `lang="ts"`, template expressions may use TS syntax such as `name as Filter`. Without it, TS syntax in the template is a parse error.
+**Only the script is type-checked.** Template expressions are checked for names only, in JS and TS alike: a name that is not a script binding, an `{#each}` name or a global is an error. Their types are not checked. With `lang="ts"`, template expressions may use TS syntax such as `name as Filter`. Without it, TS syntax in the template is a parse error.
 
 ### Where the script runs
 
@@ -87,7 +88,7 @@ Type errors fail `patch build` and `patch snapshot`. `patch dev` shows them in t
 | `patch dev`, `patch build`, `patch snapshot html` | browser |
 | `patch snapshot figma` | Bun, with no DOM or browser globals |
 
-Top-level code that touches browser globals, such as `localStorage.getItem(...)` outside an `$effect`, works in the browser but makes `patch snapshot figma` fail. Put browser-only work in `$effect`, because effects never run in snapshots.
+Top-level code that touches browser globals, such as `localStorage.getItem(...)` outside an `$effect`, works in the browser but makes `patch snapshot figma` fail. Put browser-only work in `$effect`, because effects never run in Figma snapshots.
 
 ## Reactivity
 
@@ -114,20 +115,21 @@ todos[0].done = true;   // tracked: everything that reads `todos` re-evaluates
 counts[key]++;          // tracked
 ```
 
-Tracking applies to the whole variable, not to individual paths. Other in-place changes are **not tracked** and do not update the UI:
+`delete user.name` is tracked the same way. Tracking applies to the whole variable, not to individual paths: everything that reads it re-evaluates, including keyed `{#each}` rows rendered from it or from a `$derived` list built from it.
+
+Other in-place changes to a reactive value are **compile errors**, because they would not be tracked. This holds however the value is reached: through the variable, a local alias, destructuring, a `for…of` variable, a callback parameter (`tasks.forEach((t) => …)`), or an element accessor (`find`, `findLast`, `at`, `get`):
 
 ```ts
-tasks.push(t);              // compile error (also pop, shift, unshift, splice, sort, reverse, fill, copyWithin)
-data.items.sort();          // compile error: the chain starts at a state variable
-const list = tasks; list.push(t); // not caught, not tracked
-delete user.name;           // not tracked
-Object.assign(user, patch); // not tracked
-map.set(k, v);              // not tracked (Map/Set methods)
+tasks.push(t);                       // error (also pop, shift, unshift, splice, sort, reverse, fill, copyWithin)
+map.set(k, v);                       // error (also add, delete, clear)
+Object.assign(user, patch);          // error (also Object.defineProperty, Reflect.set, …)
+const list = tasks; list.push(t);    // error
+const t = tasks.find(byId); t.done = true; // error: write through `tasks` itself
 ```
 
-Prefer assigning new values: `tasks = [...tasks, t]`.
+A fresh container holding the same elements is not the variable: `const copy = tasks.slice(); copy.push(t); tasks = copy` is fine, but `copy[0].done = true` changes an element of `tasks` and is an error. Copies are recognized from `[...x]`, `{ ...x }`, and `filter`, `slice`, `concat`, `toSorted`, `toReversed`, `toSpliced`, `with`, `flat`, `values`. Values passed into a function through a parameter are not followed, and neither are methods of your own classes.
 
-> **Keyed lists and mutation:** an in-place member write such as `todos[0].done = true` does **not** update content rendered from that item inside `{#each todos as todo (todo.id)}`. The same applies to lists derived from `todos`. Use immutable updates for list items: `todos = todos.map((t) => (t.id === id ? { ...t, done: true } : t))`. See [Open questions](#open-questions).
+Prefer assigning new values: `tasks = [...tasks, t]`.
 
 ### `$derived`
 
@@ -164,7 +166,7 @@ $effect(() => {
 - Effects may write state. An effect that writes state it also reads triggers itself again. After 1000 such rounds the runtime throws `Reactive loop`.
 - An error thrown inside an effect is logged with `console.error`, and the other effects still run.
 - In TS, async effect functions are a type error. In JS they are accepted, and the returned promise is ignored.
-- **Effects never run in snapshots** (`figma` or `html`). This includes interactions inside an HTML snapshot.
+- **Effects do not run in snapshots' initial state.** Figma snapshots never run them. HTML snapshots start them at the first interaction, just before the first event handler runs; from then on the snapshot behaves like the app.
 
 ### Batching
 
@@ -353,18 +355,17 @@ Strings are never styles. A string or template literal in a style position is a 
 
 ### When styles are validated
 
-The compiler checks property names, and values written as literals, in these places:
+The compiler checks property names, and values written as literals, for the element kind each style is used on. It follows a `style=` expression through:
 
-- object literals in `style=`, including inside arrays, `&&`, `||`, `??`, and ternaries, checked for that element's kind
-- `$style({...})` calls, checked on their own (any property allowed)
-- identifiers that refer to a top-level `const x = $style({...})`, checked for each element that uses them
+- object literals, arrays, `&&`, `||`, `??`, and ternaries
+- `$style({...})` calls (also checked on their own, where any property is allowed)
+- names given one value and never reassigned (`const` or `let`): aliases, arrays of styles, conditionals
+- members of object constants (`variants.primary`, and every value for `variants[name]`)
+- calls of functions declared once, through their `return` values
 
-Every other case is validated **only at runtime**, with the same rules: non-literal values, computed keys, spread entries, styles returned from functions, styles reached through members or variables holding arrays, `let` styles, and plain objects that are not `$style`. The [combination rules](#combination-rules) are always checked at runtime.
+It also checks the [combination rules](#combination-rules) on each element's merged style wherever the outcome is certain: in every way the style can evaluate, or in every way that takes one particular branch. Object and array literals reached through a name may be changed later, so only their keys and literal values are checked, not their combinations. `$style` values are frozen.
 
-What a runtime style error does:
-
-- **On first render:** rendering stops at that element. Content before it remains, and the element and everything after it are missing. Effects still run. In snapshots, the snapshot fails.
-- **On update:** the error is logged to the console, and the element keeps its previous style.
+Everything else is validated **at runtime**, with the same rules: non-literal values, computed keys, spread entries, reassigned names, and other expressions. A runtime style error is logged to the console. On first render the element is shown without its style, and the rest of the page still renders. On update the element keeps its previous style. Either way, the style applies once its value becomes valid. In snapshots, a style error fails the snapshot.
 
 ## Style properties
 
@@ -444,16 +445,16 @@ For example, a `<p>` cannot have `padding`, `background`, a border, a radius, or
 
 ### Combination rules
 
-These are checked on the merged style, **at runtime only**:
+These are checked on the merged style, by the compiler where the outcome is certain and always at runtime:
 
 - `justifyContent: 'space-between'` cannot be combined with a non-zero `gap`, or with `flexWrap: 'wrap'`.
 - `left` and `top` require `position: 'absolute'`.
 - An absolute element cannot use `'fill'` for `width` or `height`.
-- `<input>` needs `width` set to a number or `'fill'`. `<textarea>` needs both `width` and `height` set to a number or `'fill'`. A bare `<input />` compiles but fails when rendered.
+- `<input>` needs `width` set to a number or `'fill'`. `<textarea>` needs both `width` and `height` set to a number or `'fill'`. A bare `<input />` is a compile error.
 
 ## Layout
 
-Every container is a flex box. Children follow source order along the main axis (`flexDirection`) and are separated by `gap`. On the cross axis they are placed by `alignItems`, which a child can override with `alignSelf`. Children never shrink or grow unless they are sized `'fill'`. The exception is noted under `hug` below.
+Every container is a flex box. Children follow source order along the main axis (`flexDirection`) and are separated by `gap`. On the cross axis they are placed by `alignItems`, which a child can override with `alignSelf`. Children never shrink or grow unless they are sized `'fill'`.
 
 ### Sizing
 
@@ -462,7 +463,6 @@ Each axis of each element is sized one of three ways:
 - **Fixed** (a number): exactly that many pixels. Padding is included, so `width: 100, padding: 10` leaves 80 for content.
 - **`hug`** (the default): the size of the content plus padding.
   - Text that hugs its width stays on one line and never wraps. It breaks only at `\n` characters in expression values. If the parent is too narrow, it overflows.
-  - In the browser, a container that hugs its width inside a **row** may shrink below its content when the row runs out of space. See [Open questions](#open-questions).
 - **`fill`**:
   - On the parent's **main axis**: the element takes an equal share of the space left after fixed and hugging siblings and gaps.
   - On the parent's **cross axis**: the element stretches to the parent's inner size. This overrides `alignSelf` and `alignItems` for that axis.
@@ -470,10 +470,12 @@ Each axis of each element is sized one of three ways:
 
 `min*` and `max*` clamp the result of all three modes, `fill` included. Clamping can make an element overflow its parent.
 
-When the parent hugs the axis that its child fills:
+When the parent hugs the axis that its child fills, the parent has no space to give:
 
-- **Cross axis:** the child stretches to the largest sibling. An only child gets its content size.
-- **Main axis:** the result is not well-defined. Avoid it. See [Open questions](#open-questions).
+- **Main axis:** the child is sized by its content, as if it hugged.
+- **Cross axis:** the child stretches to the largest sibling. An only flow child is sized by its content.
+
+A child sized by its content this way is a hugging parent to its own children, so the rule applies all the way down.
 
 ```svelte
 <div style={{ flexDirection: 'row', width: 'fill', gap: 8, alignItems: 'center' }}>
@@ -539,7 +541,7 @@ patch snapshot html app.pat [out.html] [--state name=value]...
 patch snapshot figma app.pat [--state name=value]...
 ```
 
-A snapshot renders the app from its **initial state**, with optional overrides, and **never runs `$effect`s**.
+A snapshot renders the app from its **initial state**, with optional overrides, **without running `$effect`s**.
 
 ### State overrides
 
@@ -558,7 +560,7 @@ A snapshot renders the app from its **initial state**, with optional overrides, 
   --state selected=null                     # null, if the type allows it
   ```
 - In a JS script, the value is used as JSON if it parses, and as a string otherwise, without any checking.
-- The initializer expression still runs, so its side effects happen, but its value is discarded.
+- The initializer expression of an overridden state does not run.
 
 ### Snapshot targets
 
@@ -567,7 +569,7 @@ A snapshot renders the app from its **initial state**, with optional overrides, 
 | Output | one standalone HTML file (default `<name>.snapshot.html`) | editable layers copied to the clipboard |
 | Runs in | the browser | Bun (no DOM) |
 | Interactive | yes: handlers run and state updates | no |
-| `$effect` | never runs, even after interaction | never runs |
+| `$effect` | starts at the first interaction | never runs |
 | Inputs | real inputs | frames showing the value (passwords masked as `•`) or the placeholder at 50% opacity |
 
 The Figma target approximates what Figma cannot express, and prints a warning each time:
@@ -575,7 +577,6 @@ The Figma target approximates what Figma cannot express, and prints a warning ea
 - wrapping in columns is not applied
 - negative margins are dropped
 - auto margins on absolute elements are dropped
-- a `fill` child of a parent that hugs the same axis is written as `hug`
 - a hugging-width text with a set height is given a fixed width
 
 ## Unsupported constructs
@@ -600,24 +601,9 @@ The Figma target approximates what Figma cannot express, and prints a warning ea
 
 These behaviors in the current implementation are inconsistent or unclear. They are documented as they behave today, but they have not been settled.
 
-1. **In-place mutation does not update keyed `{#each}` items.** `todos[0].done = true` notifies `todos`, and the list re-evaluates. But the item value is the same object, so the item's content is not updated. Content outside the `{#each}` that reads `todos` does update. Lists derived from `todos` behave the same way. The mutation rule ("member writes notify every reader") therefore has an exception that the compiler does not report.
-2. **Fill along an axis that the parent hugs.**
-   - In the browser, a `height: 'fill'` child of a column that hugs its height collapses to 0, and its content overflows.
-   - A `width: 'fill'` child of a row that hugs its width gets an engine-computed share instead.
-   - Figma snapshots write the child as `hug` (content size) with a warning.
-
-   There is no defined rule.
-3. **Hugging containers shrink in browser rows but not in Figma.** The browser lets a hugging container in a row shrink below its content when space runs out. The Figma layout keeps the content size, so the browser and Figma disagree in this case.
-4. **Combination rules are runtime-only.** `space-between` with `gap`, `left`/`top` without `absolute`, `absolute` with `fill`, and input/textarea sizing all compile without errors, then fail at render. For example, `<input />` compiles and then aborts rendering.
-5. **Element-kind checks only follow direct references.** A `$style` used as an identifier is checked against each element that uses it. The same style returned from a function, stored in a `let`, read from an object member, or held in an array constant is checked only at runtime.
-6. **Properties cannot be unset in a merge.** A `null` or `undefined` value is ignored. In most cases a neutral value works around this. But once `left` or `top` is set, `position: 'flow'` cannot be applied later in the array without failing the "left/top require absolute" rule.
-7. **A runtime error on first render leaves a partial UI.** Rendering stops at the failing element, and effects still run. After the first render, the same error only logs and keeps the previous style.
-8. **Template expressions are not type-checked**, even with `lang="ts"`. Undefined names in the template compile and fail at runtime.
-9. **Top-level `await`** has no Patch diagnostic. Compilation fails with a raw parse error.
-10. **Side-effect CSS imports** (`import './x.css'`) are not rejected. They are bundled into `build` and HTML snapshot output, which bypasses the no-stylesheet model.
-11. **`''` in a style expression is a compile error** ("CSS strings are not supported"), while other falsy values are allowed and skipped.
-12. **Text and attribute interpolation differ for `false`.** `{false}` renders as nothing in text, but `"a {false}"` in an attribute renders `"a false"`. Separately, `disabled="false"` disables the element.
-13. **Escape-hatch property names are rejected on every object**, not only on DOM objects. For example, `{ textContent: 1 }.textContent` is an error.
-14. **HTML snapshots are interactive, but effects stay disabled for their whole lifetime.** An HTML snapshot therefore does not behave like the app after the first interaction.
-15. **Script top-level code runs in Bun for Figma snapshots**, so browser globals used outside `$effect` break `snapshot figma` but not `snapshot html`.
-16. **Small rune details:** `$state(a, b)` silently ignores extra arguments. Declaring `const $$x` is allowed, but any reference to it is an error.
+1. **Properties cannot be unset in a merge.** A `null` or `undefined` value is ignored. In most cases a neutral value works around this. But once `left` or `top` is set, `position: 'flow'` cannot be applied later in the array without failing the "left/top require absolute" rule. The compiler reports this when it is certain, but there is no way to write it correctly.
+2. **Template expression types are not checked**, even with `lang="ts"`. Names are checked; a type error in the template fails at runtime.
+3. **`''` in a style expression is a compile error** ("CSS strings are not supported"), while other falsy values are allowed and skipped.
+4. **Text and attribute interpolation differ for `false`.** `{false}` renders as nothing in text, but `"a {false}"` in an attribute renders `"a false"`. Separately, `disabled="false"` disables the element.
+5. **Script top-level code runs in Bun for Figma snapshots**, so browser globals used outside `$effect` break `snapshot figma` but not `snapshot html`.
+6. **Declaring `const $$x` is allowed**, but any reference to it is an error.
