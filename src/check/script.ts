@@ -5,7 +5,7 @@
 import { children, forEachNode, isTypeNode, rootOf, unwrap, type Estree } from '../ast';
 import { isSignal, type Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
-import { sharedWith } from '../flow';
+import { fromDom, sharedWith } from '../flow';
 import { expressions, type Component } from '../ir';
 
 // Built-in methods that change their receiver, and functions that change their first argument.
@@ -91,7 +91,7 @@ function memberWrites(bindings: Bindings, reporter: Reporter) {
 			if (problem) reporter.report(write.node, problem);
 		}
 		const object = write.target.object;
-		if (object?.type === 'MemberExpression' && !object.computed && object.property.name === 'style')
+		if (object?.type === 'MemberExpression' && !object.computed && object.property.name === 'style' && fromDom(bindings, object.object))
 			reporter.report(write.node, 'assigning to .style bypasses the visual model');
 	}
 }
@@ -119,9 +119,9 @@ function syntax(node: Estree, bindings: Bindings, reporter: Reporter) {
 		case 'MemberExpression': {
 			if (node.computed || node.property.type !== 'Identifier') return;
 			const name = node.property.name;
+			if (!(VISUAL_ESCAPES.has(name) || DOCUMENT_ESCAPES.has(name)) || !fromDom(bindings, node.object)) return;
 			if (VISUAL_ESCAPES.has(name)) reporter.report(node.property, `.${name} bypasses the visual model; render through the template and style={...} instead`);
-			if (node.object.type === 'Identifier' && node.object.name === 'document' && DOCUMENT_ESCAPES.has(name))
-				reporter.report(node.property, `document.${name} bypasses the visual model`);
+			else reporter.report(node.property, `document.${name} bypasses the visual model`);
 			return;
 		}
 		case 'CallExpression': {

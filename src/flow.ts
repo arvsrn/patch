@@ -59,5 +59,57 @@ export function aliases(bindings: Bindings, expr: Estree, seen = new Set<Symbol>
 	return [];
 }
 
+/** Globals that are, or hand out, DOM objects. */
+const DOM_GLOBALS = new Set(['document', 'window', 'self', 'globalThis', 'frames', 'parent', 'top', 'opener']);
+/** TypeScript names of DOM types. */
+const DOM_TYPE =
+	/^(Window|Document|DocumentFragment|ShadowRoot|Node|ChildNode|ParentNode|Element|Text|Comment|EventTarget|NodeList|HTMLCollection|CSSStyleDeclaration|CSSStyleSheet|StyleSheet|Range|Selection|DOMParser|Image|Audio|Option|(UI|Mouse|Keyboard|Pointer|Focus|Input|Wheel|Touch|Drag|Composition|Clipboard|Submit|Animation|Transition)?Event|(HTML|SVG|MathML)\w*Element)$/;
+
+const isDomType = (t: Estree): boolean => {
+	if (!t) return false;
+	if (t.type === 'TSTypeReference') return t.typeName.type === 'Identifier' && DOM_TYPE.test(t.typeName.name);
+	if (t.type === 'TSUnionType' || t.type === 'TSIntersectionType') return t.types.some(isDomType);
+	if (t.type === 'TSParenthesizedType') return isDomType(t.typeAnnotation);
+	return false;
+};
+
+/**
+ * Whether `expr`'s value may come from the DOM: a DOM global, an event
+ * handler's event, a value typed or cast as a DOM type, or anything read or
+ * called from one of those.
+ */
+export function fromDom(bindings: Bindings, expr: Estree, seen = new Set<Symbol>()): boolean {
+	if (!expr) return false;
+	if (/^TS(As|Satisfies|TypeAssertion)Expression$/.test(expr.type)) return isDomType(expr.typeAnnotation) || fromDom(bindings, expr.expression, seen);
+	const e = unwrap(expr);
+	const from = (node: Estree) => fromDom(bindings, node, seen);
+	switch (e?.type) {
+		case 'Identifier': {
+			const symbol = bindings.reference(e)?.symbol;
+			if (!symbol) return DOM_GLOBALS.has(e.name);
+			if (seen.has(symbol) || isSignal(symbol)) return false;
+			seen.add(symbol);
+			return !!symbol.event || isDomType(symbol.type) || symbol.defs.some((d) => from(d.value));
+		}
+		case 'MemberExpression':
+			return from(e.object);
+		case 'ChainExpression':
+			return from(e.expression);
+		case 'CallExpression':
+			return unwrap(e.callee).type === 'MemberExpression' && from(unwrap(e.callee).object);
+		case 'NewExpression':
+			return e.callee.type === 'Identifier' && !bindings.reference(e.callee)?.symbol && DOM_TYPE.test(e.callee.name);
+		case 'ConditionalExpression':
+			return from(e.consequent) || from(e.alternate);
+		case 'LogicalExpression':
+			return from(e.left) || from(e.right);
+		case 'SequenceExpression':
+			return from(e.expressions[e.expressions.length - 1]);
+		case 'AssignmentExpression':
+			return e.operator === '=' && from(e.right);
+	}
+	return false;
+}
+
 /** A reactive variable whose objects `expr` is (not a fresh copy of), so changing `expr` in place changes it. */
 export const sharedWith = (bindings: Bindings, expr: Estree): Symbol | null => aliases(bindings, expr).find((a) => !a.fresh)?.symbol ?? null;

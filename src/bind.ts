@@ -26,6 +26,10 @@ export type Symbol = {
 	defs: Def[];
 	/** Assigned or updated after its declaration. */
 	reassigned: boolean;
+	/** Its TypeScript type annotation. */
+	type?: Estree;
+	/** A parameter receiving a DOM event: the first one of a template `on…=` handler. */
+	event?: boolean;
 };
 
 /** Reactive symbols: reads become `.v`. */
@@ -84,6 +88,7 @@ export function bind(component: Component): Bindings {
 		for (const statement of script.body) if (statement.type !== 'ImportDeclaration') binder.visit(statement, top);
 	}
 	binder.template(component.template, new Scope(top));
+	binder.link();
 
 	const byNode = new Map(binder.references.map((r) => [r.node, r]));
 	const calls = new Map(binder.runeCalls.map((c) => [c.node, c]));
@@ -104,6 +109,33 @@ class Binder {
 	runeCalls: RuneCall[] = [];
 	/** The scope holding each function's parameters. */
 	private paramScopes = new Map<Estree, Scope>();
+	/**
+	 * Functions passed somewhere that gives their parameters values, linked
+	 * once every function has been visited: a method's callback (its
+	 * parameters hold parts of `receiver`) or a template event handler.
+	 */
+	private callbacks: { fn: Estree; receiver: Estree | null; reducer: boolean }[] = [];
+
+	/** The function `expr` is, written in place or as the name of a function declared once. */
+	private functionOf(expr: Estree, scope: Scope): Estree | null {
+		const e = unwrap(expr);
+		if (isFunction(e)) return e;
+		const symbol = e?.type === 'Identifier' ? scope.get(e.name) : null;
+		const def = symbol?.defs.length === 1 && !symbol.reassigned && symbol.defs[0].whole ? unwrap(symbol.defs[0].value) : null;
+		return isFunction(def) || def?.type === 'FunctionDeclaration' ? def : null;
+	}
+
+	link() {
+		for (const { fn, receiver, reducer } of this.callbacks) {
+			const scope = this.paramScopes.get(fn);
+			if (!scope) continue;
+			fn.params.forEach((param: Estree, i: number) => {
+				if (!receiver) {
+					if (i === 0) for (const name of patternNames(param)) scope.get(name)!.event = true;
+				} else if (!(reducer && i === 0)) this.define(param, scope, receiver, false);
+			});
+		}
+	}
 
 	private reference(node: Estree, scope: Scope, access: Reference['access'], extra: Partial<Reference> = {}) {
 		this.references.push({ node, symbol: scope.get(node.name), access, shorthand: false, destructured: null, ...extra });
@@ -121,6 +153,7 @@ class Binder {
 							? s.specifiers.map((sp: Estree) => sp.local.name)
 							: [];
 			for (const name of names) scope.declare(name, 'local');
+			if (s.type === 'FunctionDeclaration' && s.id) scope.get(s.id.name)!.defs.push({ value: s, whole: true });
 		}
 	}
 
@@ -231,14 +264,11 @@ class Binder {
 		else this.visit(callee, scope);
 		for (const arg of node.arguments) {
 			this.visit(arg, scope);
-			// `list.forEach((item, i, list) => …)`: the callback's parameters hold
-			// parts of the receiver (a reducer's accumulator does not).
-			const fn = unwrap(arg);
-			if (!isFunction(fn) || callee.type !== 'MemberExpression') continue;
-			const reducer = !callee.computed && /^reduce(Right)?$/.test(callee.property.name);
-			fn.params.forEach((param: Estree, i: number) => {
-				if (!(reducer && i === 0)) this.define(param, this.paramScopes.get(fn)!, callee.object, false);
-			});
+			// `list.forEach((item, i, list) => …)`, `el.addEventListener('x', onX)`:
+			// the callback's parameters hold parts of the receiver (a reducer's
+			// accumulator does not).
+			const fn = callee.type === 'MemberExpression' ? this.functionOf(arg, scope) : null;
+			if (fn) this.callbacks.push({ fn, receiver: callee.object, reducer: !callee.computed && /^reduce(Right)?$/.test(callee.property.name) });
 		}
 	}
 
@@ -271,6 +301,7 @@ class Binder {
 				const symbol = scope.get(p.name);
 				if (!symbol) return;
 				if (value) symbol.defs.push({ value, whole });
+				if (p.typeAnnotation) symbol.type = p.typeAnnotation.typeAnnotation;
 				if (assigned) symbol.reassigned = true;
 				return;
 			}
@@ -338,7 +369,11 @@ class Binder {
 			else if (node.type === 'element') {
 				this.visit(node.style, scope);
 				for (const a of node.attributes) {
-					if (a.type === 'event') this.visit(a.handler, scope);
+					if (a.type === 'event') {
+						this.visit(a.handler, scope);
+						const fn = this.functionOf(a.handler, scope);
+						if (fn) this.callbacks.push({ fn, receiver: null, reducer: false });
+					}
 					else if (a.type === 'bind') this.visit(a.expression, scope);
 					else if (a.value !== true) {
 						if ('expression' in a.value) this.visit(a.value.expression, scope);
