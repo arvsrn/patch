@@ -423,10 +423,11 @@ A style value can be:
 The merge rules are:
 
 1. Entries merge **left to right**, and later entries win.
-2. Each object is normalized before merging. `padding` and `margin` expand to their four longhands, so precedence applies **per side**:
+2. Each object is normalized before merging. `padding` and `margin` expand to their four longhands, so precedence applies **per side**, and `overflow` expands to `overflowX` and `overflowY`, so it applies **per axis**:
    ```ts
    [{ padding: 8 }, { paddingLeft: 0 }]  // 8 8 8 0
    [{ paddingLeft: 0 }, { padding: 8 }]  // 8 8 8 8
+   [{ overflow: 'hidden' }, { overflowY: 'auto' }]  // x hidden, y auto
    ```
 3. `borderRadius` and `shadow` are replaced as a whole.
 4. A property whose value is `null` or `undefined` is ignored. It does **not** unset an earlier value. To override something, set an explicit neutral value: `width: 'hug'`, `gap: 0`, `borderWidth: 0`, `shadow: []`, `opacity: 1`, or `background: '#0000'`.
@@ -480,7 +481,8 @@ Units are pixels. All numbers must be finite.
 | `alignItems` | `'start'`, `'center'`, `'end'` (no `'stretch'`: use `'fill'`) | `'start'` |
 | `flexWrap` | `'wrap'`, `'nowrap'` | `'nowrap'` |
 | `gap` | *px* | `0` |
-| `overflow` | `'visible'`, `'hidden'` | `'visible'` |
+| `overflow` | `'visible'`, `'hidden'`, `'auto'`, `'scroll'`: shorthand for both axes | `'visible'` |
+| `overflowX`, `overflowY` | `'visible'`, `'hidden'`, `'auto'`, `'scroll'` | `'visible'` |
 
 ### Box (containers, text, inputs)
 
@@ -544,6 +546,7 @@ These are checked on the merged style, by the compiler where the outcome is cert
 
 - `justifyContent: 'space-between'` cannot be combined with a non-zero `gap`, or with `flexWrap: 'wrap'`.
 - `left` and `top` require `position: 'absolute'`.
+- `overflowX: 'visible'` cannot be combined with any other `overflowY`, and the other way around.
 - `anchor` requires `position: 'absolute'`, and cannot be combined with `left`, `top` or a non-zero margin. `anchorPosition` and `anchorOffset` require `anchor`.
 - An absolute element cannot use `'fill'` for `width` or `height`.
 - `<input>` needs `width` set to a number or `'fill'`. `<textarea>` needs both `width` and `height` set to a number or `'fill'`. A bare `<input />` is a compile error.
@@ -589,6 +592,23 @@ A child sized by its content this way is a hugging parent to its own children, s
 - Margins act like flex-item margins. An `'auto'` margin absorbs free space, so `margin: [0, 'auto']` centers an element on a row's main axis. Negative margins are allowed.
 - **Borders do not affect layout.** A border is drawn inside the element's box, on top of the padding area, on all four sides, as a solid line. Setting `borderColor` without `borderWidth` draws nothing.
 - `borderRadius` rounds the corners of the background, border, and shadow. `overflow: 'hidden'` clips children to the box, including its radius. Inputs always clip.
+
+### Scrolling
+
+`'auto'` and `'scroll'` make a container a scroll container on that axis: content that does not fit is clipped and can be scrolled to. `'auto'` shows a scrollbar only when there is something to scroll; `'scroll'` always reserves one where the platform draws them.
+
+```svelte
+<main style={{ width: 'fill', height: 'fill' }}>
+	<div style={{ width: 'fill', height: 'fill', overflowY: 'auto' }}>…long list…</div>
+	<div style={{ width: 'fill', padding: 12 }}>Composer stays visible</div>
+</main>
+```
+
+- A container only scrolls when it is smaller than its content, so give it a fixed size, `'fill'`, or a `max` size on that axis. One that hugs its content has nothing to scroll.
+- An axis left unset is `'visible'`, but when the other axis is not `'visible'` it behaves as `'auto'`, as in CSS. Writing `'visible'` on one axis together with `'hidden'`, `'auto'` or `'scroll'` on the other is an error, because the browser would not keep that axis visible.
+- Content can only be scrolled to on the end side. Content that overflows the start side, for example with `justifyContent: 'end'`, `'center'` or `alignItems: 'end'`, is cut off. To keep short content at the end and still scroll long content, use an `'auto'` margin on it instead, such as `marginTop: 'auto'`.
+- The scroll position is not state. It belongs to the browser, starts at the beginning, and is not part of overrides or snapshots. To move it, call the element's own API from a handler or `$effect`, for example `el.scrollIntoView()` on an element from [`bind:this`](#bindthis).
+- In a Figma snapshot a scroll container is a clipped frame showing its content from the start.
 - `opacity` applies to the element together with its contents.
 - Paint order follows source order: later siblings paint above earlier ones. There is no `zIndex`; render an element into a [portal](#portals) to paint it above other content.
 

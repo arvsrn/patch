@@ -158,7 +158,8 @@ class Converter {
 			fills: st.background ? [paint(st.background)] : [],
 			stroke: st.borderWidth ? { paint: paint(st.borderColor ?? '#000000'), weight: st.borderWidth } : null,
 			radius,
-			clip: st.overflow === 'hidden',
+			// Clipped or scrolling on either axis. A snapshot shows a scroll container at its initial scroll position.
+			clip: [st.overflowX, st.overflowY].some((v) => v !== undefined && v !== 'visible'),
 			shadows: (st.shadow ?? []).map((s: any) => ({ color: parseColor(s.color), x: s.x, y: s.y, blur: s.blur, spread: s.spread })),
 			children
 		};
@@ -195,7 +196,7 @@ class Converter {
 			const text = this.text(n, layerName(shown), [{ text: shown, font: n.font }], n.font, n.value ? 1 : 0.5);
 			Object.assign(text, { width: { kind: 'FILL' }, height: { kind: 'HUG' }, opacity: 1, truncate: !multiline, editable: multiline });
 			for (const key of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'alignSelf', 'absolute', 'anchor', 'anchorName'] as const) delete text[key];
-			node = this.frame(n, n.tag, { ...n.style, flexDirection: multiline ? 'column' : 'row', alignItems: multiline ? 'start' : 'center', overflow: 'hidden' }, [text]);
+			node = this.frame(n, n.tag, { ...n.style, flexDirection: multiline ? 'column' : 'row', alignItems: multiline ? 'start' : 'center', overflowX: 'hidden', overflowY: 'hidden' }, [text]);
 		}
 		return this.margins(n, node);
 	}

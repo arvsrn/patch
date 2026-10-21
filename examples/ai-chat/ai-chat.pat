@@ -165,6 +165,19 @@
 		document.title = activeChat ? `${activeChat.title} · Atlas` : 'Atlas';
 	});
 
+	// Opening a chat or adding a message brings the newest message into view.
+	// Streaming into the last one does not, so reading earlier messages is not interrupted.
+	let historyEnd = $state<HTMLDivElement>();
+	let shown = '';
+	$effect(() => {
+		const at = `${activeId}:${activeChat?.messages.length ?? 0}`;
+		const end = historyEnd;
+		if (!end || at === shown) return;
+		shown = at;
+		// Once the frame is laid out, so a history that just opened has its height.
+		requestAnimationFrame(() => end.scrollIntoView({ block: 'end' }));
+	});
+
 	const ink = '#1f1f1d';
 	const muted = '#6f6f69';
 	const faint = '#a3a39c';
@@ -319,18 +332,18 @@
 		<div style={divider}></div>
 
 		{#if activeChat}
+			<!-- The history scrolls; the auto margin keeps a short conversation next to the composer. -->
 			<div
 				style={{
 					width: 'fill',
 					height: 'fill',
 					flexDirection: 'row',
 					justifyContent: 'center',
-					alignItems: 'end',
-					overflow: 'hidden',
+					overflowY: 'auto',
 					padding: [0, 32]
 				}}
 			>
-				<div style={[column, { gap: 28, padding: [32, 0, 24, 0] }]}>
+				<div style={[column, { gap: 28, padding: [32, 0, 24, 0], marginTop: 'auto' }]}>
 					{#each activeChat.messages as message, i (message.id)}
 						{#if message.role === 'user'}
 							<div style={[row, { width: 'fill', justifyContent: 'end' }]}>
@@ -473,6 +486,7 @@
 							</div>
 						{/if}
 					{/each}
+					<div bind:this={historyEnd}></div>
 				</div>
 			</div>
 		{:else}

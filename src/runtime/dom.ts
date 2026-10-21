@@ -64,7 +64,9 @@ function toCss(kind: ElementKind, st: Style) {
 		css['outline-offset'] = `-${st.borderWidth}px`;
 	}
 	if (st.borderRadius) css['border-radius'] = st.borderRadius.map(px).join(' ');
-	if (st.overflow) css.overflow = st.overflow;
+	// An unset axis is `visible`, which the browser turns into `auto` when the other axis is not.
+	if (st.overflowX) css['overflow-x'] = st.overflowX;
+	if (st.overflowY) css['overflow-y'] = st.overflowY;
 	if (st.shadow) css['box-shadow'] = st.shadow.map((s: any) => `${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`).join(', ');
 	if (st.fontFamily) css['font-family'] = JSON.stringify(st.fontFamily);
 	if (st.fontWeight) css['font-weight'] = String(st.fontWeight);

@@ -28,6 +28,8 @@ const isShadow = (v: any) =>
 	(v.color === undefined || isColor(v.color));
 
 const sizeHint = 'a pixel number, "hug" or "fill"';
+const isOverflow = oneOf('visible', 'hidden', 'auto', 'scroll');
+const OVERFLOW_HINT = '"visible", "hidden", "auto" or "scroll"';
 const SPEC: Record<string, [(v: any) => boolean, string]> = {
 	display: [oneOf('flex'), '"flex" (every container is a flex container)'],
 	flexDirection: [oneOf('row', 'column'), '"row" or "column"'],
@@ -65,7 +67,8 @@ const SPEC: Record<string, [(v: any) => boolean, string]> = {
 		(v) => isPx(v) || (Array.isArray(v) && v.length === 4 && v.every(isPx)),
 		'a pixel number or [topLeft, topRight, bottomRight, bottomLeft]'
 	],
-	overflow: [oneOf('visible', 'hidden'), '"visible" or "hidden"'],
+	overflowX: [isOverflow, OVERFLOW_HINT],
+	overflowY: [isOverflow, OVERFLOW_HINT],
 	shadow: [(v) => (Array.isArray(v) ? v.every(isShadow) : isShadow(v)), '{ x, y, blur, spread, color } or an array of them'],
 	fontFamily: [(v) => typeof v === 'string' && v.length > 0, 'a font family name'],
 	fontSize: [(v) => isPx(v) && v > 0, 'a pixel number'],
@@ -78,15 +81,15 @@ const SPEC: Record<string, [(v: any) => boolean, string]> = {
 
 export const SHORTHANDS: Record<string, string[]> = {
 	padding: ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'],
-	margin: ['marginTop', 'marginRight', 'marginBottom', 'marginLeft']
+	margin: ['marginTop', 'marginRight', 'marginBottom', 'marginLeft'],
+	overflow: ['overflowX', 'overflowY']
 };
-const SHORTHAND_HINT = 'a pixel number, [vertical, horizontal] or [top, right, bottom, left]';
 
 const BOX = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', 'anchor', 'anchorPosition', 'anchorOffset', 'opacity'];
 /** Typography: inherited from parent to child. */
 export const TYPO = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign'];
 const PAINT = ['background', 'borderWidth', 'borderColor', 'borderRadius', 'shadow', ...SHORTHANDS.padding];
-const FLEX = ['display', 'flexDirection', 'justifyContent', 'alignItems', 'flexWrap', 'gap', 'overflow'];
+const FLEX = ['display', 'flexDirection', 'justifyContent', 'alignItems', 'flexWrap', 'gap', ...SHORTHANDS.overflow];
 const ALLOWED: Record<ElementKind, string[]> = {
 	frame: [...BOX, ...TYPO, ...PAINT, ...FLEX],
 	input: [...BOX, ...TYPO, ...PAINT],
@@ -110,6 +113,14 @@ const sides = (v: unknown, allowAuto: boolean): unknown[] | null => {
 	if (v.length === 4) return [...v];
 	return null;
 };
+const SIDES_HINT = 'a pixel number, [vertical, horizontal] or [top, right, bottom, left]';
+
+/** How each shorthand expands to its longhands (null: invalid), and what it accepts. */
+const EXPAND: Record<string, [(v: unknown) => unknown[] | null, string]> = {
+	padding: [(v) => sides(v, false), SIDES_HINT],
+	margin: [(v) => sides(v, true), SIDES_HINT],
+	overflow: [(v) => (isOverflow(v) ? [v, v] : null), OVERFLOW_HINT]
+};
 
 /** Validates one style object and expands shorthands. Idempotent. Throws on invalid input. */
 export function normalizeStyle(input: unknown): Style {
@@ -119,8 +130,9 @@ export function normalizeStyle(input: unknown): Style {
 	for (const [key, value] of Object.entries(input)) {
 		if (value === undefined || value === null) continue;
 		if (key in SHORTHANDS) {
-			const expanded = sides(value, key === 'margin');
-			if (!expanded) throw new Error(`Invalid ${key}: ${JSON.stringify(value)} (expected ${SHORTHAND_HINT})`);
+			const [expand, hint] = EXPAND[key];
+			const expanded = expand(value);
+			if (!expanded) throw new Error(`Invalid ${key}: ${JSON.stringify(value)} (expected ${hint})`);
 			SHORTHANDS[key].forEach((longhand, i) => (out[longhand] = expanded[i]));
 			continue;
 		}
@@ -203,6 +215,15 @@ export const STYLE_RULES: StyleRule[] = [
 		fails: (st) => (st.anchor !== undefined && SHORTHANDS.margin.some((k) => st[k] !== undefined && st[k] !== 0) ? 'anchor cannot be combined with margin; use anchorOffset' : null)
 	},
 	{
+		keys: ['overflowX', 'overflowY'],
+		fails: (st) => {
+			const clips = (v: unknown) => v !== undefined && v !== 'visible';
+			return (st.overflowX === 'visible' && clips(st.overflowY)) || (st.overflowY === 'visible' && clips(st.overflowX))
+				? 'overflow "visible" on one axis cannot be combined with "hidden", "auto" or "scroll" on the other'
+				: null;
+		}
+	},
+	{
 		keys: ['position', 'width', 'height'],
 		fails: (st) => (st.position === 'absolute' && (st.width === 'fill' || st.height === 'fill') ? 'absolute elements cannot use "fill" sizing' : null)
 	},
@@ -256,6 +277,6 @@ export function styleProperties(kind: ElementKind): StyleProperty[] {
 		.filter((key) => (SHORTHANDS[key] ?? [key]).every((k) => ALLOWED[kind].includes(k)))
 		.map((key) => {
 			const spec = SPEC[SHORTHANDS[key]?.[0] ?? key];
-			return { name: key, hint: key in SHORTHANDS ? SHORTHAND_HINT : spec[1], values: ((spec[0] as any).values ?? []) as string[] };
+			return { name: key, hint: key in SHORTHANDS ? EXPAND[key][1] : spec[1], values: ((spec[0] as any).values ?? []) as string[] };
 		});
 }
