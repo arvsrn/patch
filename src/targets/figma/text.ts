@@ -1,6 +1,6 @@
-// Text measurement for layout. Words and spaces are measured once each (in
-// one batch), then lines are broken greedily the way `white-space: pre-wrap`
-// breaks them: at spaces, with spaces at a break hanging past the edge.
+// Text layout: words and spaces are measured, then lines are broken greedily
+// the way `white-space: pre-wrap` breaks them, at spaces, with spaces at a
+// break hanging past the edge. Unwrapped text breaks only at newlines.
 
 import type { FigmaText, TextStyle } from './adapter';
 
@@ -9,133 +9,72 @@ export type FontKey = Pick<TextStyle, 'family' | 'size' | 'weight' | 'italic'>;
 export type WidthOf = (font: FontKey, text: string) => number;
 export type TextMeasure = (node: FigmaText, maxWidth?: number) => { width: number; height: number };
 
-type Piece = { text: string; style: TextStyle };
-type Token = { space: boolean; pieces: Piece[] };
+/** A single-style piece of a word or of the spaces between words, placed on its line. */
+export type Placed = { text: string; style: TextStyle; start: number; x: number; width: number };
+/** One line: its pieces, its width without hanging spaces, and its characters [start, end). */
+export type Line = { pieces: Placed[]; width: number; start: number; end: number };
 
-/** The text split into hard lines of word and space tokens, each a list of single-style pieces. */
-function tokenize(node: FigmaText): Token[][] {
-	const lines: Token[][] = [[]];
+type Token = { space: boolean; pieces: { text: string; style: TextStyle; start: number }[] };
+
+/** The text split into hard lines of word and space tokens, with each piece's UTF-16 offset. */
+function tokenize(node: FigmaText): { start: number; tokens: Token[] }[] {
+	const lines: { start: number; tokens: Token[] }[] = [{ start: 0, tokens: [] }];
+	let offset = 0;
 	for (const run of node.runs)
 		for (const part of run.text.split(/(\n| +)/)) {
 			if (!part) continue;
+			const start = offset;
+			offset += part.length;
 			if (part === '\n') {
-				lines.push([]);
+				lines.push({ start: offset, tokens: [] });
 				continue;
 			}
-			const line = lines[lines.length - 1];
+			const tokens = lines[lines.length - 1].tokens;
 			const space = part[0] === ' ';
-			const last = line[line.length - 1];
+			const last = tokens[tokens.length - 1];
 			// A word continuing across a style change is still one word.
-			if (last && last.space === space && !space) last.pieces.push({ text: part, style: run.style });
-			else line.push({ space, pieces: [{ text: part, style: run.style }] });
+			if (last && !last.space && !space) last.pieces.push({ text: part, style: run.style, start });
+			else tokens.push({ space, pieces: [{ text: part, style: run.style, start }] });
 		}
 	return lines;
 }
 
-/** Every distinct piece a node's measurement needs. */
-export function textPieces(node: FigmaText): Piece[] {
-	return tokenize(node).flatMap((line) => line.flatMap((t) => t.pieces));
+export function breakLines(node: FigmaText, widthOf: WidthOf, maxWidth?: number): Line[] {
+	const pieceWidth = (p: { text: string; style: TextStyle }) => widthOf(p.style, p.text) + p.style.letterSpacing * [...p.text].length;
+	const wraps = maxWidth !== undefined && !node.truncate;
+	const out: Line[] = [];
+	const hard = tokenize(node);
+	hard.forEach(({ start, tokens }, i) => {
+		const end = i + 1 < hard.length ? hard[i + 1].start : node.runs.reduce((n, r) => n + r.text.length, 0);
+		let line: Line = { pieces: [], width: 0, start, end };
+		let cursor = 0;
+		for (const token of tokens) {
+			const widths = token.pieces.map(pieceWidth);
+			const w = widths.reduce((a, b) => a + b, 0);
+			if (!token.space && wraps && line.width > 0 && cursor + w > maxWidth! + 0.01) {
+				line.end = token.pieces[0].start;
+				out.push(line);
+				line = { pieces: [], width: 0, start: token.pieces[0].start, end };
+				cursor = 0;
+			}
+			token.pieces.forEach((p, j) => {
+				line.pieces.push({ ...p, x: cursor, width: widths[j] });
+				cursor += widths[j];
+			});
+			// Unwrapped text keeps its trailing spaces (`white-space: pre`).
+			if (!token.space || !wraps) line.width = cursor;
+		}
+		out.push(line);
+	});
+	return out;
 }
 
 export function measureWith(widthOf: WidthOf): TextMeasure {
-	const pieceWidth = (p: Piece) => widthOf(p.style, p.text) + p.style.letterSpacing * [...p.text].length;
 	return (node, maxWidth) => {
-		const lineHeight = node.lineHeight;
-		let width = 0;
-		let count = 0;
-		for (const tokens of tokenize(node)) {
-			let line = 0;
-			let pending = 0;
-			count++;
-			for (const token of tokens) {
-				const w = token.pieces.reduce((sum, p) => sum + pieceWidth(p), 0);
-				if (token.space) {
-					pending += w;
-					continue;
-				}
-				if (maxWidth !== undefined && !node.truncate && line > 0 && line + pending + w > maxWidth + 0.01) {
-					width = Math.max(width, line);
-					count++;
-					line = w;
-				} else line += pending + w;
-				pending = 0;
-			}
-			// Unwrapped text keeps its trailing spaces (`white-space: pre`).
-			width = Math.max(width, maxWidth === undefined ? line + pending : line);
-		}
+		const lines = breakLines(node, widthOf, maxWidth);
+		const width = Math.max(0, ...lines.map((l) => l.width));
 		const empty = node.runs.every((r) => !r.text);
-		const lines = node.truncate ? 1 : empty ? 0 : count;
-		return { width: Math.ceil(width * 100) / 100, height: lines * lineHeight };
+		const count = node.truncate ? 1 : empty ? 0 : lines.length;
+		return { width: Math.ceil(width * 100) / 100, height: count * node.lineHeight };
 	};
-}
-
-// One osascript (JavaScript for Automation) call: resolves each font with
-// AppKit and measures every piece with it. Reads the request from stdin.
-const JXA = `
-ObjC.import('AppKit');
-function run() {
-	const input = $.NSString.alloc.initWithDataEncoding($.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile, $.NSUTF8StringEncoding).js;
-	const { fonts, items } = JSON.parse(input);
-	const manager = $.NSFontManager.sharedFontManager;
-	const families = ObjC.deepUnwrap(manager.availableFontFamilies);
-	const WEIGHTS = [['thin', 100], ['extralight', 200], ['ultralight', 200], ['semibold', 600], ['demibold', 600], ['extrabold', 800], ['ultrabold', 800], ['light', 300], ['medium', 500], ['bold', 700], ['heavy', 800], ['black', 900]];
-	const weightOf = (style) => {
-		const s = style.toLowerCase().replace(/[\\s_-]/g, '');
-		const hit = WEIGHTS.find(([name]) => s.includes(name));
-		return hit ? hit[1] : 400;
-	};
-	const resolved = fonts.map(({ family, weight, italic }) => {
-		const name = families.includes(family) ? family : families.includes(family + ' Variable') ? family + ' Variable' : null;
-		if (!name) return { family, postscript: null };
-		let best = null;
-		for (const [postscript, style, , traits] of ObjC.deepUnwrap(manager.availableMembersOfFontFamily(name))) {
-			const slanted = (traits & 1) === 1 || /italic|oblique/i.test(style);
-			const score = Math.abs(weightOf(style) - weight) + (slanted === italic ? 0 : 1000);
-			if (!best || score < best.score) best = { score, postscript };
-		}
-		return { family: name, postscript: best && best.postscript };
-	});
-	const cache = {};
-	const widths = items.map(([font, size, text]) => {
-		const key = font + '/' + size;
-		if (!cache[key]) {
-			const postscript = resolved[font].postscript;
-			const f = postscript ? $.NSFont.fontWithNameSize(postscript, size) : null;
-			cache[key] = f && !f.isNil() ? f : $.NSFont.systemFontOfSize(size);
-		}
-		const attrs = $.NSDictionary.dictionaryWithObjectForKey(cache[key], $.NSFontAttributeName);
-		return $(text).sizeWithAttributes(attrs).width;
-	});
-	return JSON.stringify({ resolved, widths });
-}
-`;
-
-/** Measures every piece of `nodes` with the fonts installed on this Mac. */
-export async function coreTextWidths(nodes: FigmaText[]): Promise<{ widthOf: WidthOf; warnings: string[] }> {
-	if (process.platform !== 'darwin') throw new Error('Text measurement for snapshots needs macOS');
-	const fontKey = (f: FontKey) => `${f.family}\0${f.weight}\0${f.italic}`;
-	const fonts = new Map<string, number>();
-	const items = new Map<string, [number, number, string]>();
-	const key = (f: FontKey, text: string) => `${fontKey(f)}\0${f.size}\0${text}`;
-	for (const node of nodes)
-		for (const { style, text } of textPieces(node)) {
-			if (!fonts.has(fontKey(style))) fonts.set(fontKey(style), fonts.size);
-			items.set(key(style, text), [fonts.get(fontKey(style))!, style.size, text]);
-		}
-	const request = {
-		fonts: [...fonts.keys()].map((k) => {
-			const [family, weight, italic] = k.split('\0');
-			return { family, weight: Number(weight), italic: italic === 'true' };
-		}),
-		items: [...items.values()]
-	};
-	const proc = Bun.spawn(['osascript', '-l', 'JavaScript', '-e', JXA], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
-	proc.stdin.write(JSON.stringify(request));
-	await proc.stdin.end();
-	const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-	if (code !== 0) throw new Error(`Text measurement failed: ${err.trim() || `osascript exited with ${code}`}`);
-	const { resolved, widths } = JSON.parse(out) as { resolved: { family: string; postscript: string | null }[]; widths: number[] };
-	const byKey = new Map([...items.keys()].map((k, i) => [k, widths[i]]));
-	const warnings = [...new Set(resolved.filter((r) => !r.postscript).map((r) => `Font "${r.family}" is not installed; text was measured with the system font`))];
-	return { widthOf: (f, text) => byKey.get(key(f, text)) ?? 0, warnings };
 }

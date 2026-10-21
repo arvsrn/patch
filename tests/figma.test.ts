@@ -4,6 +4,7 @@ import { evaluate } from '../src/design';
 import { decodeFigmaClipboard, snapshotToFigma } from '../src/targets/figma';
 import { decode, decodeSchema, encode, encodeSchema, parseSchema } from '../src/targets/figma/kiwi';
 import { fontStyleName } from '../src/targets/figma/encode';
+import { loadFonts } from '../src/targets/figma/fonts';
 import { measureWith, type WidthOf } from '../src/targets/figma/text';
 
 // Every character is half the font size wide, so layouts are exact.
@@ -221,4 +222,35 @@ test('weights and slant become Figma style names', () => {
 		'Black'
 	]);
 	expect([fontStyleName(400, true), fontStyleName(650, true)]).toEqual(['Italic', 'Bold Italic']);
+});
+
+test('a family that is not installed is measured with a fallback and reported', () => {
+	const fonts = loadFonts();
+	fonts.widthOf({ family: 'No Such Family', size: 16, weight: 400, italic: false }, 'hello');
+	expect(fonts.warnings()).toEqual([expect.stringContaining('Font "No Such Family" is not installed')]);
+});
+
+const hasFont = !!loadFonts().fontFor({ family: 'Inter', size: 16, weight: 400, italic: false });
+
+test.skipIf(!hasFont)('text layers carry the glyphs Figma draws them from', async () => {
+	const c = compile(`<main><p style={{ fontSize: 20, lineHeight: 30, textAlign: 'center', width: 200 }}>Hi <span style={{ color: '#ff0000' }}>you</span></p></main>`, 'glyphs.pat');
+	const { html } = await snapshotToFigma(await evaluate(c), 'glyphs');
+	const { message } = decodeFigmaClipboard(html);
+	const text = message.nodeChanges.find((n: any) => n.type === 'TEXT');
+	const d = text.derivedTextData;
+	// One glyph per visible character (the space has no outline), each on the one baseline.
+	expect(d.glyphs.map((g: any) => g.firstCharacter)).toEqual([0, 1, 3, 4, 5]);
+	expect(d.glyphs.map((g: any) => g.styleID)).toEqual([0, 0, 1, 1, 1]);
+	expect(new Set(d.glyphs.map((g: any) => g.position.y)).size).toBe(1);
+	expect(d.baselines).toHaveLength(1);
+	expect(d.baselines[0]).toMatchObject({ lineY: 0, lineHeight: 30, firstCharacter: 0, endCharacter: 6 });
+	// Centered: the line starts where its free space is split.
+	expect(d.baselines[0].position.x).toBeCloseTo((200 - d.baselines[0].width) / 2, 3);
+	expect(d.logicalIndexToCharacterOffsetMap).toHaveLength(6);
+	expect(d.layoutSize).toEqual(text.size);
+	expect(text.textUserLayoutVersion).toBe(4);
+	// Outlines are blobs of commands: a move first, closed contours.
+	const blob = new Uint8Array(message.blobs[d.glyphs[0].commandsBlob].bytes);
+	expect(blob[0]).toBe(1);
+	expect(blob.includes(0)).toBe(true);
 });

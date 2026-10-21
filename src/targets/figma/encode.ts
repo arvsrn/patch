@@ -5,7 +5,8 @@
 // holding a base64 fig-kiwi archive. The archive is the bytes `fig-kiwi`, a
 // little-endian uint32 version, then length-prefixed chunks: the deflated
 // binary schema and the deflated `Message` listing every layer as a
-// NodeChange (a document, a page, then the layers in tree order).
+// NodeChange (a document, a page, then the layers in tree order), with the
+// glyph outlines text layers are drawn from as blobs.
 
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import type { FigmaFrame, FigmaNode, FigmaText, Paint, Sizing, TextStyle } from './adapter';
@@ -143,7 +144,50 @@ function textFields(n: FigmaText): NodeChange {
 		for (let i = 0; i < run.text.length; i++) characterStyleIDs.push(id);
 	}
 	const autoResize = n.width.kind === 'HUG' && n.height.kind === 'HUG' ? 'WIDTH_AND_HEIGHT' : n.height.kind === 'HUG' ? 'HEIGHT' : 'NONE';
+	const styleID = (s: TextStyle) => {
+		const key = JSON.stringify(s);
+		return key === base ? 0 : (ids.get(key) ?? 0);
+	};
+	const d = n.derived;
 	return {
+		...(d
+			? {
+					derivedTextData: {
+						layoutSize: { x: n.w, y: n.h },
+						baselines: d.baselines.map((b) => ({
+							position: { x: b.x, y: b.y },
+							width: b.width,
+							lineY: b.lineY,
+							lineHeight: b.lineHeight,
+							lineAscent: b.lineAscent,
+							firstCharacter: b.firstCharacter,
+							endCharacter: b.endCharacter
+						})),
+						glyphs: d.glyphs.map((g) => ({
+							commandsBlob: g.blob,
+							position: { x: g.x, y: g.y },
+							styleID: styleID(g.style),
+							fontSize: g.size,
+							firstCharacter: g.firstCharacter,
+							advance: g.advance
+						})),
+						fontMetaData: d.fonts.map((f) => ({
+							key: fontName(f.style),
+							fontLineHeight: f.lineHeight,
+							fontStyle: f.style.italic ? 'ITALIC' : 'NORMAL',
+							fontWeight: f.style.weight
+						})),
+						truncationStartIndex: d.truncationStart,
+						truncatedHeight: d.truncatedHeight,
+						logicalIndexToCharacterOffsetMap: d.offsets,
+						derivedLines: d.baselines.map(() => ({ directionality: 'LTR' }))
+					},
+					fontVersion: '',
+					textUserLayoutVersion: 4,
+					textExplicitLayoutVersion: 1,
+					textBidiVersion: 1
+				}
+			: {}),
 		fontSize: n.base.size,
 		fontName: fontName(n.base),
 		textData: overrides.length ? { characters, characterStyleIDs, styleOverrideTable: overrides } : { characters },
@@ -216,8 +260,8 @@ function archive(message: Uint8Array): Uint8Array {
 	return out;
 }
 
-/** The HTML Figma reads from the clipboard when pasting layers. */
-export function encodeFigmaClipboard(root: FigmaFrame): string {
+/** The HTML Figma reads from the clipboard when pasting layers. `blobs` are the glyph outlines. */
+export function encodeFigmaClipboard(root: FigmaFrame, blobs: Uint8Array[] = []): string {
 	const pasteID = Math.floor(Math.random() * 0x7fffffff);
 	const message = encode(FIGMA_SCHEMA, 'Message', {
 		type: 'NODE_CHANGES',
@@ -225,7 +269,8 @@ export function encodeFigmaClipboard(root: FigmaFrame): string {
 		ackID: 0,
 		pasteID,
 		pasteFileKey: FILE_KEY,
-		nodeChanges: toNodeChanges(root)
+		nodeChanges: toNodeChanges(root),
+		blobs: blobs.map((bytes) => ({ bytes }))
 	});
 	const meta = Buffer.from(JSON.stringify({ fileKey: FILE_KEY, pasteID, dataType: 'scene' })).toString('base64');
 	const buffer = Buffer.from(archive(message)).toString('base64');

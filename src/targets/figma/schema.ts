@@ -29,6 +29,8 @@ enum TextAlignVertical { TOP = 0; CENTER = 1; }
 enum TextAutoResize { NONE = 0; WIDTH_AND_HEIGHT = 1; HEIGHT = 2; }
 enum TextTruncation { DISABLED = 0; ENDING = 1; }
 enum NumberUnits { RAW = 0; PIXELS = 1; PERCENT = 2; }
+enum FontStyle { NORMAL = 0; ITALIC = 1; }
+enum Directionality { LTR = 0; }
 
 struct GUID { uint sessionID; uint localID; }
 struct ParentIndex { GUID guid; string position; }
@@ -37,6 +39,7 @@ struct Matrix { float m00; float m01; float m02; float m10; float m11; float m12
 struct Color { float r; float g; float b; float a; }
 struct Number { float value; NumberUnits units; }
 struct FontName { string family; string style; string postscript; }
+struct Blob { byte[] bytes; }
 
 message OptionalVector { Vector value = 1; }
 
@@ -57,6 +60,47 @@ message Effect {
 	BlendMode blendMode = 6;
 	float spread = 7;
 	bool showShadowBehindNode = 8;
+}
+
+message Glyph {
+	uint commandsBlob = 1;
+	Vector position = 2;
+	uint styleID = 3;
+	float fontSize = 4;
+	uint firstCharacter = 5;
+	float advance = 6;
+}
+
+message Baseline {
+	Vector position = 1;
+	float width = 2;
+	float lineY = 3;
+	float lineHeight = 4;
+	uint firstCharacter = 5;
+	uint endCharacter = 6;
+	float lineAscent = 7;
+}
+
+message FontMetaData {
+	FontName key = 1;
+	float fontLineHeight = 2;
+	FontStyle fontStyle = 4;
+	int fontWeight = 5;
+}
+
+message DerivedTextLineData {
+	Directionality directionality = 1;
+}
+
+message DerivedTextData {
+	Vector layoutSize = 1;
+	Baseline[] baselines = 2;
+	Glyph[] glyphs = 3;
+	FontMetaData[] fontMetaData = 6;
+	int truncationStartIndex = 8;
+	float truncatedHeight = 9;
+	float[] logicalIndexToCharacterOffsetMap = 10;
+	DerivedTextLineData[] derivedLines = 12;
 }
 
 message TextData {
@@ -92,6 +136,8 @@ message NodeChange {
 	Effect[] effects = 43;
 	TextAutoResize textAutoResize = 46;
 	uint styleID = 49;
+	string fontVersion = 202;
+	uint textUserLayoutVersion = 203;
 	StackMode stackMode = 105;
 	float stackSpacing = 107;
 	bool frameMaskDisabled = 115;
@@ -112,6 +158,7 @@ message NodeChange {
 	float stackPaddingBottom = 234;
 	StackCounterAlign stackChildAlignSelf = 236;
 	StackPositioning stackPositioning = 269;
+	uint textBidiVersion = 279;
 	TextTruncation textTruncation = 280;
 	bool bordersTakeSpace = 294;
 	StackWrap stackWrap = 323;
@@ -120,6 +167,8 @@ message NodeChange {
 	OptionalVector maxSize = 326;
 	DocumentColorProfile documentColorProfile = 349;
 	int maxLines = 351;
+	DerivedTextData derivedTextData = 359;
+	uint textExplicitLayoutVersion = 396;
 	EditorType pageType = 397;
 }
 
@@ -128,6 +177,7 @@ message Message {
 	uint sessionID = 2;
 	uint ackID = 3;
 	NodeChange[] nodeChanges = 4;
+	Blob[] blobs = 6;
 	int pasteID = 12;
 	string pasteFileKey = 14;
 }

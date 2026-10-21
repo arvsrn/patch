@@ -12,6 +12,7 @@
     "lsp": "bun src/cli.ts lsp"
   },
   "dependencies": {
+    "fontkit": "^2",
     "magic-string": "^1.4.3",
     "svelte": "^5.57.2",
     "typescript-api": "npm:typescript@^6.0.3",
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@types/bun": "^1.4.3",
+    "@types/fontkit": "^2.0.9",
     "typescript": "^7.0.2"
   }
 }

@@ -9,6 +9,7 @@
 
 import type { Concrete, Font, Run } from '../../schema/concrete';
 import type { Style } from '../../schema/style';
+import type { DerivedText } from './glyphs';
 
 export type Sizing = { kind: 'FIXED'; value: number } | { kind: 'HUG' } | { kind: 'FILL' };
 export type Color = { r: number; g: number; b: number; a: number };
@@ -65,6 +66,8 @@ export type FigmaText = Layer & {
 	textAlign: 'LEFT' | 'CENTER' | 'RIGHT';
 	/** One line, cut with an ellipsis (input values). */
 	truncate: boolean;
+	/** The laid-out glyphs Figma draws the layer from (glyphs.ts). */
+	derived?: DerivedText;
 };
 
 export type FigmaNode = FigmaFrame | FigmaText;
