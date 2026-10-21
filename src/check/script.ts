@@ -2,7 +2,7 @@
 // reactivity (what may be written, mutated, or called as a rune) and escape
 // hatches around the visual model.
 
-import { forEachNode, rootOf, type Estree } from '../ast';
+import { children, forEachNode, isTypeNode, rootOf, type Estree } from '../ast';
 import { isSignal, type Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
 import { expressions, type Component } from '../ir';
@@ -25,8 +25,19 @@ export function checkScript(component: Component, bindings: Bindings, reporter: 
 	references(bindings, reporter);
 	memberWrites(bindings, reporter);
 	runeCalls(component, bindings, reporter);
-	const roots = [...(component.script?.body ?? []), ...expressions(component.template)];
-	for (const root of roots) forEachNode(root, (node) => syntax(node, bindings, reporter));
+	const script = component.script?.body ?? [];
+	const template = [...expressions(component.template)];
+	for (const root of [...script, ...template]) forEachNode(root, (node) => syntax(node, bindings, reporter));
+	for (const root of script) topLevelAwait(root, 'the script runs before the first render; use an async function or $effect', reporter);
+	for (const root of template) topLevelAwait(root, 'template expressions are synchronous; keep the result in $state', reporter);
+}
+
+/** `await` outside any function: the script and template expressions run synchronously. */
+function topLevelAwait(node: Estree, hint: string, reporter: Reporter) {
+	if (!node || typeof node.type !== 'string' || isTypeNode(node) || /Function/.test(node.type)) return;
+	if (node.type === 'AwaitExpression' || (node.type === 'ForOfStatement' && node.await))
+		reporter.report(node, `await is only allowed inside an async function: ${hint}`);
+	for (const child of children(node)) topLevelAwait(child, hint, reporter);
 }
 
 function references(bindings: Bindings, reporter: Reporter) {
