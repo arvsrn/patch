@@ -10,7 +10,7 @@ import { basename, resolve } from 'node:path';
 import { bind, type Bindings } from './bind';
 import { checkScript } from './check/script';
 import { checkStyles } from './check/styles';
-import { checkTemplate } from './check/template';
+import { checkTemplate, checkTemplateNames } from './check/template';
 import { CompileError, Reporter, type Diagnostic } from './diagnostics';
 import { Edits } from './emit/edits';
 import { emitScript } from './emit/script';
@@ -19,7 +19,7 @@ import type { Component, StateInfo } from './ir';
 import { lower } from './lower';
 import { parse } from './parse';
 import { collectStyles, type Styles } from './styles';
-import { typecheck } from './typecheck';
+import { globalNames, typecheck } from './typecheck';
 
 export type Compiled = {
 	filename: string;
@@ -53,6 +53,7 @@ function check(source: string, filename: string, reporter: Reporter): Front | nu
 	const { component, bindings, styles } = result;
 	checkScript(component, bindings, reporter);
 	checkTemplate(component, bindings, reporter);
+	checkTemplateNames(component, bindings, globalNames(resolve(filename)), reporter);
 	checkStyles(styles, reporter);
 	reporter.diagnostics.sort((a, b) => a.start - b.start);
 

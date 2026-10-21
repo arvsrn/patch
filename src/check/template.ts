@@ -1,8 +1,9 @@
 // Rules for template constructs that the IR can express but PAT rejects.
 
+import { forEachNode } from '../ast';
 import type { Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
-import { elements, type Component, type TemplateNode } from '../ir';
+import { elements, expressions, type Component, type TemplateNode } from '../ir';
 
 const INPUT_TYPES = ['text', 'password', 'email', 'search', 'url', 'tel'];
 
@@ -23,6 +24,16 @@ export function checkTemplate(component: Component, bindings: Bindings, reporter
 		}
 	}
 	eachKeys(component.template, reporter);
+}
+
+/** Template expressions may only name script bindings, `{#each}` names and real globals. */
+export function checkTemplateNames(component: Component, bindings: Bindings, globals: Set<string>, reporter: Reporter) {
+	for (const expression of expressions(component.template))
+		forEachNode(expression, (node) => {
+			if (node.type !== 'Identifier' || node.name.startsWith('$')) return;
+			const ref = bindings.reference(node);
+			if (ref && !ref.symbol && !globals.has(node.name)) reporter.report(node, `"${node.name}" is not defined`);
+		});
 }
 
 function eachKeys(nodes: TemplateNode[], reporter: Reporter) {

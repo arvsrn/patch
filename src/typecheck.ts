@@ -26,7 +26,7 @@ interface PatStyle {
 declare function $style(style: { readonly [property: string]: unknown }): PatStyle;
 `;
 
-type Project = { service: ts.LanguageService; files: Map<string, { text: string; version: number }> };
+type Project = { service: ts.LanguageService; files: Map<string, { text: string; version: number }>; runes: string; globals?: Set<string> };
 const projects = new Map<string, Project>();
 
 function project(file: string): Project {
@@ -53,7 +53,8 @@ function project(file: string): Project {
 		noUnusedLocals: false,
 		noUnusedParameters: false
 	};
-	const files = new Map([[`${root}/__pat_runes__.d.ts`, { text: RUNES, version: 0 }]]);
+	const runes = `${root}/__pat_runes__.d.ts`;
+	const files = new Map([[runes, { text: RUNES, version: 0 }]]);
 	const host: ts.LanguageServiceHost = {
 		getScriptFileNames: () => [...files.keys()],
 		getScriptVersion: (f) => String(files.get(f)?.version ?? ts.sys.getModifiedTime?.(f)?.getTime() ?? 0),
@@ -71,9 +72,20 @@ function project(file: string): Project {
 		getDirectories: ts.sys.getDirectories,
 		realpath: ts.sys.realpath
 	};
-	const created = { service: ts.createLanguageService(host, ts.createDocumentRegistry()), files };
+	const created = { service: ts.createLanguageService(host, ts.createDocumentRegistry()), files, runes };
 	projects.set(config ?? '', created);
 	return created;
+}
+
+/** The value names in a .pat file's global scope (libs, DOM, configured types, the runes). */
+export function globalNames(path: string): Set<string> {
+	const p = project(path);
+	if (!p.globals) {
+		const program = p.service.getProgram()!;
+		const symbols = program.getTypeChecker().getSymbolsInScope(program.getSourceFile(p.runes)!, ts.SymbolFlags.Value);
+		p.globals = new Set(symbols.map((s) => s.name));
+	}
+	return p.globals;
 }
 
 let valueChecks = 0;
