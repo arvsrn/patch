@@ -531,16 +531,29 @@ A shadow's `x`, `y`, and `spread` are *num*, `blur` is *px*, and `color` is *col
 | `letterSpacing` | *num* | `0` |
 | `textAlign` | `'start'`, `'center'`, `'end'` (not allowed on inline spans) | `'start'` |
 
+### Interaction
+
+| Property | Values | Default | Allowed on |
+| --- | --- | --- | --- |
+| `cursor` | `'auto'`, `'default'`, `'pointer'`, `'text'`, `'move'`, `'grab'`, `'grabbing'`, `'not-allowed'`, `'wait'`, `'progress'`, `'help'`, `'crosshair'`, `'ew-resize'`, `'ns-resize'`, `'nesw-resize'`, `'nwse-resize'`, `'col-resize'`, `'row-resize'`, `'zoom-in'`, `'zoom-out'`, `'none'` | `'pointer'` on `<button>`, `'text'` on inputs, else `'auto'` | all elements |
+| `userSelect` | `'auto'`, `'none'`, `'text'`, `'all'` | `'auto'` | all elements |
+| `pointerEvents` | `'auto'`, `'none'` | `'auto'` | all elements |
+| `touchAction` | `'auto'`, `'none'`, `'pan-x'`, `'pan-y'`, `'manipulation'` | `'auto'` | all but inline spans |
+| `overscrollBehavior` | `'auto'`, `'contain'`, `'none'` | `'auto'` | containers |
+| `caretColor` | *color* | the text color | containers, `<input>`, `<textarea>` |
+
+They behave as in CSS, inheritance included: `cursor`, `pointerEvents`, and `caretColor` inherit, and the others apply to the element itself (`userSelect: 'none'` still covers its contents). `pointerEvents: 'none'` lets clicks and hovers pass through to whatever is underneath, and its handlers do not fire. `overscrollBehavior: 'contain'` keeps a scroll container from scrolling the page once it reaches its end. These properties do not change how anything looks, so Figma snapshots ignore them.
+
 Any property not listed here is an error. That includes `zIndex`, `right`, `bottom`, `flex`, `flexGrow`, `border`, `fontWeight: 'bold'`, string units like `'4px'`, and percentages like `'100%'`.
 
 ### Allowed properties by element
 
-| Element | Layout | Box | Paint | Typography |
-| --- | --- | --- | --- | --- |
-| `<main>`, `<div>`, `<button>` | ✓ | ✓ | ✓ | ✓ |
-| `<input>`, `<textarea>` | | ✓ | ✓ | ✓ |
-| `<p>`, `<span>` (block) | | ✓ | | ✓ |
-| inline `<span>` inside text | | | | ✓ except `textAlign` |
+| Element | Layout | Box | Paint | Typography | Interaction |
+| --- | --- | --- | --- | --- | --- |
+| `<main>`, `<div>`, `<button>` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `<input>`, `<textarea>` | | ✓ | ✓ | ✓ | ✓ except `overscrollBehavior` |
+| `<p>`, `<span>` (block) | | ✓ | | ✓ | `cursor`, `userSelect`, `pointerEvents`, `touchAction` |
+| inline `<span>` inside text | | | | ✓ except `textAlign` | `cursor`, `userSelect`, `pointerEvents` |
 
 For example, a `<p>` cannot have `padding`, `background`, a border, a radius, or a shadow. Wrap it in a `<div>` for those.
 
@@ -681,7 +694,7 @@ Top-level nodes are laid out as a column inside a viewport-sized host:
 
 ## Typography and inheritance
 
-The typography properties (`color`, `fontFamily`, `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`, `letterSpacing`, `textAlign`) inherit from parent to child through every element kind, including inputs and inline spans. No other property inherits.
+The typography properties (`color`, `fontFamily`, `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`, `letterSpacing`, `textAlign`) inherit from parent to child through every element kind, including inputs and inline spans. No other property inherits, except the [interaction properties](#interaction) that inherit in CSS.
 
 ```svelte
 <div style={{ color: '#71717a', fontSize: 14 }}>

@@ -31,6 +31,9 @@ button[data-p]{cursor:pointer}
 `;
 const FLEX_VALUE: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', 'space-between': 'space-between' };
 const px = (v: unknown) => (v === 'auto' ? 'auto' : `${v}px`);
+const kebab = (key: string) => key.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+/** Properties whose value is already the CSS value. */
+const VERBATIM = ['cursor', 'userSelect', 'pointerEvents', 'touchAction', 'overscrollBehavior', 'caretColor'];
 
 /**
  * A validated style as inline CSS, plus data-* attributes: the authored
@@ -45,7 +48,10 @@ function toCss(kind: ElementKind, st: Style) {
 	if (typeof st.height === 'number') css.height = px(st.height);
 	for (const k of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'left', 'top', 'gap', 'fontSize', 'lineHeight', 'letterSpacing'])
 		// Contextual values ("available") are set by the anchoring engine.
-		if (typeof st[k] === 'number') css[k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())] = px(st[k]);
+		if (typeof st[k] === 'number') css[kebab(k)] = px(st[k]);
+	for (const k of VERBATIM) if (st[k]) css[kebab(k)] = st[k];
+	// Safari only knows the prefixed property.
+	if (st.userSelect) css['-webkit-user-select'] = st.userSelect;
 	const box = (prefix: string) => {
 		const keys = SHORTHANDS[prefix];
 		if (keys.some((k) => st[k] !== undefined)) css[prefix] = keys.map((k) => px(st[k] ?? 0)).join(' ');

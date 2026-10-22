@@ -35,6 +35,15 @@ const isShadow = (v: any) =>
 const sizeHint = 'a pixel number, "hug", "fill" or "anchor"';
 const isOverflow = oneOf('visible', 'hidden', 'auto', 'scroll');
 const OVERFLOW_HINT = '"visible", "hidden", "auto" or "scroll"';
+const CURSORS = [
+	'auto', 'default', 'pointer', 'text', 'move', 'grab', 'grabbing', 'not-allowed', 'wait', 'progress', 'help', 'crosshair',
+	'ew-resize', 'ns-resize', 'nesw-resize', 'nwse-resize', 'col-resize', 'row-resize', 'zoom-in', 'zoom-out', 'none'
+];
+/** `oneOf` with its hint: `"a", "b" or "c"`. */
+const choice = (...values: string[]): [(v: any) => boolean, string] => {
+	const quoted = values.map((v) => `"${v}"`);
+	return [oneOf(...values), `${quoted.slice(0, -1).join(', ')} or ${quoted[quoted.length - 1]}`];
+};
 const SPEC: Record<string, [(v: any) => boolean, string]> = {
 	display: [oneOf('flex'), '"flex" (every container is a flex container)'],
 	flexDirection: [oneOf('row', 'column'), '"row" or "column"'],
@@ -84,7 +93,13 @@ const SPEC: Record<string, [(v: any) => boolean, string]> = {
 	fontStyle: [oneOf('normal', 'italic'), '"normal" or "italic"'],
 	lineHeight: [(v) => isPx(v) && v > 0, 'a pixel number'],
 	letterSpacing: [isNum, 'a pixel number'],
-	textAlign: [oneOf('start', 'center', 'end'), '"start", "center" or "end"']
+	textAlign: [oneOf('start', 'center', 'end'), '"start", "center" or "end"'],
+	cursor: choice(...CURSORS),
+	userSelect: choice('auto', 'none', 'text', 'all'),
+	pointerEvents: choice('auto', 'none'),
+	touchAction: choice('auto', 'none', 'pan-x', 'pan-y', 'manipulation'),
+	overscrollBehavior: choice('auto', 'contain', 'none'),
+	caretColor: [isColor, 'a hex color']
 };
 
 export const SHORTHANDS: Record<string, string[]> = {
@@ -95,24 +110,27 @@ export const SHORTHANDS: Record<string, string[]> = {
 
 /** Anchored positioning (see schema/anchor.ts). */
 const ANCHORING = ['anchor', 'anchorPosition', 'anchorOffset', 'anchorCrossOffset', 'anchorPadding', 'anchorFallbacks'];
-const BOX = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', ...ANCHORING, 'opacity'];
+/** Interaction: how an element responds to the pointer and selection. No effect on snapshots. */
+const INTERACTION = ['cursor', 'userSelect', 'pointerEvents'];
+const BOX = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', ...ANCHORING, 'opacity', ...INTERACTION, 'touchAction'];
 /** Typography: inherited from parent to child. */
 export const TYPO = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign'];
 const PAINT = ['background', 'borderWidth', 'borderColor', 'borderRadius', 'boxShadow', ...SHORTHANDS.padding];
-const FLEX = ['display', 'flexDirection', 'justifyContent', 'alignItems', 'flexWrap', 'gap', ...SHORTHANDS.overflow];
+const FLEX = ['display', 'flexDirection', 'justifyContent', 'alignItems', 'flexWrap', 'gap', ...SHORTHANDS.overflow, 'overscrollBehavior'];
 const ALLOWED: Record<ElementKind, string[]> = {
-	frame: [...BOX, ...TYPO, ...PAINT, ...FLEX],
-	input: [...BOX, ...TYPO, ...PAINT],
-	textarea: [...BOX, ...TYPO, ...PAINT],
+	// Every property: a standalone `$style` is checked as a frame.
+	frame: [...BOX, ...TYPO, ...PAINT, ...FLEX, 'caretColor'],
+	input: [...BOX, ...TYPO, ...PAINT, 'caretColor'],
+	textarea: [...BOX, ...TYPO, ...PAINT, 'caretColor'],
 	text: [...BOX, ...TYPO],
-	inline: TYPO.filter((k) => k !== 'textAlign')
+	inline: [...TYPO.filter((k) => k !== 'textAlign'), ...INTERACTION]
 };
 const KIND_LABEL: Record<ElementKind, string> = {
 	frame: 'containers (<main>, <div>, <button>)',
 	input: '<input>',
 	textarea: '<textarea>',
 	text: 'text elements (<p>, <span>); wrap the text in a <div> for boxes, padding and backgrounds',
-	inline: 'nested <span>s inside text; only typography is allowed there'
+	inline: 'nested <span>s inside text; only typography, cursor, userSelect and pointerEvents are allowed there'
 };
 
 const sides = (v: unknown, allowAuto: boolean): unknown[] | null => {

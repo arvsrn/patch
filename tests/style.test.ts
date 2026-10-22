@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { analyze, compile } from '../src';
 
 const messages = (source: string) => analyze(source).diagnostics.map((d) => `${d.line}:${d.column} ${d.message}`);
-const SPAN = '"padding" is not supported on nested <span>s inside text; only typography is allowed there';
+const SPAN = '"padding" is not supported on nested <span>s inside text; only typography, cursor, userSelect and pointerEvents are allowed there';
 
 test('direct, inline and reusable styles get the same compile-time validation, once', () => {
 	expect(messages(`<p>a <span style={{ padding: 4 }}>b</span></p>`)).toEqual([`1:21 ${SPAN}`]);
