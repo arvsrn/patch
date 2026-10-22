@@ -1,6 +1,6 @@
 # The Patch language
 
-This is the reference for Patch as currently implemented. A Patch app is one `.pat` file. It contains an optional `<script>` and a template. The template is built from a small set of elements and styled only through `style={...}`.
+This is the reference for Patch as currently implemented. A `.pat` file is a component: an optional `<script>` and a template. An app is the `.pat` file you run, plus the components it imports (see [Components](#components)). The template is built from a small set of elements and components, and styled only through `style={...}`.
 
 ```svelte
 <script lang="ts">
@@ -26,7 +26,7 @@ This is the reference for Patch as currently implemented. A Patch app is one `.p
 
 ## Script
 
-The script runs **once** when the app starts, top to bottom, before the template is rendered. Every top-level binding (variables, functions, classes, imports) is visible in the template.
+The script runs **once** per component instance, top to bottom, before its template is rendered. For the app itself that is once, when the app starts. Every top-level binding (variables, functions, classes, imports) is visible in the template.
 
 ### Supported JS/TS
 
@@ -34,12 +34,12 @@ Standard JS and TS work: functions, classes, closures, `async` functions, `try`/
 
 | Not allowed | Diagnostic or behavior |
 | --- | --- |
-| `export` of any kind | error: a `.pat` file has no props |
+| `export` of any kind | error: a component takes its inputs from [`$props()`](#props) |
 | TS `enum` and `namespace` | error |
 | dynamic `import()` | error |
 | `import x = require(...)` | error |
 | `await` outside a function (in the script or a template expression) | error |
-| undeclared identifiers starting with `$` (`$props`, `$state.raw`, `$inspect`, `$store`, …) | error |
+| undeclared identifiers starting with `$` (`$state.raw`, `$bindable`, `$inspect`, `$store`, …) | error |
 | references to identifiers starting with `$$` | error (reserved) |
 
 **No DOM rendering access.** The template and `style={...}` are the only way to affect what renders. Script and template expressions cannot create, query, measure, or restyle DOM nodes, and code that tries is a compile error. Other browser APIs (`fetch`, `localStorage`, `setTimeout`, `document.title`, `window`) are allowed, and so are the rest of a DOM node's own API, such as `el.focus()` on an element from [`bind:this`](#bindthis).
@@ -68,7 +68,8 @@ import { load, type Task } from './api.ts'; // local ES module (.ts, .js, .mjs)
 
 - Imports must be static ES imports. They are resolved relative to the `.pat` file.
 - Type-only imports are removed from the output.
-- You cannot import `.pat` files. An app is one file.
+- A `.pat` file is imported as one component, with a default import: `import Card from './Card.pat'`. A missing file is a compile error. See [Components](#components).
+- `'patch'` provides the [context](#context) functions: `import { createContext, setContext, getContext } from 'patch'`, and the type `Context`. It can be imported from `.pat` files and from `.ts`/`.js` modules.
 - You cannot import local CommonJS files (`.cjs`, `.cts`). CommonJS npm packages work.
 - You cannot import stylesheets (`.css`, `.scss`, `.sass`, `.less`, `.styl`, `.pcss`, …).
 
@@ -83,11 +84,14 @@ declare function $derived<T>(value: T): T;
 declare namespace $derived { function by<T>(fn: () => T): T; }
 declare function $effect(fn: () => void | (() => void)): void;
 declare function $style(style: { readonly [property: string]: unknown }): PatStyle; // opaque
+declare function $props(): any; // annotate the destructuring: let { a }: Props = $props()
 ```
+
+An imported `.pat` component is typed as an opaque component value. Props passed to it in the template are not type-checked (template expressions never are), but a component can type its own props.
 
 Type errors fail `patch build` and `patch snapshot`. `patch dev` shows them in the browser overlay.
 
-**Only the script is type-checked.** Template expressions are checked for names only, in JS and TS alike: a name that is not a script binding, an `{#each}` name or a global is an error. Their types are not checked. The one exception is `bind:this`: its variable must accept both the element's type and `undefined` (see [`bind:this`](#bindthis)). With `lang="ts"`, template expressions may use TS syntax such as `name as Filter`. Without it, TS syntax in the template is a parse error.
+**Only the script is type-checked.** Template expressions are checked for names only, in JS and TS alike: a name that is not a script binding, an `{#each}` name, a snippet or snippet parameter, or a global is an error. Their types are not checked. The one exception is `bind:this`: its variable must accept both the element's type and `undefined` (see [`bind:this`](#bindthis)). With `lang="ts"`, template expressions may use TS syntax such as `name as Filter`. Without it, TS syntax in the template is a parse error.
 
 ### Where the script runs
 
@@ -110,7 +114,7 @@ let draft = $state(); // undefined
 ```
 
 - Declare state only as a top-level `let x = $state(...)`. Using `const`, declaring it inside a function or block, or destructuring (`let [a] = $state(...)`) is an error.
-- The variable name is the state's id for [design-time overrides](#design-time-state-and-snapshots).
+- The variable name is the state's id for [design-time overrides](#design-time-state-and-snapshots). In a component, the id is the instance's path and the name (see [State of component instances](#state-of-component-instances)).
 - Reading gives the current value. Closures always read the current value.
 - Writing works through `=`, compound assignment (`+=`, …), `++`/`--`, and array-destructuring assignment (`[a, b] = [b, a]`). Object-destructuring assignment into a state variable (`({ a } = obj)`) is not supported.
 - Assigning a value that is `Object.is`-equal to the current one does nothing. For example, `tasks = tasks` does not update anything.
@@ -202,7 +206,7 @@ async function later() { await x; n++; n++; }          // effects re-run twice
 | `<input>`, `<textarea>` | input | none |
 | `<portal>` | [portal](#portals) | none |
 
-Any other tag (`<img>`, `<section>`, `<h1>`, `<a>`, components, …) is an error.
+A tag starting with an uppercase letter is a [component](#components). Any other tag (`<img>`, `<section>`, `<h1>`, `<a>`, …) is an error.
 
 - **Containers** are flex boxes, laid out in a column by default. `<main>`, `<div>`, and `<button>` lay out identically. `<button>` additionally shows a pointer cursor and accepts `disabled`.
 - **Text elements** contain only inline content. A `<span>` nested inside text is an *inline span*: it accepts only `style=`, and that style may contain typography only. You cannot put blocks (`{#if}`, `{#each}`) or other elements inside text. Use a ternary or move the block into a `<div>`.
@@ -277,11 +281,12 @@ The first branch whose test is truthy is rendered. When the selected branch chan
 {/each}
 ```
 
-- A key is **required**: `(expr)` after the item name. The key can be any expression, and it may use the item and the index.
+- The key is `(expr)` after the item name. It can be any expression, and it may use the item and the index.
+- **Without a key, items are identified by position**: the item at index 0 is always the first rendered item. When the list changes, each position keeps its rendered content (and the state of the [components](#components) in it) and gets the new item value; positions past the new length are destroyed, and new positions are created. Use a key whenever content or component state must follow the item, for example when the list can be reordered or filtered.
 - The item must be a plain identifier. Destructuring (`as { id, title }`) is not supported.
 - The list must be an array. `null` and `undefined` render nothing. Anything else, including Sets, Maps, and other iterables, is a runtime error.
 - Keys are compared by `SameValueZero`. Object keys compare by identity. A duplicate key is a runtime error.
-- An item whose key is still present keeps its rendered content and is moved into the new order. Its item value updates when the new element is a different value (`Object.is`), and its index updates too. Items whose keys disappear are destroyed. New keys are created.
+- With a key, an item whose key is still present keeps its rendered content, including the state of the components in it, and is moved into the new order. Its item value updates when the new element is a different value (`Object.is`), and its index updates too. Items whose keys disappear are destroyed. New keys are created.
 - The item and index are read-only. You cannot assign to them or mutate through them, for example with `task.done = true`. Update the source array instead.
 - `{:else}` inside `{#each}` is not supported. Use `{#if list.length === 0}`.
 
@@ -307,15 +312,15 @@ A portal renders an element somewhere other than where it is written. `<portal i
 - `<portal>` renders nothing of its own. Elements rendered into it take its place among its parent's children: they are laid out, clipped and painted as children of that parent, and inherit typography from it. Later siblings paint above earlier ones, so a portal written last in the app puts its content above everything else.
 - The element still **belongs where it is written**. Its expressions read the same names, its event handlers run as before, it mounts and unmounts with its enclosing `{#if}` or `{#each}`, and `bind:this` sets its variable as usual. Only where it renders changes. Events bubble through the elements it renders in, as in the DOM.
 - `portal=` works on every element except an inline span. Its value can be an expression. A nullish or `false` value renders the element in place, so `portal={floating ? 'overlay' : null}` works, and changing the value moves the element.
-- Portal ids are app-wide. Several elements can render into one portal. They are kept in the order they were rendered into it (document order on the first render; an element rendered into it later goes last). Do not rely on that order to layer them.
+- Portal ids are app-wide, across components. Several elements can render into one portal. They are kept in the order they were rendered into it (document order on the first render; an element rendered into it later goes last). Do not rely on that order to layer them.
 - `<portal>` needs a static, non-empty `id` and takes no other attributes or children. It cannot be repeated by `{#each}` (directly, not inside an `{#if}` in the item), because it would be declared once per item.
 - When an element's portal is not rendered, for example because it is in an `{#if}` branch that is not shown, the element is not shown either. It stays mounted and appears as soon as the portal is rendered again. The browser logs an error the first time this happens. A snapshot fails.
 
-These are compile errors: two `<portal>`s with the same id that can be rendered at the same time (they may share an id in different branches of one `{#if}`), a static `portal="name"` with no `<portal id="name">` in the app, a bare `portal` attribute, and a `<portal>` inside the element that renders into it. At runtime, a second portal with an id that is already rendered is logged as an error, and content keeps rendering into the first one.
+These are compile errors: two `<portal>`s in one file with the same id that can be rendered at the same time (they may share an id in different branches of one `{#if}`), a bare `portal` attribute, and a `<portal>` inside the element that renders into it. A component may render into a portal that a component above it declares, so whether a portal exists is checked at runtime, as described above. At runtime, a second portal with an id that is already rendered is logged as an error, and content keeps rendering into the first one.
 
 ### Other blocks and tags
 
-These are not supported: `{#await}`, `{#key}`, `{#snippet}`, `{@render}`, `{@html}`, `{@const}`, `{@debug}`, and `{@attach}`.
+These are not supported: `{#await}`, `{#key}`, `{@html}`, `{@const}`, `{@debug}`, and `{@attach}`. `{#snippet}` and `{@render}` are described under [Snippets](#snippets).
 
 ## Events and bindings
 
@@ -383,6 +388,155 @@ These are not supported: `{#await}`, `{#key}`, `{#snippet}`, `{@render}`, `{@htm
 - Figma snapshots have no DOM. There the variable holds an opaque stand-in for the element, so it can be an [`anchor`](#anchored-positioning); it has none of an element's API.
 
 No other bindings exist (`bind:checked`, `bind:group`, …).
+
+## Components
+
+Every `.pat` file is a component. Import it and render it with a tag that starts with an uppercase letter:
+
+```svelte
+<script lang="ts">
+	import Button from './Button.pat';
+</script>
+<Button label="Save" onpress={save} />
+```
+
+- The tag must be a plain name in scope: usually the import, but any variable holding a component works. `<ui.Button>` is not supported; assign it to a name first. A name that is not defined is a compile error, and a value that is not a component is a runtime error.
+- A component may render any number of top-level nodes; there is no wrapper element. Its nodes take its place in the parent's layout, as if they were written there, and inherit typography from there.
+- Components cannot appear inside text (`<p>`), like other elements.
+
+### Props
+
+A component receives its inputs from `$props()`, destructured at the top level of its script:
+
+```svelte
+<!-- Input.pat -->
+<script lang="ts">
+	let { name, placeholder = 'Name', updateName }: {
+		name: string;
+		placeholder?: string;
+		updateName: (next: string) => void;
+	} = $props();
+</script>
+<input style={{ width: 200 }} value={name} {placeholder} oninput={(e: Event) => updateName((e.currentTarget as HTMLInputElement).value)} />
+```
+
+- Every attribute on a component tag is a prop: `label="Save"` (a string), `count={n}` (an expression), `title="Hi {name}"` (an interpolated string), `disabled` (`true`), `{name}` (`name={name}`). Event-like names such as `onpress` are ordinary props too.
+- `$props()` may appear once, as `let { … } = $props()` (or `const`). Each property is a prop name, optionally renamed (`{ label: text }`) or with a default (`{ count = 0 }`). Rest (`...rest`), nested destructuring, and keeping the whole object (`let props = $props()`) are not supported. Props a component does not destructure are ignored.
+- A default applies when the parent does not pass the prop or passes `undefined`. It is computed when needed and kept until what it reads changes.
+- **Props are read-only and reactive.** Reading one reads the parent's expression. When something that expression reads changes, everything in the child that reads the prop updates, as with any `$state`. The component is not created again and nothing else is re-rendered, so its local state is kept.
+- Assigning to a prop, or changing it in place (`item.done = true`, `list.push(x)`), is a compile error. A prop's value belongs to the parent.
+
+There is no two-way binding: no `bind:` on components and no `$bindable`. Data flows down through props, and a child asks for a change by calling a callback prop. The parent owns the state, updates it, and the new value flows back down:
+
+```svelte
+<script lang="ts">
+	import Input from './Input.pat';
+	let name = $state('');
+</script>
+<Input name={name} updateName={(next) => (name = next)} />
+```
+
+### Local state and lifetime
+
+A component instance owns the `$state`, `$derived` and `$effect`s its script declares. The script runs once, when the instance is created. Its effects run after it is rendered, and their cleanups run when it is destroyed.
+
+An instance lives as long as the place that renders it:
+
+- In an `{#if}` branch, it is destroyed when the branch is left and created again, with fresh state, when the branch is entered again.
+- In a keyed `{#each}`, it belongs to its key: when the list is reordered its state moves with the item, and when the key disappears it is destroyed.
+- In an unkeyed `{#each}`, it belongs to its position: after a reorder, the instance at a position keeps its state and receives the item now at that position.
+- When the tag's value is a different component, the old instance is destroyed and the new one is created. A changed prop never replaces the instance.
+
+```svelte
+{#each rows as row (row.id)}
+	<Row row={row} />  <!-- a Row's `expanded` follows its row.id -->
+{/each}
+```
+
+### Snippets
+
+A snippet is a reusable piece of template, declared with `{#snippet}` and rendered with `{@render}`:
+
+```svelte
+{#snippet badge(label, color)}
+	<div style={{ padding: [2, 6], borderRadius: 4, background: color }}>
+		<p>{label}</p>
+	</div>
+{/snippet}
+
+{@render badge('New', '#dcfce7')}
+{@render badge(count + ' open', '#e0e7ff')}
+```
+
+- A snippet captures the scope it is declared in: script bindings, `{#each}` items and other snippets. It is visible in the block that declares it (its sibling nodes and everything inside them), not in the script. Two snippets with the same name in one block are an error.
+- Parameters are plain names (no defaults or destructuring), read-only, and reactive: when an argument expression's value changes, the rendered snippet updates in place.
+- A snippet is not a component instance. It owns no state (the template cannot declare state), and what it renders belongs to the place it is rendered: it is destroyed with that place, and components in it are children of the component rendering it (see [Context](#context)).
+- `{@render}` takes one call: `{@render name(args)}`. Rendering a value that is not a snippet is a runtime error. `{@render name?.(args)}` renders nothing when the value is `null` or `undefined`. When the value becomes a different snippet, the old content is destroyed and the new one is rendered.
+- Snippets are values, so they can be passed as props: `<List row={rowSnippet} />`, rendered in `List.pat` with `{@render row(item)}`.
+
+### Children
+
+Content written inside a component tag is passed as the `children` prop, a snippet without parameters:
+
+```svelte
+<!-- Card.pat -->
+<script lang="ts">
+	let { title, children } = $props();
+</script>
+<div style={{ padding: 16, gap: 8, borderWidth: 1, borderColor: '#e4e4e7' }}>
+	<p style={{ fontWeight: 600 }}>{title}</p>
+	{@render children?.()}
+</div>
+```
+
+```svelte
+<Card title="Profile">
+	<p>Signed in as {user.name}</p>  <!-- reads the caller's `user` -->
+</Card>
+```
+
+- The content keeps the caller's scope, like any snippet.
+- There are no slots. For more than one region, pass snippets as ordinary props (`<Card header={header} />`). A `{#snippet}` written directly inside a component tag is an error, because it would not be passed; declare it outside and pass it.
+- Passing both a `children` attribute and content is an error.
+
+### Context
+
+Context passes a value to every component below an instance without threading it through props:
+
+```ts
+// theme.ts
+import { createContext } from 'patch';
+export type Theme = { accent: string; readonly mode: 'light' | 'dark' };
+export const ThemeContext = createContext<Theme>();
+```
+
+```svelte
+<!-- App.pat -->
+<script lang="ts">
+	import { setContext } from 'patch';
+	import { ThemeContext } from './theme.ts';
+	let mode: 'light' | 'dark' = $state('light');
+	setContext(ThemeContext, { accent: '#2563eb', get mode() { return mode; } });
+</script>
+```
+
+```svelte
+<!-- Button.pat, anywhere below App -->
+<script lang="ts">
+	import { getContext } from 'patch';
+	import { ThemeContext } from './theme.ts';
+	const theme = getContext(ThemeContext);
+</script>
+<button style={{ color: theme.accent }}>{theme.mode}</button>
+```
+
+- `createContext<T>()` returns a new opaque key. Keys are compared by identity, so export the key from a `.ts` module that both sides import.
+- `setContext(key, value)` provides `value` to the current instance and every component it renders, directly or through snippets and children. It may only be called as a top-level statement of a component's script. Calling it again with the same key replaces the value.
+- `getContext(key)` returns the value from the nearest instance that set `key`, starting with the current one. Nested providers shadow outer ones. It may be called anywhere in a component's script or template.
+- **A missing context is an error**: `getContext` throws when no instance above set the key, and that instance fails to render. There is no default value; provide one at the top of the app if every consumer needs one.
+- Context follows component ancestry, not element nesting: content passed as `children` and rendered by `Card` sees the contexts `Card` and its ancestors set.
+- Context is not reactive by itself. The value is passed as it is, once. To share state that changes, pass something that reads it, such as a getter (`get mode() { return mode; }`) or functions. Reading it then updates like any other read of that state.
+- `setContext` and `getContext` only work in a `.pat` script; called from a `.ts` module they throw.
 
 ## Styles
 
@@ -768,6 +922,24 @@ A snapshot renders the app from its **initial state**, with optional overrides, 
 - In a JS script, the value is used as JSON if it parses, and as a string otherwise, without any checking.
 - The initializer expression of an overridden state does not run.
 
+### State of component instances
+
+State declared in a component is overridden per instance. Its id is the instance's **path** followed by the variable name:
+
+```sh
+--state 'Sidebar@14:3/expanded=true'          # the <Sidebar> written at line 14, column 3 of the app
+--state 'Row@22:5[42]/expanded=true'          # the <Row> in the {#each} item keyed 42
+--state 'Row@22:5[0]/expanded=true'           # in an unkeyed {#each}: the item at index 0
+--state 'Card@8:2/Toggle@3:4/on=true'         # a <Toggle> inside the <Card> at 8:2
+```
+
+- Each step of the path is `Tag@line:column`, where the tag is written, followed by the `[key]` of every `{#each}` item around the tag (in that file), outermost first. Keys are written as JSON (`[42]`, `["a"]`); an unkeyed list's key is the index. Steps are separated by `/`.
+- Content rendered through `{@render}` (snippets and `children`) adds a step `line:column[keys]` for the `{@render}` tag, inside the instance rendering it: `Card@8:2/5:3/Toggle@12:4/on` is a `<Toggle>` written at 12:4 in the content of the `<Card>`, rendered by the `{@render}` at 5:3 of `Card.pat`.
+- An id names one instance. A path whose instance is not rendered overrides nothing.
+- The value is parsed and type-checked against the variable in the component that declares it, as above. An unknown id is an error that lists the overridable state, with `[<key>]` where a key goes and `…/` where the path continues from an enclosing component.
+
+The same paths name the nodes of a snapshot: in a Figma snapshot, a node's id is its instance path, its own `line:column`, and its `{#each}` keys.
+
 ### Snapshot targets
 
 | | `snapshot html` | `snapshot figma` |
@@ -792,16 +964,18 @@ Without a warning, a snapshot also keeps a character whose uppercase or lowercas
 | Construct | Use instead |
 | --- | --- |
 | `<style>`, `class=`, `class:`, CSS strings in `style=`, `style:` | `style={{ ... }}`, `$style`, arrays |
-| components, imported `.pat` files, `export`, props | one file per app |
+| `export` from a `.pat` file | [`$props()`](#props) for inputs, a `.ts` module for shared code |
 | `{#await}` | `$state` plus an `async` function or `$effect` |
 | `{:else}` in `{#each}` | `{#if list.length === 0}` |
-| unkeyed `{#each}`, destructured items | `{#each list as item (item.id)}` |
-| `{#key}`, `{#snippet}`, `{@render}`, `{@html}`, `{@const}`, `{@debug}`, `{@attach}` | none |
-| `bind:` other than `bind:value` on inputs and `bind:this` | `value=` plus a handler |
+| destructured `{#each}` items | `{#each list as item (item.id)}` |
+| `{#key}`, `{@html}`, `{@const}`, `{@debug}`, `{@attach}` | none |
+| `bind:` other than `bind:value` on inputs and `bind:this`; `bind:` on components, `$bindable` | `value=` plus a handler; a prop plus a [callback prop](#props) |
+| slots, named slots, `<svelte:fragment>` | [`children`](#children) and snippet props |
+| component events, lifecycle functions (`onMount`, …), component refs and methods | callback props, `$effect` |
 | `on:click` / `onClick` | `onclick` |
 | transitions, animations, actions (`use:`) | none |
 | spread attributes, arbitrary HTML attributes | none |
-| `$props`, `$state.raw`, `$bindable`, `$inspect`, stores (`$x`) | none |
+| `$state.raw`, `$inspect`, stores (`$x`) | none |
 | DOM manipulation and measurement | template and `style` |
 | CSS grid, `z-index`, `right`/`bottom`, percentages, units, named colors, gradients, images, per-side borders, transforms | none |
 

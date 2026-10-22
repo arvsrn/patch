@@ -24,6 +24,12 @@ export type Script = {
 	imports: Estree[];
 	/** `let x = $state(...)`. */
 	state: StateDecl[];
+	/** The names `let { ... } = $props()` declares. */
+	props: PropDecl[];
+	/** The declarator holding `$props()`. */
+	propsDeclarator: Estree | null;
+	/** `import { getContext as get } from 'patch'`: local name → imported name. */
+	patchImports: { local: string; imported: string }[];
 	/** `let x = $derived(...)` / `$derived.by(...)`. */
 	derived: DerivedDecl[];
 	/** Top-level `$effect(...)` statements. */
@@ -37,9 +43,14 @@ export type Script = {
 export type StateDecl = { id: Estree; call: Estree; info: StateInfo };
 export type DerivedDecl = { id: Estree; call: Estree; by: boolean };
 export type StyleDecl = { id: Estree; object: Estree };
+/** `key: local = fallback` in `let { ... } = $props()`. */
+export type PropDecl = { key: string; local: Estree; fallback: Estree | null };
 
 export type StateInfo = {
-	/** Stable id used for design-time overrides: the top-level variable name. */
+	/**
+	 * Stable id used for design-time overrides: the top-level variable name.
+	 * In a component instance it is prefixed with the instance's path.
+	 */
 	id: string;
 	name: string;
 	line: number;
@@ -51,7 +62,7 @@ export type StateInfo = {
 
 // ---------------------------------------------------------------- template
 
-export type TemplateNode = Element | Text | If | Each | Portal;
+export type TemplateNode = Element | Text | If | Each | Portal | ComponentUse | Snippet | Render;
 
 /** The tags PAT supports. */
 export type Tag = 'main' | 'div' | 'button' | 'p' | 'span' | 'input' | 'textarea';
@@ -116,18 +127,50 @@ export type Each = {
  */
 export type Portal = { type: 'portal'; span: Span; nameSpan: Span; name: string };
 
+/**
+ * `<Card title="x">…</Card>`: an instance of the component `name` holds.
+ * Every attribute is a prop; the content is the `children` snippet.
+ */
+export type ComponentUse = {
+	type: 'component';
+	span: Span;
+	nameSpan: Span;
+	/** The tag as an identifier reference. */
+	name: Estree;
+	props: { name: string; span: Span; nameSpan: Span; value: AttributeValue }[];
+	children: TemplateNode[] | null;
+};
+
+/** `{#snippet name(a, b)}…{/snippet}`: a render fragment declared in its block. */
+export type Snippet = { type: 'snippet'; span: Span; name: Estree; params: Estree[]; body: TemplateNode[] };
+
+/** `{@render name(args)}`, or `{@render name?.(args)}` (`optional`: a nullish snippet renders nothing). */
+export type Render = { type: 'render'; span: Span; callee: Estree; args: Estree[]; optional: boolean };
+
+/** The node lists directly below `node` (content that is not its own). */
+export function fragments(node: TemplateNode): TemplateNode[][] {
+	switch (node.type) {
+		case 'element':
+			return node.kind === 'frame' ? [node.children] : [];
+		case 'if':
+			return [...node.branches.map((b) => b.body), ...(node.otherwise ? [node.otherwise] : [])];
+		case 'each':
+		case 'snippet':
+			return [node.body];
+		case 'component':
+			return node.children ? [node.children] : [];
+	}
+	return [];
+}
+
 /** Every element and inline <span> in a template, depth first. */
 export function* elements(nodes: TemplateNode[]): Generator<Element | Extract<Inline, { type: 'span' }>> {
 	for (const node of nodes) {
 		if (node.type === 'element') {
 			yield node;
-			if (node.kind === 'frame') yield* elements(node.children);
 			if (node.kind === 'text') yield* spans(node.content);
 		} else if (node.type === 'text') yield* spans(node.content);
-		else if (node.type === 'if') {
-			for (const branch of node.branches) yield* elements(branch.body);
-			if (node.otherwise) yield* elements(node.otherwise);
-		} else if (node.type === 'each') yield* elements(node.body);
+		for (const fragment of fragments(node)) yield* elements(fragment);
 	}
 }
 
@@ -139,7 +182,10 @@ function* spans(content: Inline[]): Generator<Extract<Inline, { type: 'span' }>>
 		}
 }
 
-/** Every JS expression in a template (tests, lists, keys, styles, attributes, text). */
+const valueExpressions = (value: AttributeValue): Estree[] =>
+	value === true ? [] : 'expression' in value ? [value.expression] : value.parts.filter((p) => typeof p !== 'string');
+
+/** Every JS expression in a template (tests, lists, keys, styles, attributes, props, text). */
 export function* expressions(nodes: TemplateNode[]): Generator<Estree> {
 	function* inline(content: Inline[]): Generator<Estree> {
 		for (const part of content) {
@@ -157,20 +203,17 @@ export function* expressions(nodes: TemplateNode[]): Generator<Estree> {
 			for (const a of node.attributes) {
 				if (a.type === 'event') yield a.handler;
 				else if (a.type === 'bind') yield a.expression;
-				else if (a.value !== true) yield* 'expression' in a.value ? [a.value.expression] : a.value.parts.filter((p) => typeof p !== 'string');
+				else yield* valueExpressions(a.value);
 			}
-			if (node.kind === 'frame') yield* expressions(node.children);
 			if (node.kind === 'text') yield* inline(node.content);
-		} else if (node.type === 'if') {
-			for (const branch of node.branches) {
-				yield branch.test;
-				yield* expressions(branch.body);
-			}
-			if (node.otherwise) yield* expressions(node.otherwise);
-		} else if (node.type === 'each') {
+		} else if (node.type === 'if') yield* node.branches.map((b) => b.test);
+		else if (node.type === 'each') {
 			yield node.list;
 			if (node.key) yield node.key;
-			yield* expressions(node.body);
-		}
+		} else if (node.type === 'component') {
+			yield node.name;
+			for (const p of node.props) yield* valueExpressions(p.value);
+		} else if (node.type === 'render') yield* [node.callee, ...node.args];
+		for (const fragment of fragments(node)) yield* expressions(fragment);
 	}
 }

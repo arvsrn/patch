@@ -26,12 +26,21 @@ const VISUAL_ESCAPES = new Set([
 	'getBoundingClientRect', 'adoptedStyleSheets', 'styleSheets'
 ]);
 const DOCUMENT_ESCAPES = new Set(['body', 'documentElement', 'head', 'write', 'writeln']);
-const RUNES = ['$state', '$derived', '$derived.by', '$effect'];
+const RUNES = ['$state', '$derived', '$derived.by', '$effect', '$props'];
+
+/** Why a reactive variable that is not `$state` cannot be changed. */
+const READ_ONLY: Record<string, (name: string) => string> = {
+	derived: (name) => `"${name}" is $derived and read-only`,
+	item: (name) => `"${name}" is an {#each} binding and read-only; reassign the source array instead`,
+	prop: (name) => `"${name}" is a prop and read-only; the parent owns it (pass a callback prop to ask it for a change)`,
+	param: (name) => `"${name}" is a snippet parameter and read-only`
+};
 
 export function checkScript(component: Component, bindings: Bindings, reporter: Reporter) {
 	references(bindings, reporter);
 	memberWrites(bindings, reporter);
 	runeCalls(component, bindings, reporter);
+	contextCalls(component, bindings, reporter);
 	const script = component.script?.body ?? [];
 	const template = [...expressions(component.template)];
 	for (const root of [...script, ...template]) forEachNode(root, (node) => syntax(node, bindings, reporter));
@@ -53,11 +62,10 @@ function references(bindings: Bindings, reporter: Reporter) {
 		const name: string = node.name;
 		if (name.startsWith('$$')) reporter.report(node, 'identifiers starting with $$ are reserved');
 		else if (!symbol && name.startsWith('$'))
-			reporter.report(node, `${name} is not supported here (runes: $state, $derived, $effect as top-level declarations/statements; $style anywhere)`);
+			reporter.report(node, `${name} is not supported here (runes: $state, $derived, $effect, $props as top-level declarations/statements; $style anywhere)`);
 		if (!symbol && name === 'getComputedStyle') reporter.report(node, 'getComputedStyle is a visual escape hatch and is not allowed');
 		if (ref.access !== 'write') continue;
-		if (symbol?.kind === 'derived') reporter.report(node, `"${name}" is $derived and read-only`);
-		if (symbol?.kind === 'item') reporter.report(node, `"${name}" is an {#each} binding and read-only; reassign the source array instead`);
+		if (symbol && READ_ONLY[symbol.kind]) reporter.report(node, READ_ONLY[symbol.kind](name));
 		if (ref.destructured && isSignal(symbol))
 			reporter.report(ref.destructured, 'destructuring assignment into a reactive variable is not supported; assign it directly');
 	}
@@ -73,8 +81,7 @@ function untrackedChange(bindings: Bindings, object: Estree): string | null {
 	if (!shared) return null;
 	const root = rootOf(object);
 	const via = root?.type === 'Identifier' && root.name !== shared.name ? ` through "${root.name}"` : '';
-	if (shared.kind === 'derived') return `"${shared.name}" is $derived and read-only${via ? ` (changed${via})` : ''}`;
-	if (shared.kind === 'item') return `"${shared.name}" is an {#each} binding and cannot be mutated${via ? ` (changed${via})` : ''}; reassign the source array instead`;
+	if (shared.kind !== 'state') return `${READ_ONLY[shared.kind](shared.name)}, so it cannot be changed in place${via ? ` (changed${via})` : ''}`;
 	return `this changes reactive "${shared.name}"${via} in place, which is not tracked; assign through "${shared.name}" itself or assign a new value`;
 }
 
@@ -103,14 +110,32 @@ function runeCalls(component: Component, bindings: Bindings, reporter: Reporter)
 		if (name === '$style') {
 			if (count !== 1) reporter.report(node, '$style takes exactly one object');
 		} else if (!allowed.has(node)) {
-			const where = name === '$effect' ? 'a top-level statement' : 'a top-level `let x = ...` declaration';
+			const where = name === '$effect' ? 'a top-level statement' : name === '$props' ? 'a top-level `let { ... } = $props()` declaration' : 'a top-level `let x = ...` declaration';
 			reporter.report(node, RUNES.includes(name) ? `${name}(...) is only allowed as ${where}` : `${name} is not supported`);
+		} else if (name === '$props') {
+			// Checked where it is lowered.
 		} else if (name === '$state') {
 			if (count > 1) reporter.report(node, '$state takes at most one initial value');
 		} else if (name === '$derived') {
 			if (count !== 1) reporter.report(node, '$derived takes exactly one expression');
 		} else if (count !== 1) reporter.report(node, `${name} takes exactly one function`);
 	}
+}
+
+/**
+ * `setContext` provides a value to the components this instance renders, so
+ * it is called while the script sets the instance up: as a top-level statement.
+ */
+function contextCalls(component: Component, bindings: Bindings, reporter: Reporter) {
+	const script = component.script;
+	const symbols = new Set(script?.patchImports.filter((i) => i.imported === 'setContext').map((i) => bindings.topLevel(i.local)));
+	if (!script || !symbols.size) return;
+	const allowed = new Set(
+		script.body.map((s) => unwrap(s.type === 'ExpressionStatement' ? s.expression : null)).filter((e) => e?.type === 'CallExpression').map((e) => unwrap(e.callee))
+	);
+	for (const ref of bindings.references)
+		if (symbols.has(ref.symbol) && !allowed.has(ref.node))
+			reporter.report(ref.node, 'setContext(...) is only allowed as a top-level statement of the script');
 }
 
 /** Rules that depend only on the shape of one node. */

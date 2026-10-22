@@ -6,7 +6,8 @@
 // The compiled module keeps the script's imports at the top and
 // default-exports `program($$rt)` (see schema/program.ts).
 
-import { basename, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 import { bind, isSignal, type Bindings } from './bind';
 import { checkNames } from './check/names';
 import { checkScript } from './check/script';
@@ -16,7 +17,7 @@ import { CompileError, Reporter, type Diagnostic } from './diagnostics';
 import { Edits } from './emit/edits';
 import { emitScript } from './emit/script';
 import { TemplateEmitter } from './emit/template';
-import { elements, type Component, type StateInfo, type Tag } from './ir';
+import { elements, fragments, type Component, type StateInfo, type Tag, type TemplateNode } from './ir';
 import { lower } from './lower';
 import { parse } from './parse';
 import { collectStyles, type Styles } from './styles';
@@ -31,9 +32,18 @@ export type Compiled = {
 	/** Specifiers the module still imports after type-only imports are removed. */
 	imports: string[];
 	state: StateInfo[];
+	/** Where the template renders imported components (see `componentSites`). */
+	components: ComponentSite[];
 	/** The .pat source and the script's offsets in it, for checking design-time state values. */
 	script: { lang: 'ts' | 'js'; source: string; start: number; end: number } | null;
 };
+
+/**
+ * `<Tag>` at `id` (`line:column`) renders the component imported from
+ * `path`. `repeated`: inside an `{#each}` of this file, so its instances'
+ * paths carry each keys.
+ */
+export type ComponentSite = { tag: string; id: string; path: string; repeated: boolean };
 
 export type Analysis = { diagnostics: Diagnostic[]; state: StateInfo[] };
 
@@ -70,10 +80,38 @@ function boundElements(component: Component, bindings: Bindings): TemplateWrite[
 	return writes;
 }
 
+/** The .pat files the script imports: local name → absolute path. */
+function componentImports(component: Component, filename: string): Map<string, { path: string; statement: any }> {
+	const out = new Map<string, { path: string; statement: any }>();
+	for (const statement of component.script?.imports ?? []) {
+		const from: string = statement.source.value;
+		const local = statement.specifiers[0]?.local?.name;
+		if (/\.pat($|\?)/.test(from) && local) out.set(local, { path: resolve(dirname(resolve(filename)), from.split('?')[0]), statement });
+	}
+	return out;
+}
+
+function componentSites(component: Component, bindings: Bindings, filename: string, position: (offset: number) => string): ComponentSite[] {
+	const imports = componentImports(component, filename);
+	const sites: ComponentSite[] = [];
+	const walk = (nodes: TemplateNode[], repeated: boolean) => {
+		for (const node of nodes) {
+			const symbol = node.type === 'component' ? bindings.reference(node.name)?.symbol : null;
+			const imported = node.type === 'component' && symbol && symbol === bindings.topLevel(node.name.name) ? imports.get(node.name.name) : undefined;
+			if (node.type === 'component' && imported) sites.push({ tag: node.name.name, id: position(node.span.start), path: imported.path, repeated });
+			for (const fragment of fragments(node)) walk(fragment, repeated || node.type === 'each');
+		}
+	};
+	walk(component.template, false);
+	return sites;
+}
+
 function check(source: string, filename: string, reporter: Reporter): Front | null {
 	const result = front(source, reporter);
 	if (!result) return null;
 	const { component, bindings, styles } = result;
+	for (const { path, statement } of componentImports(component, filename).values())
+		if (!existsSync(path)) reporter.report(statement.source, `cannot find component ${statement.source.value}`);
 	checkScript(component, bindings, reporter);
 	checkTemplate(component, bindings, reporter);
 	checkTemplateNames(component, bindings, globalNames(resolve(filename)), reporter);
@@ -117,15 +155,16 @@ export function compile(source: string, filename = 'app.pat'): Compiled {
 
 	const edits = new Edits(source);
 	const script = emitScript(component, bindings, styles, source, edits);
-	const nodes = new TemplateEmitter(
+	const position = (offset: number) => {
+		const { line, column } = reporter.position(offset);
+		return `${line}:${column}`;
+	};
+	const template = new TemplateEmitter(
 		edits,
-		(offset) => {
-			const { line, column } = reporter.position(offset);
-			return `${line}:${column}`;
-		},
+		position,
 		(node) => (isSignal(bindings.reference(node)?.symbol) ? `${node.name}.v` : node.name)
-	).nodes(component.template);
-	const ts = `${script.imports.join('\n')}\nexport default function program($$rt) {\n${script.code}\nreturn [${nodes.join(',\n')}];\n}\n`;
+	).fragment(component.template);
+	const ts = `${script.imports.join('\n')}\nexport default function program($$rt) {\n${script.code}\nreturn ${template};\n}\n`;
 	const module = new Bun.Transpiler({ loader: 'ts', target: 'browser' }).transformSync(ts);
 	const imports = new Bun.Transpiler({ loader: 'js' }).scanImports(module).map((i) => i.path);
 	const info = component.script;
@@ -135,6 +174,7 @@ export function compile(source: string, filename = 'app.pat'): Compiled {
 		module,
 		imports,
 		state: info?.state.map((d) => d.info) ?? [],
+		components: componentSites(component, bindings, filename, position),
 		script: info ? { lang: info.lang, source, start: info.span.start, end: info.span.end } : null
 	};
 }

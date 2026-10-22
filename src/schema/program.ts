@@ -1,9 +1,9 @@
 // The compiled program: what `emit/` generates and what `runtime/` executes.
 //
-// A compiled module default-exports a `Program`. Called with the runtime API
-// (`$$rt`), it runs the script and returns a static description of the
-// template whose dynamic parts are closures. Ids are `line:column` of the
-// construct in the .pat source.
+// A compiled module default-exports a `Program`: the component. Called with
+// the runtime API of one instance (`$$rt`), it runs the script and returns a
+// static description of the template whose dynamic parts are closures. Ids
+// are `line:column` of the construct in the .pat source.
 
 import type { Style } from './style';
 
@@ -13,7 +13,7 @@ export type Getter<T = unknown> = () => T;
 /** A reactive value; `{#each}` items and indexes are passed to templates as cells. */
 export type Cell<T = unknown> = { readonly v: T };
 
-/** `$$rt`: what compiled scripts call. */
+/** `$$rt`: what compiled scripts call. Each component instance has its own. */
 export type RuntimeApi = {
 	/** `initial` computes the initial value; it is not called when the state is overridden. */
 	state: (id: string, initial?: () => unknown) => { v: unknown };
@@ -21,11 +21,18 @@ export type RuntimeApi = {
 	effect: (fn: () => unknown) => void;
 	style: (input: unknown) => Style;
 	mutate: <T>(target: { v: unknown }, result: T) => T;
+	/** A prop of `$props()`: the value the parent passes, or `fallback()` when that is undefined. */
+	prop: (name: string, fallback?: () => unknown) => Cell;
+	/** Marks a function as a snippet: `{@render}` only renders these. */
+	snippet: <F extends (...args: Cell[]) => ProgramNode[]>(fn: F) => F;
+	createContext: () => object;
+	setContext: (key: object, value: unknown) => void;
+	getContext: (key: object) => unknown;
 };
 
 export type Program = (rt: RuntimeApi) => ProgramNode[];
 
-export type ProgramNode = TextNode | ElementNode | IfNode | EachNode | PortalNode;
+export type ProgramNode = TextNode | ElementNode | IfNode | EachNode | PortalNode | ComponentNode | RenderNode;
 
 /** A piece of text content: static text, an expression, or a nested <span>. */
 export type InlinePart = string | Getter | SpanNode;
@@ -57,7 +64,7 @@ export type ElementNode = FrameElement | TextElement | InputElement;
 /** `{#if}`: the first branch whose test is truthy, else `e`. */
 export type IfNode = { t: 'if'; id: string; b: [test: Getter, kids: ProgramNode[]][]; e: ProgramNode[] | null };
 
-/** Keyed `{#each}`. */
+/** `{#each}`. Unkeyed lists are keyed by index. */
 export type EachNode = {
 	t: 'each';
 	id: string;
@@ -68,3 +75,13 @@ export type EachNode = {
 
 /** `<portal id="name" />`: where elements with `portal="name"` render, in no element of its own. */
 export type PortalNode = { t: 'portal'; id: string; name: string };
+
+/**
+ * `<Tag …>`: an instance of the component `component` returns. A different
+ * component replaces the instance; a prop changing does not. `props` are the
+ * parent's getters, `children` among them.
+ */
+export type ComponentNode = { t: 'component'; id: string; tag: string; component: Getter; props: Record<string, Getter> };
+
+/** `{@render snippet(args)}`: a different snippet replaces the content; changed arguments update it. */
+export type RenderNode = { t: 'render'; id: string; snippet: Getter; args: Getter[]; optional: boolean };

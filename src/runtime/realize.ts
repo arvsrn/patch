@@ -8,14 +8,20 @@
 // `bind:this` variables hold a design-time stand-in for their element (there
 // is no DOM). The template is evaluated twice, so an expression reading one
 // sees the element it ends up holding even when that element comes later in
-// the document, as it does in the browser once everything is mounted.
+// the document, as it does in the browser once everything is mounted. Both
+// evaluations share the component instances (by path), so their scripts run
+// once and their state is the one the stand-ins were written into.
+//
+// Concrete ids are the instance path, the node id and the `[key]` of each
+// enclosing `{#each}` item: `Row@12:3["a"]/4:5[0]`. In the app itself the path
+// is empty, so ids there are `4:5[0]`.
 
 import { DESIGN_NODE, isDesignNode, type DesignNode } from '../schema/anchor';
 import type { Concrete, Font, Run } from '../schema/concrete';
-import type { ElementNode, InlinePart, Program, ProgramNode } from '../schema/program';
+import type { ElementNode, Getter, InlinePart, Program, ProgramNode } from '../schema/program';
 import { TYPO, type Style } from '../schema/style';
-import { createApi } from './api';
-import { eachList, elementStyle, portalName, toText, withId } from './evaluate';
+import { createApi, type Instance } from './api';
+import { componentOf, eachList, eachPlace, elementStyle, instancePath, portalName, renderable, renderPlace, toText, withId, type Place } from './evaluate';
 import { createReactive } from './reactive';
 
 const DEFAULT_FONT: Font = {
@@ -51,24 +57,32 @@ type Slot = { type: 'slot'; name: string };
 /** An element rendered into a portal: realized once its portal's font is known. */
 type Portaled = { name: string; at: string; render: (font: Font) => Concrete; done?: Concrete };
 
+/** What evaluated content belongs to: the component instance rendering it, and where it is. */
+type Scope = { instance: Instance; place: Place };
+type Instances = Map<string, { component: unknown; instance: Instance; nodes: ProgramNode[] }>;
+type MakeInstance = (parent: Instance, path: string, props: Record<string, Getter>) => Instance;
+
 class Realizer {
-	/** One stand-in per element, by concrete id, shared by both evaluations. */
-	constructor(private handles: Map<string, DesignNode>) {}
+	/** Stand-ins per element and instances per path, by concrete id, shared by both evaluations. */
+	constructor(
+		private handles: Map<string, DesignNode>,
+		private instances: Instances,
+		private makeInstance: MakeInstance
+	) {}
 
 	private portals = new Map<string, { at: string; font: Font }>();
 	private portaled: Portaled[] = [];
 
-	/** `suffix` makes ids unique per `{#each}` item: `[key]` for each enclosing list. */
-	nodes(nodes: ProgramNode[], suffix: string, font: Font): Concrete[] {
+	nodes(nodes: ProgramNode[], scope: Scope, font: Font): Concrete[] {
 		const out: Concrete[] = [];
 		for (const d of nodes) {
-			const id = d.id + suffix;
+			const id = scope.place.path + d.id + scope.place.keys;
 			if (d.t === 'text') {
 				out.push({ type: 'text', id, tag: null, style: {}, font, runs: inlineRuns(d.parts, font, [], d.id) });
 			} else if (d.t === 'el') {
 				const name = d.portal ? withId(d.id, () => portalName(d.portal!())) : null;
-				if (name === null) out.push(this.element(d, id, suffix, font));
-				else this.portaled.push({ name, at: d.id, render: (font) => this.element(d, id, suffix, font) });
+				if (name === null) out.push(this.element(d, id, scope, font));
+				else this.portaled.push({ name, at: d.id, render: (font) => this.element(d, id, scope, font) });
 			} else if (d.t === 'portal') {
 				const existing = this.portals.get(d.name);
 				if (existing) throw new Error(`Duplicate <portal id="${d.name}"> (at ${existing.at} and ${d.id})`);
@@ -77,7 +91,7 @@ class Realizer {
 				out.push(slot as unknown as Concrete);
 			} else if (d.t === 'if') {
 				const branch = withId(d.id, () => d.b.find(([test]) => test()));
-				out.push(...this.nodes(branch ? branch[1] : (d.e ?? []), suffix, font));
+				out.push(...this.nodes(branch ? branch[1] : (d.e ?? []), scope, font));
 			} else if (d.t === 'each') {
 				const list = withId(d.id, () => eachList(d.list()));
 				const seen = new Set();
@@ -85,14 +99,30 @@ class Realizer {
 					const key = withId(d.id, () => d.key({ v: raw }, { v: i }));
 					if (seen.has(key)) throw new Error(`Duplicate each key ${JSON.stringify(key)} (at ${d.id})`);
 					seen.add(key);
-					out.push(...this.nodes(d.kids({ v: raw }, { v: i }), `${suffix}[${JSON.stringify(key)}]`, font));
+					out.push(...this.nodes(d.kids({ v: raw }, { v: i }), { ...scope, place: eachPlace(scope.place, key) }, font));
 				});
+			} else if (d.t === 'component') {
+				const component = withId(d.id, () => componentOf(d.component(), d.tag, d.id)) as Program;
+				const path = instancePath(scope.place, d.tag, d.id);
+				let entry = this.instances.get(path);
+				if (entry?.component !== component) {
+					const props = Object.fromEntries(Object.entries(d.props).map(([name, get]) => [name, () => withId(d.id, get)]));
+					const instance = this.makeInstance(scope.instance, path, props);
+					this.instances.set(path, (entry = { component, instance, nodes: withId(d.id, () => component(instance.api)) }));
+				}
+				out.push(...this.nodes(entry.nodes, { instance: entry.instance, place: { path, keys: '' } }, font));
+			} else if (d.t === 'render') {
+				const fn = withId(d.id, () => renderable(d.snippet(), d.optional, d.id));
+				if (fn) {
+					const args = d.args.map((arg) => ({ get v() { return withId(d.id, arg); } }));
+					out.push(...this.nodes(fn(...args), { instance: scope.instance, place: renderPlace(scope.place, d.id) }, font));
+				}
 			}
 		}
 		return out;
 	}
 
-	private element(d: ElementNode, id: string, suffix: string, font: Font): Concrete {
+	private element(d: ElementNode, id: string, scope: Scope, font: Font): Concrete {
 		const st = elementStyle(d, d.kind);
 		const own = inheritFont(font, st);
 		const attr = (name: string) => (d.attrs[name] ? toText(withId(d.id, d.attrs[name])) : '');
@@ -101,7 +131,7 @@ class Realizer {
 			if (!handle) this.handles.set(id, (handle = Object.freeze({ [DESIGN_NODE]: id })));
 			d.ref.set(handle);
 		}
-		if (d.kind === 'frame') return { type: 'frame', id, tag: d.tag, style: st, font: own, children: this.nodes(d.kids, suffix, own) };
+		if (d.kind === 'frame') return { type: 'frame', id, tag: d.tag, style: st, font: own, children: this.nodes(d.kids, scope, own) };
 		if (d.kind === 'text') return { type: 'text', id, tag: d.tag, style: st, font: own, runs: inlineRuns(d.kids, own, [], d.id) };
 		return {
 			type: 'input',
@@ -170,12 +200,13 @@ function resolveAnchors(tree: Concrete[]) {
 
 /** Runs the program without effects and evaluates its template (twice, for `bind:this`; see above). */
 export function realize(program: Program, overrides: Record<string, unknown> = {}): Concrete[] {
-	const { api } = createApi(createReactive(), { overrides, design: true });
-	const nodes = program(api);
+	const { root, instance } = createApi(createReactive(), { overrides, design: true });
+	const nodes = program(root.api);
 	const handles = new Map<string, DesignNode>();
+	const instances: Instances = new Map();
 	const evaluate = () => {
-		const realizer = new Realizer(handles);
-		return realizer.finish(realizer.nodes(nodes, '', DEFAULT_FONT));
+		const realizer = new Realizer(handles, instances, instance);
+		return realizer.finish(realizer.nodes(nodes, { instance: root, place: { path: '', keys: '' } }, DEFAULT_FONT));
 	};
 	evaluate();
 	const tree = evaluate();

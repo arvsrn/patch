@@ -3,7 +3,7 @@
 // dynamic parts become closures.
 
 import type { Estree } from '../ast';
-import type { Each, Element, If, Inline, TemplateNode } from '../ir';
+import type { AttributeValue, ComponentUse, Each, Element, If, Inline, Render, Snippet, TemplateNode } from '../ir';
 import type { Edits } from './edits';
 
 const str = JSON.stringify;
@@ -25,14 +25,40 @@ export class TemplateEmitter {
 		return `() => (${this.expression(node)})`;
 	}
 
-	nodes(nodes: TemplateNode[]): string[] {
-		return nodes.map((node) => {
-			if (node.type === 'text') return `{t:"text",id:${str(this.id(node.span.start))},parts:[${this.inline(node.content)}]}`;
-			if (node.type === 'element') return this.element(node);
-			if (node.type === 'if') return this.ifBlock(node);
-			if (node.type === 'portal') return `{t:"portal",id:${str(this.id(node.span.start))},name:${str(node.name)}}`;
-			return this.eachBlock(node);
-		});
+	/**
+	 * A node list as an array expression. A block declaring snippets becomes a
+	 * function scope holding them, so they are visible to the whole block only.
+	 */
+	fragment(nodes: TemplateNode[]): string {
+		const snippets = nodes.filter((n): n is Snippet => n.type === 'snippet');
+		const list = `[${nodes.flatMap((n) => (n.type === 'snippet' ? [] : [this.node(n)])).join(',\n')}]`;
+		if (!snippets.length) return list;
+		return `(() => {\n${snippets.map((sn) => `const ${sn.name.name} = ${this.snippet(sn.params.map((p) => p.name), sn.body)};\n`).join('')}return ${list};\n})()`;
+	}
+
+	private node(node: Exclude<TemplateNode, Snippet>): string {
+		const id = str(this.id(node.span.start));
+		if (node.type === 'text') return `{t:"text",id:${id},parts:[${this.inline(node.content)}]}`;
+		if (node.type === 'element') return this.element(node);
+		if (node.type === 'if') return this.ifBlock(node);
+		if (node.type === 'portal') return `{t:"portal",id:${id},name:${str(node.name)}}`;
+		if (node.type === 'component') return this.component(node);
+		if (node.type === 'render') return this.render(node);
+		return this.eachBlock(node);
+	}
+
+	private snippet(params: string[], body: TemplateNode[]) {
+		return `$$rt.snippet((${params.join(', ')}) => ${this.fragment(body)})`;
+	}
+
+	private component(node: ComponentUse) {
+		const props: [string, string][] = node.props.map((p) => [p.name, `() => (${this.attributeValue(p.value)})`]);
+		if (node.children) props.push(['children', `() => ${this.snippet([], node.children)}`]);
+		return `{t:"component",id:${str(this.id(node.span.start))},tag:${str(node.name.name)},component:${this.getter(node.name)},props:${record(props)}}`;
+	}
+
+	private render(node: Render) {
+		return `{t:"render",id:${str(this.id(node.span.start))},snippet:${this.getter(node.callee)},args:[${node.args.map((a) => this.getter(a)).join(',')}],optional:${node.optional}}`;
 	}
 
 	private element(node: Element) {
@@ -52,12 +78,12 @@ export class TemplateEmitter {
 				on.push(['input', `() => (event) => { ${name}.v = event.currentTarget.value }`]);
 			} else attrs.push([a.name, `() => (${this.attributeValue(a.value)})`]);
 		}
-		const kids = node.kind === 'frame' ? this.nodes(node.children).join(',') : node.kind === 'text' ? this.inline(node.content) : '';
+		const kids = node.kind === 'frame' ? this.fragment(node.children) : node.kind === 'text' ? `[${this.inline(node.content)}]` : '[]';
 		const style = node.style ? this.getter(node.style) : 'null';
-		return `{t:"el",tag:${str(node.tag)},kind:"${node.kind}",id:${str(this.id(node.span.start))},style:${style},attrs:${record(attrs)},on:${record(on)},ref:${ref},portal:${portal},kids:[${kids}]}`;
+		return `{t:"el",tag:${str(node.tag)},kind:"${node.kind}",id:${str(this.id(node.span.start))},style:${style},attrs:${record(attrs)},on:${record(on)},ref:${ref},portal:${portal},kids:${kids}}`;
 	}
 
-	private attributeValue(value: Extract<Element['attributes'][number], { type: 'attribute' }>['value']) {
+	private attributeValue(value: AttributeValue) {
 		if (value === true) return 'true';
 		if ('expression' in value) return this.expression(value.expression);
 		return value.parts.map((part) => (typeof part === 'string' ? str(part) : `String((${this.expression(part)}) ?? "")`)).join(' + ') || '""';
@@ -75,14 +101,16 @@ export class TemplateEmitter {
 	}
 
 	private ifBlock(node: If) {
-		const branches = node.branches.map((b) => `[${this.getter(b.test)}, [${this.nodes(b.body).join(',')}]]`);
-		const otherwise = node.otherwise ? `[${this.nodes(node.otherwise).join(',')}]` : 'null';
+		const branches = node.branches.map((b) => `[${this.getter(b.test)}, ${this.fragment(b.body)}]`);
+		const otherwise = node.otherwise ? this.fragment(node.otherwise) : 'null';
 		return `{t:"if",id:${str(this.id(node.span.start))},b:[${branches.join(',')}],e:${otherwise}}`;
 	}
 
 	private eachBlock(node: Each) {
-		const params = `(${node.item.name}, ${node.index ?? '$$i'})`;
-		const key = node.key ? this.expression(node.key) : 'null';
-		return `{t:"each",id:${str(this.id(node.span.start))},list:${this.getter(node.list)},key:${params} => (${key}),kids:${params} => [${this.nodes(node.body).join(',')}]}`;
+		const index = node.index ?? '$$i';
+		const params = `(${node.item.name}, ${index})`;
+		// Unkeyed: each position is an item.
+		const key = node.key ? this.expression(node.key) : `${index}.v`;
+		return `{t:"each",id:${str(this.id(node.span.start))},list:${this.getter(node.list)},key:${params} => (${key}),kids:${params} => ${this.fragment(node.body)}}`;
 	}
 }

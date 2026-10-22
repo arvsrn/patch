@@ -1,6 +1,7 @@
 // TypeScript semantic checking for the <script lang="ts"> of a .pat file.
 //
-// The script is checked as `<file>.pat.ts`: the .pat source with everything
+// The script is checked as `<file>.pat.script.ts` (not `<file>.pat.ts`, which
+// is where an import of the component would resolve): the .pat source with everything
 // outside the script blanked to spaces (newlines kept), so TypeScript offsets
 // are .pat offsets. The author's code is checked as written, before the
 // reactive rewrite; rune declarations describe what the author sees. One
@@ -24,6 +25,27 @@ interface PatStyle {
 	readonly [property: string]: unknown;
 }
 declare function $style(style: { readonly [property: string]: unknown }): PatStyle;
+/** The component's props: destructure them, with types: let { a, b = 1 }: Props = $props(). */
+declare function $props(): any;
+/** A .pat file: a component. */
+interface PatComponent {
+	readonly __patComponent: true;
+}
+declare module '*.pat' {
+	const component: PatComponent;
+	export default component;
+}
+declare module 'patch' {
+	/** An opaque context key, made by createContext. */
+	export interface Context<T> {
+		readonly __patContext: T;
+	}
+	export function createContext<T>(): Context<T>;
+	/** Provides value to this component instance and everything it renders. Top-level statements only. */
+	export function setContext<T>(context: Context<T>, value: T): void;
+	/** The value of the nearest ancestor (or this instance) that set this context. Throws when none did. */
+	export function getContext<T>(context: Context<T>): T;
+}
 `;
 
 type Project = { service: ts.LanguageService; files: Map<string, { text: string; version: number }>; runes: string; globals?: Set<string> };
@@ -141,7 +163,7 @@ export function typecheck(source: string, path: string, start: number, end: numb
 	const tail = lines.length ? '\n;function __pat_template_writes() {\n' : '';
 	const text = blank(source.slice(0, start)) + source.slice(start, end) + blank(source.slice(end)) + tail + lines.join('') + (tail && '}\n');
 	const offsets = lines.map((_, i) => source.length + tail.length + lines.slice(0, i).join('').length);
-	const virtual = `${path}.ts`;
+	const virtual = `${path}.script.ts`;
 	const previous = files.get(virtual);
 	if (previous?.text !== text) files.set(virtual, { text, version: (previous?.version ?? 0) + 1 });
 	return [...service.getSyntacticDiagnostics(virtual), ...service.getSemanticDiagnostics(virtual)]

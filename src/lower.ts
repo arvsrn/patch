@@ -8,7 +8,7 @@
 
 import { literal, NOT_STATIC, unwrap, type Estree } from './ast';
 import type { Reporter, Span } from './diagnostics';
-import type { Attribute, AttributeValue, Component, Each, Element, If, Inline, Script, Tag, TemplateNode } from './ir';
+import type { Attribute, AttributeValue, Component, ComponentUse, Each, Element, If, Inline, Render, Script, Snippet, Tag, TemplateNode } from './ir';
 import type { SvelteAst } from './parse';
 
 type Svelte = any;
@@ -31,12 +31,9 @@ const ATTRIBUTES: Partial<Record<Tag, string[]>> = {
 	textarea: ['value', 'placeholder', 'disabled']
 };
 const UNSUPPORTED_NODES: Record<string, string> = {
-	Component: 'user-defined components are not supported in v0',
 	HtmlTag: '{@html} is not supported',
 	AwaitBlock: '{#await} is not supported in v0; use $state + $effect for async data',
 	KeyBlock: '{#key} is not supported',
-	SnippetBlock: '{#snippet} is not supported',
-	RenderTag: '{@render} is not supported',
 	ConstTag: '{@const} is not supported',
 	DebugTag: '{@debug} is not supported',
 	AttachTag: '{@attach} is not supported'
@@ -52,6 +49,8 @@ const UNSUPPORTED_DIRECTIVES: Record<string, string> = {
 	AttachTag: '{@attach} is not supported'
 };
 const isTag = (name: string): name is Tag => name in KINDS;
+/** What `import { … } from 'patch'` provides. */
+const PATCH_EXPORTS = ['createContext', 'setContext', 'getContext'];
 
 /** A node's name when it has one (elements, attributes), else the node. */
 const nameSpan = (node: Svelte): Span =>
@@ -91,6 +90,9 @@ function lowerScript(instance: Svelte, source: string, reporter: Reporter): Scri
 		derived: [],
 		effects: [],
 		styles: [],
+		props: [],
+		propsDeclarator: null,
+		patchImports: [],
 		runes: new Set()
 	};
 
@@ -99,8 +101,19 @@ function lowerScript(instance: Svelte, source: string, reporter: Reporter): Scri
 			const from = statement.source.value;
 			if (/\.(css|scss|sass|less|styl|stylus|pcss|postcss|sss)($|\?)/.test(from))
 				reporter.report(statement.source, 'stylesheets are not supported; use style={...} with $style({...}) values');
-			else if (/\.pat($|\?)/.test(from))
-				reporter.report(statement.source, 'importing .pat files is not supported yet; a PAT app is a single .pat file (import .ts/.js modules instead)');
+			else if (/\.pat($|\?)/.test(from)) {
+				const [first, ...rest] = statement.specifiers;
+				if (statement.importKind === 'type' || first?.type !== 'ImportDefaultSpecifier' || rest.length)
+					reporter.report(statement, 'a .pat file is imported as one component: import Card from "./Card.pat"');
+			} else if (from === 'patch') {
+				if (statement.importKind === 'type') continue;
+				for (const sp of statement.specifiers) {
+					if (sp.importKind === 'type') continue;
+					const imported = sp.type === 'ImportSpecifier' ? (sp.imported.name ?? sp.imported.value) : null;
+					if (imported && PATCH_EXPORTS.includes(imported)) script.patchImports.push({ local: sp.local.name, imported });
+					else reporter.report(sp, `"patch" provides ${PATCH_EXPORTS.join(', ')} (and the type Context)`);
+				}
+			}
 			// Vite only converts CommonJS for npm dependencies, not local files.
 			else if (/^\.{0,2}\/.*\.c[jt]s$/.test(from))
 				reporter.report(statement.source, 'local CommonJS modules are not supported; use an ES module (.ts, .js, .mjs). CommonJS npm packages are fine');
@@ -108,12 +121,15 @@ function lowerScript(instance: Svelte, source: string, reporter: Reporter): Scri
 		} else if (statement.type === 'TSImportEqualsDeclaration') {
 			reporter.report(statement, '`import x = require(...)` is not supported; use an ES import');
 		} else if (/^(Export|TSExport)/.test(statement.type)) {
-			reporter.report(statement, 'exports are not supported (a .pat file is a single app with no props)');
+			reporter.report(statement, 'a .pat file cannot export anything; it is a component, and takes its inputs from $props()');
 		} else if (statement.type === 'VariableDeclaration') {
 			for (const d of statement.declarations) {
 				const init = unwrap(d.init);
 				const rune = init?.type === 'CallExpression' ? calleeName(init.callee) : null;
-				if (rune === '$state' || rune === '$derived' || rune === '$derived.by') {
+				if (rune === '$props') {
+					script.runes.add(init);
+					lowerProps(d, script, reporter);
+				} else if (rune === '$state' || rune === '$derived' || rune === '$derived.by') {
 					script.runes.add(init);
 					if (rune === '$state' && statement.kind !== 'let') reporter.report(statement, '$state must be declared with let');
 					if (d.id.type !== 'Identifier') {
@@ -151,6 +167,23 @@ function lowerScript(instance: Svelte, source: string, reporter: Reporter): Scri
 	return script;
 }
 
+/** `let { a, b: local, c = fallback }: Props = $props()`. */
+function lowerProps(d: Estree, script: Script, reporter: Reporter) {
+	if (script.propsDeclarator) return reporter.report(d, '$props() can only be declared once');
+	script.propsDeclarator = d;
+	if (d.id.type !== 'ObjectPattern') return reporter.report(d.id, 'destructure the props: let { name, count = 0 } = $props()');
+	if (d.init.arguments.length) reporter.report(d.init, '$props() takes no arguments');
+	for (const p of d.id.properties) {
+		const value = p.type === 'Property' ? p.value : null;
+		const local = value?.type === 'AssignmentPattern' ? value.left : value;
+		if (p.type !== 'Property' || p.computed || local?.type !== 'Identifier') {
+			reporter.report(p, p.type === 'RestElement' ? 'rest props are not supported; name each prop' : 'each prop must be a name, optionally renamed or with a default: { a, b: c, d = 1 }');
+			continue;
+		}
+		script.props.push({ key: p.key.name ?? String(p.key.value), local, fallback: value.type === 'AssignmentPattern' ? value.right : null });
+	}
+}
+
 // ---------------------------------------------------------------- template
 
 class TemplateLowering {
@@ -177,6 +210,9 @@ class TemplateLowering {
 			if (node.type === 'Comment') continue;
 			flush();
 			if (node.type === 'RegularElement') out.push(...this.element(node));
+			else if (node.type === 'Component') out.push(...this.component(node));
+			else if (node.type === 'SnippetBlock') out.push(...this.snippet(node));
+			else if (node.type === 'RenderTag') out.push(...this.render(node));
 			else if (node.type === 'IfBlock') out.push(this.ifBlock(node));
 			else if (node.type === 'EachBlock') out.push(...this.eachBlock(node));
 			else this.unsupported(node);
@@ -208,6 +244,50 @@ class TemplateLowering {
 			return [];
 		}
 		return [{ type: 'each', span: spanOf(node), list: node.expression, item: node.context, index: node.index ?? null, key: node.key ?? null, body }];
+	}
+
+	/** `<Card a={x}>content</Card>`: attributes are props, the content is the `children` snippet. */
+	private component(node: Svelte): TemplateNode[] {
+		const children = this.children(node.fragment.nodes);
+		if (node.name.includes('.')) {
+			this.reporter.report(nameSpan(node), `<${node.name}>: a component tag must be a plain name; assign it first (const Item = ${node.name})`);
+			return children;
+		}
+		const props: ComponentUse['props'] = [];
+		for (const a of node.attributes) {
+			if (a.type === 'Attribute') props.push({ name: a.name, span: spanOf(a), nameSpan: nameSpan(a), value: attributeValue(a) });
+			else if (a.type === 'BindDirective')
+				this.reporter.report(nameSpan(a), `components have no bind:; pass the value and a callback that changes it: ${a.name}={x} on${a.name}={(next) => (x = next)}`);
+			else this.reporter.report(nameSpan(a), UNSUPPORTED_DIRECTIVES[a.type] ?? `${a.type} is not supported on a component`);
+		}
+		for (const child of children)
+			if (child.type === 'snippet')
+				this.reporter.report(child.name, `a snippet declared inside <${node.name}> is not passed to it; declare it outside and pass it as a prop: ${child.name.name}={${child.name.name}}`);
+		const explicit = props.find((p) => p.name === 'children');
+		if (explicit && children.length) this.reporter.report(explicit.nameSpan, 'children is given both as a prop and as content');
+		const loc = nameSpan(node);
+		const name = { type: 'Identifier', name: node.name, start: loc.start, end: loc.end };
+		return [{ type: 'component', span: spanOf(node), nameSpan: loc, name, props, children: children.length ? children : null }];
+	}
+
+	private snippet(node: Svelte): Snippet[] {
+		const body = this.children(node.body.nodes);
+		const params = node.parameters.filter((p: Estree) => {
+			if (unwrap(p)?.type === 'Identifier') return true;
+			this.reporter.report(p, 'snippet parameters must be plain names');
+			return false;
+		});
+		return [{ type: 'snippet', span: spanOf(node), name: node.expression, params: params.map(unwrap), body }];
+	}
+
+	private render(node: Svelte): Render[] {
+		const chain = node.expression.type === 'ChainExpression';
+		const call = chain ? node.expression.expression : node.expression;
+		if (call.arguments.some((a: Estree) => a.type === 'SpreadElement')) {
+			this.reporter.report(node, '{@render} arguments cannot be spread');
+			return [];
+		}
+		return [{ type: 'render', span: spanOf(node), callee: call.callee, args: call.arguments, optional: chain && call.optional }];
 	}
 
 	/** One element, or (for an unsupported tag) its lowered children so their problems are reported too. */
@@ -327,8 +407,10 @@ class TemplateLowering {
 				}
 				const { style } = this.attributes(node, null);
 				out.push({ type: 'span', span: spanOf(node), nameSpan: nameSpan(node), style, content: this.inlineParts(node.fragment.nodes, state) });
-			} else if (node.type === 'IfBlock' || node.type === 'EachBlock') {
+			} else if (node.type === 'IfBlock' || node.type === 'EachBlock' || node.type === 'SnippetBlock' || node.type === 'RenderTag') {
 				this.reporter.report(node, 'blocks cannot appear inside text; use a ternary {cond ? "a" : "b"} or move the block into a <div>');
+			} else if (node.type === 'Component') {
+				this.reporter.report(nameSpan(node), 'components cannot appear inside text; move it into a <div>');
 			} else this.unsupported(node);
 		}
 		return out;

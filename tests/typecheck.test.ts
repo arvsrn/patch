@@ -57,13 +57,13 @@ test('imported modules, types and generics are understood', () => {
 	]);
 });
 
-test('a missing module is a TypeScript diagnostic; a .pat import is one PAT error', () => {
+test('a missing module is a TypeScript diagnostic; a missing .pat component is one PAT error', () => {
 	const missing = script(`\timport { nope } from './missing.ts';`);
 	expect(check(missing).map((d) => [d.source, d.code, at(missing, d)])).toEqual([['typescript', 2307, "'./missing.ts'"]]);
 
 	const pat = check(script(`\timport Other from './Other.pat';`));
 	expect(pat.map((d) => d.source)).toEqual(['pat']);
-	expect(pat[0].message).toContain('importing .pat files is not supported');
+	expect(pat[0].message).toBe('cannot find component ./Other.pat');
 });
 
 test('PAT and TypeScript diagnostics appear together', () => {

@@ -128,7 +128,11 @@ export function createReactive() {
 		};
 	};
 
-	/** Lazy and cached; invalidated by its dependencies. */
+	/**
+	 * Lazy and cached; invalidated by its dependencies. Created under an owner
+	 * (a component instance, a block), it stops listening when that owner is
+	 * reset or disposed, and recomputes if it is read again.
+	 */
 	const derived = <T>(fn: () => T) => {
 		const subs = new Set<Owner>();
 		let value: T;
@@ -146,6 +150,10 @@ export function createReactive() {
 				trigger(subs);
 			}
 		};
+		onCleanup(() => {
+			reset(c);
+			dirty = true;
+		});
 		return {
 			get v(): T {
 				if (dirty) {
@@ -180,5 +188,7 @@ export function createReactive() {
 		if (!batchDepth) flush();
 	};
 
-	return { newOwner, dispose, within, batch, untrack, onCleanup, cell, derived, effect, deferredEffect };
+	const currentOwner = () => owner;
+
+	return { newOwner, dispose, within, batch, untrack, onCleanup, currentOwner, cell, derived, effect, deferredEffect };
 }

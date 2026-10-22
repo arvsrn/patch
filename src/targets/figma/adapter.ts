@@ -139,7 +139,8 @@ class Converter {
 	warnings: string[] = [];
 
 	private warn(id: string, message: string) {
-		this.warnings.push(`${message} (at ${id.replace(/\[.*$/, '')})`);
+		// The node's own `line:column`, without its instance path and each keys.
+		this.warnings.push(`${message} (at ${id.slice(id.lastIndexOf('/') + 1).replace(/\[.*$/, '')})`);
 	}
 
 	private layer(n: Concrete, name: string): Layer {

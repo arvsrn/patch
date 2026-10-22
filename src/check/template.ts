@@ -3,7 +3,7 @@
 import { forEachNode } from '../ast';
 import type { Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
-import { elements, expressions, type Component, type TemplateNode } from '../ir';
+import { elements, expressions, fragments, type Component, type TemplateNode } from '../ir';
 
 const INPUT_TYPES = ['text', 'password', 'email', 'search', 'url', 'tel'];
 
@@ -25,7 +25,7 @@ export function checkTemplate(component: Component, bindings: Bindings, reporter
 			}
 		}
 	}
-	eachKeys(component.template, reporter);
+	snippetNames(component.template, reporter);
 }
 
 /** Template expressions may only name script bindings, `{#each}` names and real globals. */
@@ -38,14 +38,14 @@ export function checkTemplateNames(component: Component, bindings: Bindings, glo
 		});
 }
 
-function eachKeys(nodes: TemplateNode[], reporter: Reporter) {
+/** Two snippets in one block would declare the same name. */
+function snippetNames(nodes: TemplateNode[], reporter: Reporter) {
+	const seen = new Set<string>();
 	for (const node of nodes) {
-		if (node.type === 'each') {
-			if (!node.key) reporter.report(node.span, '{#each} must be keyed: {#each list as item (item.id)}');
-			eachKeys(node.body, reporter);
-		} else if (node.type === 'if') {
-			for (const branch of node.branches) eachKeys(branch.body, reporter);
-			if (node.otherwise) eachKeys(node.otherwise, reporter);
-		} else if (node.type === 'element' && node.kind === 'frame') eachKeys(node.children, reporter);
+		if (node.type === 'snippet') {
+			if (seen.has(node.name.name)) reporter.report(node.name, `snippet "${node.name.name}" is already declared in this block`);
+			seen.add(node.name.name);
+		}
+		for (const fragment of fragments(node)) snippetNames(fragment, reporter);
 	}
 }

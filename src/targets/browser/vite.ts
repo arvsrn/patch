@@ -2,7 +2,9 @@
 // The .pat file is an ordinary module in Vite's graph (compiled by
 // `transform`), so Vite resolves its imports, watches it, reloads the page
 // when it changes and shows compile and type errors in its overlay. A virtual
-// entry mounts the program, optionally from overridden state.
+// entry mounts the program, optionally from overridden state. Imported .pat
+// components are modules of the graph like the entry. `patch` (what .ts
+// modules import createContext from) resolves to the runtime's context module.
 
 import { basename, dirname, extname, resolve } from 'node:path';
 import { build, createServer, type Plugin } from 'vite';
@@ -14,12 +16,13 @@ import { htmlPage, overlayError } from './html';
 const ENTRY = '/@pat/entry.js';
 const RESOLVED = '\0pat:entry';
 const DOM = resolve(import.meta.dir, '../../runtime/dom.ts');
+export const PATCH_MODULE = resolve(import.meta.dir, '../../runtime/context.ts');
 const REPO = resolve(import.meta.dir, '../../..');
 
 export function patPlugin(file: string, mount: ApiOptions = {}): Plugin {
 	return {
 		name: 'pat',
-		resolveId: (id) => (id === ENTRY ? RESOLVED : undefined),
+		resolveId: (id) => (id === ENTRY ? RESOLVED : id === 'patch' ? PATCH_MODULE : undefined),
 		load(id) {
 			if (id !== RESOLVED) return;
 			return [

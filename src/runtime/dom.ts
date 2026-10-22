@@ -3,11 +3,11 @@
 // each element's own style becomes inline CSS.
 
 import { anchorOptions } from '../schema/anchor';
-import type { ElementNode, InlinePart, Program, ProgramNode, SpanNode } from '../schema/program';
+import type { ComponentNode, ElementNode, InlinePart, Program, ProgramNode, RenderNode, SpanNode } from '../schema/program';
 import { effectiveSizing, SHORTHANDS, sizingOf, type ElementKind, type Sizing, type Style } from '../schema/style';
-import { createApi, type ApiOptions } from './api';
+import { createApi, type ApiOptions, type Instance } from './api';
 import { createAnchoring, type AnchorSpec } from './anchoring';
-import { eachList, elementStyle, portalName, toText, withId } from './evaluate';
+import { componentOf, eachList, eachPlace, elementStyle, instancePath, portalName, renderable, renderPlace, toText, withId, type Place } from './evaluate';
 import { createPortals } from './portals';
 import { createReactive, type Cell, type Owner } from './reactive';
 
@@ -175,12 +175,12 @@ const moveRange = (start: Node, end: Node, before: Node) => {
  */
 export function mount(program: Program, target: HTMLElement, options: ApiOptions = {}): () => void {
 	const r = createReactive();
-	const { effect, newOwner, dispose, within, untrack, onCleanup, batch, cell } = r;
+	const { effect, newOwner, dispose, within, untrack, onCleanup, batch, cell, derived } = r;
 	const root = newOwner();
-	const { api, startEffects } = createApi(r, options);
+	const { root: app, instance, startEffects } = createApi(r, options);
 	const portals = createPortals();
 	const anchoring = createAnchoring(target);
-	const interact = () => batch(() => within(root, null, startEffects));
+	const interact = () => batch(startEffects);
 
 	// Anchored elements are placed once a render has laid everything out,
 	// after sizing, and again whenever anything may have moved them.
@@ -302,7 +302,10 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 		}
 	};
 
-	const mountNodes = (nodes: ProgramNode[], parent: Node, before: Node | null) => {
+	/** What mounted content belongs to: the component instance rendering it, and where it is (for ids). */
+	type Scope = { instance: Instance; place: Place };
+
+	const mountNodes = (nodes: ProgramNode[], parent: Node, before: Node | null, scope: Scope) => {
 		for (const d of nodes) {
 			if (d.t === 'text') {
 				const span = document.createElement('span');
@@ -313,7 +316,7 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 				parent.insertBefore(span, before);
 			} else if (d.t === 'el') {
 				const el = element(d, d.tag, d.kind);
-				if (d.kind === 'frame') mountNodes(d.kids, el, null);
+				if (d.kind === 'frame') mountNodes(d.kids, el, null, scope);
 				else if (d.kind === 'text') mountInline(d.kids, el);
 				if (d.portal) mountPortaled(d, el, parent, before);
 				else parent.insertBefore(el, before);
@@ -323,8 +326,10 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 					// Another element may have taken the variable since.
 					onCleanup(() => untrack(ref.get) === el && ref.set(undefined));
 				}
-			} else if (d.t === 'if') mountIf(d, parent, before);
-			else if (d.t === 'each') mountEach(d, parent, before);
+			} else if (d.t === 'if') mountIf(d, parent, before, scope);
+			else if (d.t === 'each') mountEach(d, parent, before, scope);
+			else if (d.t === 'component') mountComponent(d, parent, before, scope);
+			else if (d.t === 'render') mountRender(d, parent, before, scope);
 			else if (d.t === 'portal') onCleanup(portals.portal(d.name, d.id, parent, before));
 		}
 	};
@@ -348,37 +353,89 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 		});
 	};
 
-	// A false branch is unmounted; re-entering it creates it again.
-	const mountIf = (d: Extract<ProgramNode, { t: 'if' }>, parent: Node, before: Node | null) => {
-		const end = parent.insertBefore(document.createComment('/if'), before);
+	/**
+	 * A region showing what `select` picks. When the pick changes, the old
+	 * content is destroyed (its owner disposed, its nodes removed) and
+	 * `content` mounts the new one, in an owner of its own, before `end`.
+	 */
+	const mountRegion = <T>(label: string, parent: Node, before: Node | null, select: () => T, content: (pick: T, end: Node) => void) => {
+		const end = parent.insertBefore(document.createComment(`/${label}`), before);
 		const container = newOwner();
-		let active = -2;
-		let branch: { start: Node; owner: Owner } | null = null;
+		let active: { pick: T } | null = null;
+		let region: { start: Node; owner: Owner } | null = null;
 		within(container, null, () =>
 			effect(() => {
-				const index = withId(d.id, () => d.b.findIndex(([test]) => test()));
-				if (index === active) return;
-				active = index;
+				const pick = select();
+				if (active && Object.is(active.pick, pick)) return;
+				active = { pick };
 				untrack(() => {
-					if (branch) {
-						dispose(branch.owner);
-						removeRange(branch.start, end.previousSibling!);
+					if (region) {
+						dispose(region.owner);
+						removeRange(region.start, end.previousSibling!);
 					}
-					const kids = index >= 0 ? d.b[index][1] : d.e;
-					if (!kids) return (branch = null);
-					const start = parent.insertBefore(document.createComment('if'), end);
-					const o = within(container, null, () => newOwner());
-					within(o, null, () => mountNodes(kids, parent, end));
-					branch = { start, owner: o };
+					const start = parent.insertBefore(document.createComment(label), end);
+					const owner = within(container, null, () => newOwner());
+					region = { start, owner };
+					within(owner, null, () => content(pick, end));
 				});
 				resizeLater();
 			})
 		);
 	};
 
+	// A false branch is unmounted; re-entering it creates it again.
+	const mountIf = (d: Extract<ProgramNode, { t: 'if' }>, parent: Node, before: Node | null, scope: Scope) =>
+		mountRegion(
+			'if',
+			parent,
+			before,
+			() => withId(d.id, () => d.b.findIndex(([test]) => test())),
+			(index, end) => {
+				const kids = index >= 0 ? d.b[index][1] : d.e;
+				if (kids) mountNodes(kids, parent, end, scope);
+			}
+		);
+
+	/**
+	 * A component instance: its script runs once, in an owner of its own, and
+	 * its template mounts here. Props stay the parent's getters, read through
+	 * the child's `$$rt.prop`, so a changed prop updates what reads it and the
+	 * instance stays. Only a different component replaces it.
+	 */
+	const mountComponent = (d: ComponentNode, parent: Node, before: Node | null, scope: Scope) =>
+		mountRegion(
+			'component',
+			parent,
+			before,
+			() => withId(d.id, d.component),
+			(value, end) => {
+				const component = componentOf(value, d.tag, d.id) as Program;
+				const path = instancePath(scope.place, d.tag, d.id);
+				const props = Object.fromEntries(Object.entries(d.props).map(([name, get]) => [name, () => withId(d.id, get)]));
+				const child = instance(scope.instance, path, props);
+				mountNodes(withId(d.id, () => component(child.api)), parent, end, { instance: child, place: { path, keys: '' } });
+			}
+		);
+
+	// The snippet's nodes belong to the instance rendering them; its arguments are cells.
+	const mountRender = (d: RenderNode, parent: Node, before: Node | null, scope: Scope) =>
+		mountRegion(
+			'render',
+			parent,
+			before,
+			() => withId(d.id, d.snippet),
+			(value, end) => {
+				const fn = renderable(value, d.optional, d.id);
+				if (!fn) return;
+				const args = d.args.map((arg) => derived(() => withId(d.id, arg)));
+				mountNodes(fn(...args), parent, end, { instance: scope.instance, place: renderPlace(scope.place, d.id) });
+			}
+		);
+
 	// Keyed list: existing keys keep their DOM and state, removed keys are
 	// destroyed, new keys are created. Items are moved to match list order.
-	const mountEach = (d: Extract<ProgramNode, { t: 'each' }>, parent: Node, before: Node | null) => {
+	// An unkeyed list is keyed by index.
+	const mountEach = (d: Extract<ProgramNode, { t: 'each' }>, parent: Node, before: Node | null, scope: Scope) => {
 		const end = parent.insertBefore(document.createComment('/each'), before);
 		const container = newOwner();
 		type Item = { item: Cell; index: Cell<number>; start: Node; end: Node; owner: Owner };
@@ -405,7 +462,7 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 							const index = cell(i);
 							const start = parent.insertBefore(document.createComment('item'), end);
 							const stop = parent.insertBefore(document.createComment('/item'), end);
-							within(o, null, () => mountNodes(d.kids(item, index), parent, stop));
+							within(o, null, () => mountNodes(d.kids(item, index), parent, stop, { ...scope, place: eachPlace(scope.place, key) }));
 							entry = { item, index, start, end: stop, owner: o };
 						}
 						next.set(key, entry);
@@ -435,7 +492,7 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 	target.setAttribute('data-p', 'frame');
 	target.setAttribute('data-dir', 'column');
 	target.setAttribute('data-host', '');
-	batch(() => within(root, null, () => mountNodes(program(api), target, null)));
+	batch(() => within(root, null, () => mountNodes(program(app.api), target, null, { instance: app, place: { path: '', keys: '' } })));
 	// Content sizes measured before a web font loads are re-measured with it.
 	document.fonts?.addEventListener('loadingdone', resizeLater);
 	return () => {

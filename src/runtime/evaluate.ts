@@ -40,3 +40,34 @@ export function eachList(v: unknown): unknown[] {
 	if (!Array.isArray(v)) throw new Error(`{#each} expects an array, got ${typeof v}`);
 	return v;
 }
+
+const SNIPPET = Symbol('snippet');
+
+/** Marks `fn` as a snippet. */
+export const snippet = <F extends Function>(fn: F): F => Object.assign(fn, { [SNIPPET]: true });
+
+/** What `{@render}` renders: the snippet's nodes, or null for a nullish snippet in `{@render x?.()}`. */
+export function renderable(fn: unknown, optional: boolean, id: string): ((...args: unknown[]) => any) | null {
+	if (fn == null && optional) return null;
+	if (typeof fn !== 'function' || !(SNIPPET in fn)) throw new Error(`{@render} needs a snippet, got ${fn === null ? 'null' : typeof fn} (at ${id})`);
+	return fn as unknown as (...args: unknown[]) => any;
+}
+
+/** What a component tag renders. */
+export function componentOf(value: unknown, tag: string, id: string): Function {
+	if (typeof value !== 'function') throw new Error(`<${tag}> is not a component, got ${value === null ? 'null' : typeof value} (at ${id})`);
+	return value;
+}
+
+/**
+ * Where a node is, for ids: the path of the component instance (or
+ * `{@render}`) it renders in, each part ending in `/`, and the `[key]` of every
+ * `{#each}` item between that and the node.
+ */
+export type Place = { path: string; keys: string };
+
+export const eachPlace = (place: Place, key: unknown): Place => ({ ...place, keys: `${place.keys}[${JSON.stringify(key)}]` });
+/** An instance of `<Tag>` at `id`: `Tag@line:column[keys]/`. */
+export const instancePath = (place: Place, tag: string, id: string) => `${place.path}${tag}@${id}${place.keys}/`;
+/** What a `{@render}` at `id` renders: `line:column[keys]/`. */
+export const renderPlace = (place: Place, id: string): Place => ({ path: `${place.path}${id}${place.keys}/`, keys: '' });

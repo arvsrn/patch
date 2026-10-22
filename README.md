@@ -71,7 +71,7 @@ Or write it as a standalone HTML file (`app.snapshot.html`, or a path you pass):
 patch snapshot html app.pat
 ```
 
-Snapshots render the app from its initial state, without running `$effect`s, so they show exactly that state. You can override any `$state` value:
+Snapshots render the app from its initial state, without running `$effect`s, so they show exactly that state. You can override any `$state` value, including the state of one component instance (`--state 'Row@22:5[42]/expanded=true'`):
 
 ```sh
 patch snapshot html app.pat \
@@ -85,12 +85,13 @@ Since state can be set from outside, an agent can jump straight to the screen it
 
 ### Scope
 
-Patch currently supports single-file apps (one `.pat` file) with:
+Patch currently supports apps made of `.pat` components with:
 
 - TS/JS in `<script>`, with type checking
 - Imports from npm packages and local TS/JS modules
 - `$state`, `$derived`, and `$effect`
-- `{#if}`, `{:else if}`, `{:else}`, and keyed `{#each list as item (item.id)}`
+- Components: `import Card from './Card.pat'`, read-only reactive props from `$props()`, callback props instead of two-way binding, `children` and snippets (`{#snippet}`, `{@render}`), and context (`createContext`, `setContext`, `getContext` from `'patch'`)
+- `{#if}`, `{:else if}`, `{:else}`, and `{#each}`, keyed (`{#each list as item (item.id)}`) or by position
 - `<main>`, `<div>`, `<button>`, `<p>`, `<span>`, `<input>`, and `<textarea>`
 - Portals: `<portal id="overlay" />` and `portal="overlay"` render an element elsewhere without changing where it belongs
 - `onclick={...}`-style event handlers, `bind:value` on inputs, and `bind:this` for the underlying DOM element

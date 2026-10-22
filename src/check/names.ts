@@ -1,7 +1,8 @@
 // App-wide names: portal ids. A name links two places in the app that may be
-// far apart, so these checks see the whole app at once:
-// names that cannot resolve, declarations that can be rendered twice at the
-// same time, and an element that would render into itself.
+// far apart, in different components. Within one file these checks find
+// declarations that can be rendered twice at the same time and an element
+// that would render into itself. Whether a used portal exists depends on
+// which components render the file, so that is checked at runtime.
 
 import { literal, NOT_STATIC } from '../ast';
 import type { Reporter, Span } from '../diagnostics';
@@ -38,7 +39,6 @@ function duplicates(declarations: Declaration[], describe: (name: string) => str
 
 export function checkNames(template: TemplateNode[], reporter: Reporter) {
 	const portals: Declaration[] = [];
-	const portalUses: { name: string; span: Span }[] = [];
 
 	// `into`: static portal names of the enclosing elements.
 	const walk = (nodes: TemplateNode[], site: Site, into: string[]) => {
@@ -53,21 +53,18 @@ export function checkNames(template: TemplateNode[], reporter: Reporter) {
 					if (a.type !== 'attribute' || a.name !== 'portal') continue;
 					const name = staticValue(a.value);
 					if (name === true || name === '') reporter.report(a.nameSpan, 'portal needs a name: portal="name"');
-					else if (name !== null) {
-						portalUses.push({ name, span: a.span });
-						inner = [...into, name];
-					}
+					else if (name !== null) inner = [...into, name];
 				}
 				if (node.kind === 'frame') walk(node.children, site, inner);
 			} else if (node.type === 'if') {
 				node.branches.forEach((b, i) => walk(b.body, { repeated: false, branches: [...site.branches, [node, i]] }, into));
 				if (node.otherwise) walk(node.otherwise, { repeated: false, branches: [...site.branches, [node, node.branches.length]] }, into);
 			} else if (node.type === 'each') walk(node.body, { ...site, repeated: true }, into);
+			else if (node.type === 'component' && node.children) walk(node.children, site, into);
+			else if (node.type === 'snippet') walk(node.body, site, into);
 		}
 	};
 	walk(template, { branches: [], repeated: false }, []);
 
 	duplicates(portals, (name) => `<portal id="${name}">`, reporter);
-	const declaredPortals = new Set(portals.map((p) => p.name));
-	for (const use of portalUses) if (!declaredPortals.has(use.name)) reporter.report(use.span, `no <portal id="${use.name}"> in the app`);
 }

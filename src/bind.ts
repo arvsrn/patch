@@ -6,9 +6,10 @@
 // Checks and code generation read these; none of them tracks scopes itself.
 
 import { children, isTypeNode, patternNames, rootOf, unwrap, type Estree } from './ast';
-import type { Component, Inline, TemplateNode } from './ir';
+import type { AttributeValue, Component, Inline, TemplateNode } from './ir';
 
-export type SymbolKind = 'state' | 'derived' | 'item' | 'local';
+/** `prop`: declared by `$props()`. `param`: a snippet parameter. Both are read-only. */
+export type SymbolKind = 'state' | 'derived' | 'item' | 'prop' | 'param' | 'local';
 
 /**
  * A value a name is given. `whole`: the name holds `value` itself
@@ -61,6 +62,8 @@ export type Bindings = {
 	/** The reference an identifier node is, if it is one. */
 	reference(node: Estree): Reference | undefined;
 	runeCall(node: Estree): RuneCall | undefined;
+	/** The symbol a top-level name of the script declares. */
+	topLevel(name: string): Symbol | null;
 };
 
 class Scope {
@@ -85,11 +88,12 @@ export function bind(component: Component): Bindings {
 	if (script) {
 		for (const d of script.state) top.declare(d.id.name, 'state');
 		for (const d of script.derived) top.declare(d.id.name, 'derived');
+		for (const d of script.props) top.declare(d.local.name, 'prop');
 		for (const d of script.styles) top.declare(d.id.name, 'local', { style: d.object });
 		binder.hoist(script.body, top);
 		for (const statement of script.body) if (statement.type !== 'ImportDeclaration') binder.visit(statement, top);
 	}
-	binder.template(component.template, new Scope(top));
+	binder.template(component.template, top);
 	binder.link();
 
 	const byNode = new Map(binder.references.map((r) => [r.node, r]));
@@ -99,7 +103,8 @@ export function bind(component: Component): Bindings {
 		memberWrites: binder.memberWrites,
 		runeCalls: binder.runeCalls,
 		reference: (node) => byNode.get(node),
-		runeCall: (node) => calls.get(node)
+		runeCall: (node) => calls.get(node),
+		topLevel: (name) => top.vars.get(name) ?? null
 	};
 }
 
@@ -365,7 +370,10 @@ class Binder {
 		}
 	}
 
-	template(nodes: TemplateNode[], scope: Scope) {
+	/** A node list is a block: the snippets declared in it are visible throughout it, and only there. */
+	template(nodes: TemplateNode[], outer: Scope) {
+		const scope = new Scope(outer);
+		for (const node of nodes) if (node.type === 'snippet') scope.declare(node.name.name, 'local');
 		for (const node of nodes) {
 			if (node.type === 'text') this.inline(node.content, scope);
 			else if (node.type === 'element') {
@@ -384,10 +392,7 @@ class Binder {
 							symbol.reassigned = true;
 						}
 					}
-					else if (a.value !== true) {
-						if ('expression' in a.value) this.visit(a.value.expression, scope);
-						else for (const part of a.value.parts) if (typeof part !== 'string') this.visit(part, scope);
-					}
+					else this.attributeValue(a.value, scope);
 				}
 				if (node.kind === 'frame') this.template(node.children, scope);
 				if (node.kind === 'text') this.inline(node.content, scope);
@@ -404,8 +409,25 @@ class Binder {
 				if (node.index) inner.declare(node.index, 'item');
 				this.visit(node.key, inner);
 				this.template(node.body, inner);
+			} else if (node.type === 'component') {
+				this.reference(node.name, scope, 'read');
+				for (const p of node.props) this.attributeValue(p.value, scope);
+				if (node.children) this.template(node.children, scope);
+			} else if (node.type === 'snippet') {
+				const inner = new Scope(scope);
+				for (const param of node.params) inner.declare(param.name, 'param');
+				this.template(node.body, inner);
+			} else if (node.type === 'render') {
+				this.visit(node.callee, scope);
+				for (const arg of node.args) this.visit(arg, scope);
 			}
 		}
+	}
+
+	private attributeValue(value: AttributeValue, scope: Scope) {
+		if (value === true) return;
+		if ('expression' in value) this.visit(value.expression, scope);
+		else for (const part of value.parts) if (typeof part !== 'string') this.visit(part, scope);
 	}
 
 	private inline(content: Inline[], scope: Scope) {
