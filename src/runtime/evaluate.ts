@@ -59,15 +59,3 @@ export function componentOf(value: unknown, tag: string, id: string): Function {
 	return value;
 }
 
-/**
- * Where a node is, for ids: the path of the component instance (or
- * `{@render}`) it renders in, each part ending in `/`, and the `[key]` of every
- * `{#each}` item between that and the node.
- */
-export type Place = { path: string; keys: string };
-
-export const eachPlace = (place: Place, key: unknown): Place => ({ ...place, keys: `${place.keys}[${JSON.stringify(key)}]` });
-/** An instance of `<Tag>` at `id`: `Tag@line:column[keys]/`. */
-export const instancePath = (place: Place, tag: string, id: string) => `${place.path}${tag}@${id}${place.keys}/`;
-/** What a `{@render}` at `id` renders: `line:column[keys]/`. */
-export const renderPlace = (place: Place, id: string): Place => ({ path: `${place.path}${id}${place.keys}/`, keys: '' });

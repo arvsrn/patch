@@ -3,6 +3,7 @@
 // prefixes its state ids), its props and its context. Everything else
 // (overrides, held effects, the reactive graph) is shared by the whole app.
 
+import { stateId } from '../schema/path';
 import type { Getter, RuntimeApi } from '../schema/program';
 import { normalizeStyle } from '../schema/style';
 import { createContext } from './context';
@@ -44,7 +45,10 @@ export function createApi(r: Reactive, { overrides = {}, design = false }: ApiOp
 		const contexts = new Map<object, unknown>();
 		const self: Instance = { parent, contexts, api: null! };
 		self.api = {
-			state: (id, initial) => r.cell(has(overrides, path + id) ? overrides[path + id] : initial?.()),
+			state: (name, initial) => {
+				const id = stateId(path, name);
+				return r.cell(has(overrides, id) ? overrides[id] : initial?.());
+			},
 			derived: r.derived,
 			effect,
 			style: normalizeStyle,

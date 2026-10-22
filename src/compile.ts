@@ -20,6 +20,7 @@ import { TemplateEmitter } from './emit/template';
 import { elements, fragments, type Component, type StateInfo, type Tag, type TemplateNode } from './ir';
 import { lower } from './lower';
 import { parse } from './parse';
+import { location } from './schema/path';
 import { collectStyles, type Styles } from './styles';
 import { globalNames, typecheck, type TemplateWrite } from './typecheck';
 
@@ -156,7 +157,7 @@ export function compile(source: string, filename = 'app.pat'): Compiled {
 	const script = emitScript(component, bindings, source, edits);
 	const position = (offset: number) => {
 		const { line, column } = reporter.position(offset);
-		return `${line}:${column}`;
+		return location(line, column);
 	};
 	const template = new TemplateEmitter(
 		edits,

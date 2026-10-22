@@ -7,7 +7,8 @@ import type { ComponentNode, ElementNode, InlinePart, Program, ProgramNode, Rend
 import { effectiveSizing, LINE_HEIGHT, ROOT_FONT, SHORTHANDS, sizingOf, type ElementKind, type Sizing, type Style } from '../schema/style';
 import { createApi, type ApiOptions, type Instance } from './api';
 import { createAnchoring, type AnchorSpec } from './anchoring';
-import { componentOf, eachList, eachPlace, elementStyle, instancePath, portalName, renderable, renderPlace, toText, withId, type Place } from './evaluate';
+import { eachPlace, instancePlace, renderPlace, ROOT_PLACE, type Place } from '../schema/path';
+import { componentOf, eachList, elementStyle, portalName, renderable, toText, withId } from './evaluate';
 import { createPortals } from './portals';
 import { createReactive, type Cell, type Owner } from './reactive';
 
@@ -409,10 +410,10 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 			() => withId(d.id, d.component),
 			(value, end) => {
 				const component = componentOf(value, d.tag, d.id) as Program;
-				const path = instancePath(scope.place, d.tag, d.id);
+				const place = instancePlace(scope.place, d.tag, d.id);
 				const props = Object.fromEntries(Object.entries(d.props).map(([name, get]) => [name, () => withId(d.id, get)]));
-				const child = instance(scope.instance, path, props);
-				mountNodes(withId(d.id, () => component(child.api)), parent, end, { instance: child, place: { path, keys: '' } });
+				const child = instance(scope.instance, place.path, props);
+				mountNodes(withId(d.id, () => component(child.api)), parent, end, { instance: child, place });
 			}
 		);
 
@@ -491,7 +492,7 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 	target.setAttribute('data-p', 'frame');
 	target.setAttribute('data-dir', 'column');
 	target.setAttribute('data-host', '');
-	batch(() => within(root, null, () => mountNodes(program(app.api), target, null, { instance: app, place: { path: '', keys: '' } })));
+	batch(() => within(root, null, () => mountNodes(program(app.api), target, null, { instance: app, place: ROOT_PLACE })));
 	// Content sizes measured before a web font loads are re-measured with it.
 	document.fonts?.addEventListener('loadingdone', resizeLater);
 	return () => {

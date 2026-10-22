@@ -239,6 +239,11 @@ test('margins become a wrapper frame; what Figma cannot hold is reported', async
 	]);
 });
 
+test('a warning points to where the node is written, whatever its each keys hold', async () => {
+	const { warnings } = await snapshot(`{#each ['a/b'] as k (k)}<p style={{ marginTop: -1 }}>{k}</p>{/each}`, '');
+	expect(warnings).toEqual(['Figma cannot express a negative margin (-1); it is dropped (at 1:52)']);
+});
+
 test('lines break at spaces, with spaces at a break hanging', () => {
 	const style = { family: 'Inter', size: 10, weight: 400, italic: false, letterSpacing: 0, paint: { color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 } };
 	const node = { runs: [{ text: 'aaaa bbbb\ncc', style }], lineHeight: 12, truncate: false } as any;

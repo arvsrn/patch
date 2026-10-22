@@ -9,7 +9,7 @@
 //
 // State of the app itself is named by its variable. State of a component
 // instance is named by the instance's path and the variable (see
-// runtime/evaluate.ts): `Row@12:3["a"]/expanded` is `expanded` in the `<Row>`
+// schema/path.ts): `Row@12:3["a"]/expanded` is `expanded` in the `<Row>`
 // written at 12:3, in the item of the `{#each}` around it keyed "a". The
 // declaring component is found from the last `Tag@line:column` of the path,
 // so its type can be checked without running the app.
@@ -19,6 +19,7 @@ import { compile, type Compiled } from './compile';
 import * as patchModule from './runtime/context';
 import { realize } from './runtime/realize';
 import type { Concrete } from './schema/concrete';
+import { outsideKeys, parseStateId, sitePattern, stateId } from './schema/path';
 import type { Program } from './schema/program';
 import { checkValues } from './typecheck';
 
@@ -33,45 +34,14 @@ function appFiles(root: Compiled): Map<string, Compiled> {
 	return files;
 }
 
-/** `Tag@line:column` followed by `[json]` each keys. */
-const COMPONENT_SEGMENT = /^([A-Za-z_$][\w$]*)@(\d+:\d+)((?:\[.*\])*)$/;
-const RENDER_SEGMENT = /^\d+:\d+((?:\[.*\])*)$/;
-
-/** The offsets in `text` of `char` outside `[…]` keys (and their JSON strings), and whether the brackets balance there. */
-function outsideKeys(text: string, char: string): { at: number[]; balanced: boolean } {
-	const at: number[] = [];
-	let depth = 0;
-	let string = false;
-	for (let i = 0; i < text.length; i++) {
-		const c = text[i];
-		if (string) {
-			if (c === '\\') i++;
-			else if (c === '"') string = false;
-		} else if (c === '"') string = depth > 0;
-		else if (c === '[') depth++;
-		else if (c === ']') depth--;
-		else if (c === char && depth === 0) at.push(i);
-	}
-	return { at, balanced: depth === 0 && !string };
-}
-
-/** Splits a state id at the `/`s outside `[…]` keys. Null when brackets do not balance. */
-function segments(id: string): string[] | null {
-	const { at, balanced } = outsideKeys(id, '/');
-	if (!balanced) return null;
-	return [-1, ...at].map((start, i) => id.slice(start + 1, at[i] ?? id.length));
-}
-
 /** The file declaring the state `id` names, and its variable; null if no component in the app declares it there. */
 function resolveState(files: Map<string, Compiled>, root: Compiled, id: string): { file: Compiled; name: string } | null {
-	const parts = segments(id);
-	if (!parts) return null;
-	const name = parts.pop()!;
-	if (!parts.length) return root.state.some((s) => s.id === name) ? { file: root, name } : null;
-	if (!parts.every((p) => COMPONENT_SEGMENT.test(p) || RENDER_SEGMENT.test(p))) return null;
-	const last = COMPONENT_SEGMENT.exec(parts[parts.length - 1]);
-	if (!last) return null;
-	const [, tag, at] = last;
+	const parsed = parseStateId(id);
+	if (!parsed) return null;
+	const { steps, name } = parsed;
+	if (!steps.length) return root.state.some((s) => s.id === name) ? { file: root, name } : null;
+	const { tag, at } = steps[steps.length - 1];
+	if (!tag) return null;
 	for (const file of files.values())
 		for (const site of file.components) {
 			const target = files.get(site.path)!;
@@ -85,8 +55,7 @@ function available(files: Map<string, Compiled>, root: Compiled): string[] {
 	const out = root.state.map((s) => s.id);
 	for (const file of files.values())
 		for (const site of file.components)
-			for (const s of files.get(site.path)!.state)
-				out.push(`${file === root ? '' : '…/'}${site.tag}@${site.id}${site.repeated ? '[<key>]' : ''}/${s.id}`);
+			for (const s of files.get(site.path)!.state) out.push(`${file === root ? '' : '…/'}${stateId(sitePattern(site.tag, site.id, site.repeated), s.id)}`);
 	return out;
 }
 

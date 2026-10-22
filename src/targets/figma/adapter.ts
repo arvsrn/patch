@@ -9,6 +9,7 @@
 
 import type { Concrete, Font, Run } from '../../schema/concrete';
 import { anchored, type Anchored } from '../../schema/anchor';
+import { ownLocation } from '../../schema/path';
 import { effectiveSizing, LINE_HEIGHT } from '../../schema/style';
 import type { DerivedText } from './glyphs';
 import { transformText } from './text';
@@ -138,8 +139,7 @@ class Converter {
 	warnings: string[] = [];
 
 	private warn(id: string, message: string) {
-		// The node's own `line:column`, without its instance path and each keys.
-		this.warnings.push(`${message} (at ${id.slice(id.lastIndexOf('/') + 1).replace(/\[.*$/, '')})`);
+		this.warnings.push(`${message} (at ${ownLocation(id)})`);
 	}
 
 	private layer(n: Concrete, name: string): Layer {

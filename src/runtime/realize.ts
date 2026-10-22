@@ -12,16 +12,16 @@
 // evaluations share the component instances (by path), so their scripts run
 // once and their state is the one the stand-ins were written into.
 //
-// Concrete ids are the instance path, the node id and the `[key]` of each
-// enclosing `{#each}` item: `Row@12:3["a"]/4:5[0]`. In the app itself the path
-// is empty, so ids there are `4:5[0]`.
+// Concrete ids are node ids (see schema/path.ts): `Row@12:3["a"]/4:5[0]`, or
+// `4:5[0]` in the app itself.
 
 import { DESIGN_NODE, isDesignNode, type DesignNode } from '../schema/anchor';
 import type { Concrete, Font, Run } from '../schema/concrete';
 import type { ElementNode, Getter, InlinePart, Program, ProgramNode } from '../schema/program';
 import { inheritFont, ROOT_FONT } from '../schema/style';
 import { createApi, type Instance } from './api';
-import { componentOf, eachList, eachPlace, elementStyle, instancePath, portalName, renderable, renderPlace, toText, withId, type Place } from './evaluate';
+import { eachPlace, instancePlace, nodeId, renderPlace, ROOT_PLACE, type Place } from '../schema/path';
+import { componentOf, eachList, elementStyle, portalName, renderable, toText, withId } from './evaluate';
 import { createReactive } from './reactive';
 
 function inlineRuns(parts: InlinePart[], font: Font, runs: Run[], scope: string): Run[] {
@@ -57,7 +57,7 @@ class Realizer {
 	nodes(nodes: ProgramNode[], scope: Scope, font: Font): Concrete[] {
 		const out: Concrete[] = [];
 		for (const d of nodes) {
-			const id = scope.place.path + d.id + scope.place.keys;
+			const id = nodeId(scope.place, d.id);
 			if (d.t === 'text') {
 				out.push({ type: 'text', id, tag: null, style: {}, font, runs: inlineRuns(d.parts, font, [], d.id) });
 			} else if (d.t === 'el') {
@@ -84,14 +84,14 @@ class Realizer {
 				});
 			} else if (d.t === 'component') {
 				const component = withId(d.id, () => componentOf(d.component(), d.tag, d.id)) as Program;
-				const path = instancePath(scope.place, d.tag, d.id);
-				let entry = this.instances.get(path);
+				const place = instancePlace(scope.place, d.tag, d.id);
+				let entry = this.instances.get(place.path);
 				if (entry?.component !== component) {
 					const props = Object.fromEntries(Object.entries(d.props).map(([name, get]) => [name, () => withId(d.id, get)]));
-					const instance = this.makeInstance(scope.instance, path, props);
-					this.instances.set(path, (entry = { component, instance, nodes: withId(d.id, () => component(instance.api)) }));
+					const instance = this.makeInstance(scope.instance, place.path, props);
+					this.instances.set(place.path, (entry = { component, instance, nodes: withId(d.id, () => component(instance.api)) }));
 				}
-				out.push(...this.nodes(entry.nodes, { instance: entry.instance, place: { path, keys: '' } }, font));
+				out.push(...this.nodes(entry.nodes, { instance: entry.instance, place }, font));
 			} else if (d.t === 'render') {
 				const fn = withId(d.id, () => renderable(d.snippet(), d.optional, d.id));
 				if (fn) {
@@ -183,7 +183,7 @@ export function realize(program: Program, overrides: Record<string, unknown> = {
 	const instances: Instances = new Map();
 	const evaluate = () => {
 		const realizer = new Realizer(handles, instances, instance);
-		return realizer.finish(realizer.nodes(nodes, { instance: root, place: { path: '', keys: '' } }, ROOT_FONT));
+		return realizer.finish(realizer.nodes(nodes, { instance: root, place: ROOT_PLACE }, ROOT_FONT));
 	};
 	evaluate();
 	const tree = evaluate();
