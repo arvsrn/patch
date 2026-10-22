@@ -2,7 +2,28 @@
 // the way `white-space: pre-wrap` breaks them, at spaces, with spaces at a
 // break hanging past the edge. Unwrapped text breaks only at newlines.
 
+import type { Font } from '../../schema/concrete';
 import type { FigmaText, TextStyle } from './adapter';
+
+const IN_WORD = /[\p{L}\p{N}\p{M}'’]/u;
+
+/**
+ * Text as `text-transform` shows it; `before` is the text preceding it, for
+ * where words start. A character whose case mapping changes its length (ß →
+ * SS) is kept, so every character keeps its offset.
+ */
+export function transformText(text: string, transform: Font['textTransform'], before = ''): string {
+	if (transform === 'none') return text;
+	let previous = [...before].pop() ?? '';
+	let out = '';
+	for (const ch of text) {
+		const upper = transform === 'uppercase' || (transform === 'capitalize' && !IN_WORD.test(previous));
+		const next = upper ? ch.toUpperCase() : transform === 'lowercase' ? ch.toLowerCase() : ch;
+		out += next.length === ch.length ? next : ch;
+		previous = ch;
+	}
+	return out;
+}
 
 export type FontKey = Pick<TextStyle, 'family' | 'size' | 'weight' | 'italic'>;
 /** Advance width of `text` on one line, without letter spacing. */

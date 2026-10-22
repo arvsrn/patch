@@ -14,6 +14,8 @@ export type Font = {
 	letterSpacing: number;
 	color: string;
 	textAlign: 'start' | 'center' | 'end';
+	textDecoration: 'none' | 'underline' | 'line-through';
+	textTransform: 'none' | 'uppercase' | 'lowercase' | 'capitalize';
 };
 
 export type Run = { text: string; font: Font };

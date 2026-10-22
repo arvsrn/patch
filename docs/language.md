@@ -530,6 +530,10 @@ A shadow's `x`, `y`, and `spread` are *num*, `blur` is *px*, `color` is *color*,
 | `lineHeight` | *px* > 0 (pixels, **not** a multiplier: `1.5` means 1.5px) | 1.2 × `fontSize` |
 | `letterSpacing` | *num* | `0` |
 | `textAlign` | `'start'`, `'center'`, `'end'` (not allowed on inline spans) | `'start'` |
+| `textDecoration` | `'none'`, `'underline'`, `'line-through'` | `'none'` |
+| `textTransform` | `'none'`, `'uppercase'`, `'lowercase'`, `'capitalize'` | `'none'` |
+
+`textDecoration` is inherited like the rest of typography, so unlike in CSS, a nested span can remove a decoration with `textDecoration: 'none'`. The line takes the color of the text it decorates. `textTransform` changes how text is shown, not the text itself: `bind:value` and the characters of a Figma layer keep their original case. `'capitalize'` uppercases the first letter of each word.
 
 ### Interaction
 
@@ -694,7 +698,7 @@ Top-level nodes are laid out as a column inside a viewport-sized host:
 
 ## Typography and inheritance
 
-The typography properties (`color`, `fontFamily`, `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`, `letterSpacing`, `textAlign`) inherit from parent to child through every element kind, including inputs and inline spans. No other property inherits, except the [interaction properties](#interaction) that inherit in CSS.
+The typography properties (`color`, `fontFamily`, `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`, `letterSpacing`, `textAlign`, `textDecoration`, `textTransform`) inherit from parent to child through every element kind, including inputs and inline spans. No other property inherits, except the [interaction properties](#interaction) that inherit in CSS.
 
 ```svelte
 <div style={{ color: '#71717a', fontSize: 14 }}>
@@ -703,7 +707,7 @@ The typography properties (`color`, `fontFamily`, `fontSize`, `fontWeight`, `fon
 </div>
 ```
 
-- The root defaults are Inter, 16px, weight 400, normal style, line height 1.2 × font size, letter spacing 0, color `#000000`, and `start` alignment.
+- The root defaults are Inter, 16px, weight 400, normal style, line height 1.2 × font size, letter spacing 0, color `#000000`, `start` alignment, no decoration, and no transform.
 - An explicit `lineHeight` is inherited as a fixed pixel value.
 - Input placeholders use the current text color at 50% opacity.
 - Browser outputs load Inter from Google Fonts, which needs network access. Any other `fontFamily` must be installed on the machine that views the app. Figma snapshots measure text with locally installed font files, and fall back to a substitute font with a warning.
@@ -754,6 +758,8 @@ The Figma target approximates what Figma cannot express, and prints a warning ea
 - negative margins are dropped
 - auto margins on absolute elements are dropped
 - a hugging-width text with a set height is given a fixed width
+
+Without a warning, a snapshot also keeps a character whose uppercase or lowercase form is longer as it is: `textTransform: 'uppercase'` shows `ß` as `SS` in the browser but as `ß` in Figma until the layer is edited.
 
 ## Unsupported constructs
 

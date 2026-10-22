@@ -26,7 +26,9 @@ const DEFAULT_FONT: Font = {
 	lineHeight: null,
 	letterSpacing: 0,
 	color: '#000000',
-	textAlign: 'start'
+	textAlign: 'start',
+	textDecoration: 'none',
+	textTransform: 'none'
 };
 
 const inheritFont = (font: Font, st: Style): Font => {

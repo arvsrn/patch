@@ -13,7 +13,7 @@ import { createReactive, type Cell, type Owner } from './reactive';
 
 const BASE_CSS = `
 html,body{margin:0;padding:0}
-[data-p]{box-sizing:border-box;margin:0;padding:0;border:0;outline:0;min-width:0;min-height:0;flex:0 0 auto;font:inherit;color:inherit;letter-spacing:inherit;text-align:inherit;background:none;border-radius:0;appearance:none;-webkit-appearance:none;position:relative}
+[data-p]{box-sizing:border-box;margin:0;padding:0;border:0;outline:0;min-width:0;min-height:0;flex:0 0 auto;font:inherit;color:inherit;letter-spacing:inherit;text-align:inherit;text-transform:inherit;background:none;border-radius:0;appearance:none;-webkit-appearance:none;position:relative}
 [data-p=frame]{display:flex;flex-direction:column;align-items:flex-start;align-content:flex-start}
 [data-dir=row]{flex-direction:row}
 [data-p=input],[data-p=textarea]{display:block;resize:none;overflow:hidden}
@@ -23,6 +23,8 @@ html,body{margin:0;padding:0}
 [data-p=text]{display:block;white-space:pre}
 [data-p=text][data-w=fixed],[data-p=text][data-w=fill]{white-space:pre-wrap}
 [data-p=inline]{display:inline}
+[data-p=text],[data-p=inline],[data-p=input],[data-p=textarea],[data-run]{text-decoration-line:var(--decoration,none)}
+[data-mixed]{text-decoration-line:none}
 [data-anchored][data-w=hug]{width:max-content}
 [data-dir=row]>[data-w=fill],[data-dir=column]>[data-h=fill]{flex:1 1 0}
 [data-dir=row]>[data-h=fill],[data-dir=column]>[data-w=fill]{align-self:stretch!important}
@@ -80,6 +82,9 @@ function toCss(kind: ElementKind, st: Style) {
 	if (st.fontWeight) css['font-weight'] = String(st.fontWeight);
 	if (st.fontStyle) css['font-style'] = st.fontStyle;
 	if (st.textAlign) css['text-align'] = st.textAlign;
+	if (st.textTransform) css['text-transform'] = st.textTransform;
+	// Inherited as a value and drawn by the elements holding the text (see `mountInline`).
+	if (st.textDecoration) css['--decoration'] = st.textDecoration;
 	return { css, data };
 }
 
@@ -128,7 +133,7 @@ function sizeControl(el: HTMLInputElement | HTMLTextAreaElement, width: boolean,
 		mirror.setAttribute('aria-hidden', 'true');
 	}
 	if (!mirror.isConnected) document.body.appendChild(mirror);
-	mirror.style.cssText = `position:absolute;left:-99999px;top:0;visibility:hidden;margin:0;padding:0;border:0;font-family:${cs.fontFamily};font-size:${cs.fontSize};font-weight:${cs.fontWeight};font-style:${cs.fontStyle};font-feature-settings:${cs.fontFeatureSettings};letter-spacing:${cs.letterSpacing};line-height:${cs.lineHeight};white-space:pre`;
+	mirror.style.cssText = `position:absolute;left:-99999px;top:0;visibility:hidden;margin:0;padding:0;border:0;font-family:${cs.fontFamily};font-size:${cs.fontSize};font-weight:${cs.fontWeight};font-style:${cs.fontStyle};font-feature-settings:${cs.fontFeatureSettings};letter-spacing:${cs.letterSpacing};line-height:${cs.lineHeight};text-transform:${cs.textTransform};white-space:pre`;
 	mirror.textContent = shown;
 	if (width) el.style.setProperty('--hug-w', `${mirror.getBoundingClientRect().width + px(cs.paddingLeft) + px(cs.paddingRight)}px`);
 	if (height) {
@@ -261,9 +266,23 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 		return el;
 	};
 
-	const mountInline = (parts: InlinePart[], parent: Node) => {
+	/**
+	 * A CSS text decoration also draws across the element's descendants and
+	 * cannot be removed by them, but a decoration is inherited typography that
+	 * a nested span can override. So text holding spans does not decorate
+	 * itself: its own text goes in `data-run` spans, which do.
+	 */
+	const mountInline = (parts: InlinePart[], parent: Element) => {
+		const mixed = parts.some((part) => typeof part === 'object');
+		if (mixed) parent.setAttribute('data-mixed', '');
+		const holder = () => {
+			if (!mixed) return parent;
+			const run = document.createElement('span');
+			run.setAttribute('data-run', '');
+			return parent.appendChild(run);
+		};
 		for (const part of parts) {
-			if (typeof part === 'string') parent.appendChild(document.createTextNode(part));
+			if (typeof part === 'string') holder().appendChild(document.createTextNode(part));
 			else if (typeof part === 'function') {
 				const node = document.createTextNode('');
 				effect(() => {
@@ -271,7 +290,7 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 					// New text can move boxes without resizing an anchor.
 					placeLater();
 				});
-				parent.appendChild(node);
+				holder().appendChild(node);
 			} else {
 				const span = element(part, 'span', 'inline');
 				mountInline(part.kids, span);

@@ -28,6 +28,8 @@ enum TextAlignHorizontal { LEFT = 0; CENTER = 1; RIGHT = 2; }
 enum TextAlignVertical { TOP = 0; CENTER = 1; }
 enum TextAutoResize { NONE = 0; WIDTH_AND_HEIGHT = 1; HEIGHT = 2; }
 enum TextTruncation { DISABLED = 0; ENDING = 1; }
+enum TextCase { ORIGINAL = 0; UPPER = 1; LOWER = 2; TITLE = 3; }
+enum TextDecoration { NONE = 0; UNDERLINE = 1; STRIKETHROUGH = 2; }
 enum NumberUnits { RAW = 0; PIXELS = 1; PERCENT = 2; }
 enum FontStyle { NORMAL = 0; ITALIC = 1; }
 enum Directionality { LTR = 0; }
@@ -37,6 +39,7 @@ struct ParentIndex { GUID guid; string position; }
 struct Vector { float x; float y; }
 struct Matrix { float m00; float m01; float m02; float m10; float m11; float m12; }
 struct Color { float r; float g; float b; float a; }
+struct Rect { float x; float y; float w; float h; }
 struct Number { float value; NumberUnits units; }
 struct FontName { string family; string style; string postscript; }
 struct Blob { byte[] bytes; }
@@ -81,6 +84,11 @@ message Baseline {
 	float lineAscent = 7;
 }
 
+message Decoration {
+	Rect[] rects = 1;
+	uint styleID = 2;
+}
+
 message FontMetaData {
 	FontName key = 1;
 	float fontLineHeight = 2;
@@ -96,6 +104,7 @@ message DerivedTextData {
 	Vector layoutSize = 1;
 	Baseline[] baselines = 2;
 	Glyph[] glyphs = 3;
+	Decoration[] decorations = 4;
 	FontMetaData[] fontMetaData = 6;
 	int truncationStartIndex = 8;
 	float truncatedHeight = 9;
@@ -127,6 +136,8 @@ message NodeChange {
 	StrokeJoin strokeJoin = 31;
 	TextAlignHorizontal textAlignHorizontal = 32;
 	TextAlignVertical textAlignVertical = 33;
+	TextCase textCase = 34;
+	TextDecoration textDecoration = 35;
 	ConstraintType verticalConstraint = 37;
 	Paint[] fillPaints = 38;
 	Paint[] strokePaints = 39;

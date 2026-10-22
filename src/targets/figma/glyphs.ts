@@ -8,6 +8,7 @@
 // 2 line, 4 cubic) each followed by little-endian float32 points, in ems with
 // y pointing up as in the font; Figma flips them when it draws. A glyph's
 // position is its origin on the baseline, in the layer's coordinates.
+// Underlines and strikethroughs are rects at the positions the font gives.
 
 import type * as fontkit from 'fontkit';
 import type { FigmaFrame, FigmaNode, FigmaText, TextStyle } from './adapter';
@@ -21,6 +22,7 @@ export type DerivedText = {
 	/** Per UTF-16 character: its x offset from the start of its line. */
 	offsets: number[];
 	fonts: { style: TextStyle; lineHeight: number }[];
+	decorations: { x: number; y: number; w: number; h: number; style: TextStyle }[];
 	truncationStart: number;
 	truncatedHeight: number;
 };
@@ -73,6 +75,16 @@ export function deriveTexts(root: FigmaFrame, fonts: Fonts): Uint8Array[] {
 		return blobIndex.get(key)!;
 	};
 
+	/** A decoration's top and thickness for a style, relative to the baseline (y down), in pixels. */
+	const decorationLine = (font: fontkit.Font, s: TextStyle) => {
+		const em = font.unitsPerEm;
+		const scale = s.size / em;
+		const thickness = font.underlineThickness || em / 20;
+		if (s.decoration === 'UNDERLINE') return { top: -(font.underlinePosition || -em / 10) * scale, height: thickness * scale };
+		const os2 = font['OS/2'] as any;
+		return { top: -(os2?.yStrikeoutPosition || em / 4) * scale, height: (os2?.yStrikeoutSize || thickness) * scale };
+	};
+
 	const derive = (node: FigmaText): DerivedText | null => {
 		const styles = node.runs.length ? node.runs.map((r) => r.style) : [node.base];
 		const sized = new Map(styles.map((s) => [s, fonts.fontFor(s)]));
@@ -92,6 +104,7 @@ export function deriveTexts(root: FigmaFrame, fonts: Fonts): Uint8Array[] {
 			baselines: [],
 			offsets: new Array(length).fill(0),
 			fonts: [],
+			decorations: [],
 			truncationStart: -1,
 			truncatedHeight: -1
 		};
@@ -124,6 +137,15 @@ export function deriveTexts(root: FigmaFrame, fonts: Fonts): Uint8Array[] {
 			let truncated = false;
 			for (const piece of line.pieces) {
 				const { font, id } = fontOf(piece.style);
+				// Hanging spaces past the line's width are not decorated.
+				const end = Math.min(piece.x + piece.width, line.width, limit);
+				if (piece.style.decoration !== 'NONE' && end > piece.x) {
+					const { top, height } = decorationLine(font, piece.style);
+					const rect = { x: left + piece.x, y: baseline + top, w: end - piece.x, h: height, style: piece.style };
+					const last = derived.decorations[derived.decorations.length - 1];
+					if (last && last.style === rect.style && last.y === rect.y && Math.abs(last.x + last.w - rect.x) < 0.01) last.w = rect.x + rect.w - last.x;
+					else derived.decorations.push(rect);
+				}
 				const scale = piece.style.size / font.unitsPerEm;
 				const run = font.layout(piece.text);
 				let x = piece.x;

@@ -153,6 +153,16 @@ test('text keeps its typography, sizing mode and spans', async () => {
 	expect(fixed).toMatchObject({ textAutoResize: 'NONE', size: { x: 60, y: 40 } });
 });
 
+test('decoration and case are inherited typography that spans override; characters keep their case', async () => {
+	const { nodes } = await snapshot(`<div style={{ textDecoration: 'underline', textTransform: 'uppercase' }}><p>ab <span style={{ textDecoration: 'none' }}>cd</span></p></div>`);
+	const text = nodes.find((n) => n.type === 'TEXT');
+	expect(text).toMatchObject({
+		textDecoration: 'UNDERLINE',
+		textCase: 'UPPER',
+		textData: { characters: 'ab cd', characterStyleIDs: [0, 0, 0, 1, 1], styleOverrideTable: [{ styleID: 1, textDecoration: 'NONE' }] }
+	});
+});
+
 test('inputs become frames holding their value or placeholder', async () => {
 	const { find, children } = await snapshot(
 		`<input style={{ width: 120, padding: [8, 12], borderWidth: 1, borderRadius: 8, fontSize: 10, lineHeight: 20 }} placeholder="Type" />

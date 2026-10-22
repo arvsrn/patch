@@ -11,6 +11,7 @@ import type { Concrete, Font, Run } from '../../schema/concrete';
 import { anchorOptions, type AnchorOptions } from '../../schema/anchor';
 import { effectiveSizing, type Style } from '../../schema/style';
 import type { DerivedText } from './glyphs';
+import { transformText } from './text';
 
 export type Sizing = { kind: 'FIXED'; value: number } | { kind: 'HUG' } | { kind: 'FILL' };
 export type Color = { r: number; g: number; b: number; a: number };
@@ -60,12 +61,24 @@ export type FigmaFrame = Layer & {
 	children: FigmaNode[];
 };
 
-export type TextStyle = { family: string; size: number; weight: number; italic: boolean; letterSpacing: number; paint: Paint };
+export type TextStyle = {
+	family: string;
+	size: number;
+	weight: number;
+	italic: boolean;
+	letterSpacing: number;
+	paint: Paint;
+	decoration: 'NONE' | 'UNDERLINE' | 'STRIKETHROUGH';
+	textCase: 'ORIGINAL' | 'UPPER' | 'LOWER' | 'TITLE';
+};
 
 export type FigmaText = Layer & {
 	type: 'TEXT';
 	/** Style of the layer; runs that differ become style overrides. */
 	base: TextStyle;
+	/** What the layer holds. */
+	characters: string;
+	/** The text as shown (after `textTransform`, offsets unchanged), by style. */
 	runs: { text: string; style: TextStyle }[];
 	lineHeight: number;
 	textAlign: 'LEFT' | 'CENTER' | 'RIGHT';
@@ -101,6 +114,8 @@ const sizing = (value: unknown): Sizing => (typeof value === 'number' ? { kind: 
 const KIND = { FIXED: 'fixed', HUG: 'hug', FILL: 'fill' } as const;
 const ALIGN: Record<string, Align> = { start: 'MIN', center: 'CENTER', end: 'MAX' };
 const TEXT_ALIGN = { start: 'LEFT', center: 'CENTER', end: 'RIGHT' } as const;
+const DECORATION = { none: 'NONE', underline: 'UNDERLINE', 'line-through': 'STRIKETHROUGH' } as const;
+const TEXT_CASE = { none: 'ORIGINAL', uppercase: 'UPPER', lowercase: 'LOWER', capitalize: 'TITLE' } as const;
 
 const textStyle = (font: Font, opacity = 1): TextStyle => ({
 	family: font.fontFamily,
@@ -108,7 +123,9 @@ const textStyle = (font: Font, opacity = 1): TextStyle => ({
 	weight: font.fontWeight,
 	italic: font.fontStyle === 'italic',
 	letterSpacing: font.letterSpacing,
-	paint: paint(font.color, opacity)
+	paint: paint(font.color, opacity),
+	decoration: DECORATION[font.textDecoration],
+	textCase: TEXT_CASE[font.textTransform]
 });
 
 const layerName = (text: string) => {
@@ -176,11 +193,20 @@ class Converter {
 	}
 
 	private text(n: Concrete, name: string, runs: Run[], font: Font, opacity = 1): FigmaText {
-		const styled = runs.filter((r) => r.text).map((r) => ({ text: r.text, style: textStyle(r.font, opacity) }));
+		const characters = runs.map((r) => r.text).join('');
+		let before = '';
+		const styled = runs
+			.filter((r) => r.text)
+			.map((r) => {
+				const text = transformText(r.text, r.font.textTransform, before);
+				before += r.text;
+				return { text, style: textStyle(r.font, opacity) };
+			});
 		return {
 			...this.layer(n, name),
 			type: 'TEXT',
 			base: styled[0]?.style ?? textStyle(font, opacity),
+			characters,
 			runs: styled,
 			lineHeight: Math.max(lineHeightOf(font), ...runs.filter((r) => r.text).map((r) => lineHeightOf(r.font))),
 			textAlign: TEXT_ALIGN[font.textAlign],

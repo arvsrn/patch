@@ -120,7 +120,7 @@ function frameFields(n: FigmaFrame): NodeChange {
 }
 
 function textFields(n: FigmaText): NodeChange {
-	const characters = n.runs.map((r) => r.text).join('');
+	const characters = n.characters;
 	const base = JSON.stringify(n.base);
 	const ids = new Map<string, number>();
 	const overrides: NodeChange[] = [];
@@ -137,6 +137,8 @@ function textFields(n: FigmaText): NodeChange {
 				if (s.size !== n.base.size) override.fontSize = s.size;
 				if (s.letterSpacing !== n.base.letterSpacing) override.letterSpacing = { value: s.letterSpacing, units: 'PIXELS' };
 				if (JSON.stringify(s.paint) !== JSON.stringify(n.base.paint)) override.fillPaints = [solid(s.paint)];
+				if (s.decoration !== n.base.decoration) override.textDecoration = s.decoration;
+				if (s.textCase !== n.base.textCase) override.textCase = s.textCase;
 				overrides.push(override);
 			}
 			id = ids.get(key)!;
@@ -149,6 +151,12 @@ function textFields(n: FigmaText): NodeChange {
 		return key === base ? 0 : (ids.get(key) ?? 0);
 	};
 	const d = n.derived;
+	const decorations = new Map<number, { x: number; y: number; w: number; h: number }[]>();
+	for (const { style, ...rect } of d?.decorations ?? []) {
+		const id = styleID(style);
+		if (!decorations.has(id)) decorations.set(id, []);
+		decorations.get(id)!.push(rect);
+	}
 	return {
 		...(d
 			? {
@@ -171,6 +179,7 @@ function textFields(n: FigmaText): NodeChange {
 							firstCharacter: g.firstCharacter,
 							advance: g.advance
 						})),
+						...(decorations.size ? { decorations: [...decorations].map(([styleID, rects]) => ({ rects, styleID })) } : {}),
 						fontMetaData: d.fonts.map((f) => ({
 							key: fontName(f.style),
 							fontLineHeight: f.lineHeight,
@@ -193,6 +202,8 @@ function textFields(n: FigmaText): NodeChange {
 		textData: overrides.length ? { characters, characterStyleIDs, styleOverrideTable: overrides } : { characters },
 		lineHeight: { value: n.lineHeight, units: 'PIXELS' },
 		letterSpacing: { value: n.base.letterSpacing, units: 'PIXELS' },
+		textDecoration: n.base.decoration,
+		textCase: n.base.textCase,
 		textAlignHorizontal: n.textAlign,
 		textAlignVertical: n.truncate ? 'CENTER' : 'TOP',
 		textAutoResize: autoResize,

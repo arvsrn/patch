@@ -95,6 +95,8 @@ const SPEC: Record<string, [(v: any) => boolean, string]> = {
 	lineHeight: [(v) => isPx(v) && v > 0, 'a pixel number'],
 	letterSpacing: [isNum, 'a pixel number'],
 	textAlign: [oneOf('start', 'center', 'end'), '"start", "center" or "end"'],
+	textDecoration: choice('none', 'underline', 'line-through'),
+	textTransform: choice('none', 'uppercase', 'lowercase', 'capitalize'),
 	cursor: choice(...CURSORS),
 	userSelect: choice('auto', 'none', 'text', 'all'),
 	pointerEvents: choice('auto', 'none'),
@@ -115,7 +117,7 @@ const ANCHORING = ['anchor', 'anchorPosition', 'anchorOffset', 'anchorCrossOffse
 const INTERACTION = ['cursor', 'userSelect', 'pointerEvents'];
 const BOX = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', ...ANCHORING, 'opacity', ...INTERACTION, 'touchAction'];
 /** Typography: inherited from parent to child. */
-export const TYPO = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign'];
+export const TYPO = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign', 'textDecoration', 'textTransform'];
 const PAINT = ['background', 'borderWidth', 'borderColor', 'borderRadius', 'boxShadow', ...SHORTHANDS.padding];
 const FLEX = ['display', 'flexDirection', 'justifyContent', 'alignItems', 'flexWrap', 'gap', ...SHORTHANDS.overflow, 'overscrollBehavior'];
 const ALLOWED: Record<ElementKind, string[]> = {
