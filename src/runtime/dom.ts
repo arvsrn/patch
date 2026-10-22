@@ -4,7 +4,7 @@
 
 import { anchored } from '../schema/anchor';
 import type { ComponentNode, ElementNode, InlinePart, Program, ProgramNode, RenderNode, SpanNode } from '../schema/program';
-import { effectiveSizing, SHORTHANDS, sizingOf, type ElementKind, type Sizing, type Style } from '../schema/style';
+import { effectiveSizing, LINE_HEIGHT, ROOT_FONT, SHORTHANDS, sizingOf, type ElementKind, type Sizing, type Style } from '../schema/style';
 import { createApi, type ApiOptions, type Instance } from './api';
 import { createAnchoring, type AnchorSpec } from './anchoring';
 import { componentOf, eachList, eachPlace, elementStyle, instancePath, portalName, renderable, renderPlace, toText, withId, type Place } from './evaluate';
@@ -30,7 +30,7 @@ html,body{margin:0;padding:0}
 [data-dir=row]>[data-w=fill],[data-dir=column]>[data-h=fill]{flex:1 1 0}
 [data-dir=row]>[data-h=fill],[data-dir=column]>[data-w=fill]{align-self:stretch!important}
 button[data-p]{cursor:pointer}
-[data-host]{width:100vw;height:100vh;overflow:auto;background:#fff;font-family:"Inter";font-size:16px;font-weight:400;font-style:normal;line-height:1.2;letter-spacing:0;color:#000;text-align:start}
+[data-host]{width:100vw;height:100vh;overflow:auto;background:#fff}
 `;
 const FLEX_VALUE: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', 'space-between': 'space-between', baseline: 'baseline' };
 const px = (v: unknown) => (v === 'auto' ? 'auto' : `${v}px`);
@@ -90,6 +90,15 @@ function toCss(kind: ElementKind, st: Style) {
 	if (st.textDecoration) css['--decoration'] = st.textDecoration;
 	return { css, data };
 }
+
+/** The root typography, set on the host for every element to inherit. */
+const HOST_FONT_CSS = (() => {
+	const { lineHeight, ...font } = ROOT_FONT;
+	const { css } = toCss('frame', font);
+	const declarations = Object.entries(css).map(([k, v]) => `${k}:${v}`);
+	declarations.push(`line-height:${lineHeight === null ? LINE_HEIGHT : px(lineHeight)}`);
+	return `[data-host]{${declarations.join(';')}}\n`;
+})();
 
 /**
  * Writes every element's effective sizing (`data-w`/`data-h`) from its
@@ -477,7 +486,7 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 	};
 
 	const sheet = document.createElement('style');
-	sheet.textContent = BASE_CSS;
+	sheet.textContent = BASE_CSS + HOST_FONT_CSS;
 	document.head.appendChild(sheet);
 	target.setAttribute('data-p', 'frame');
 	target.setAttribute('data-dir', 'column');

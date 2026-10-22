@@ -19,29 +19,10 @@
 import { DESIGN_NODE, isDesignNode, type DesignNode } from '../schema/anchor';
 import type { Concrete, Font, Run } from '../schema/concrete';
 import type { ElementNode, Getter, InlinePart, Program, ProgramNode } from '../schema/program';
-import { TYPO, type Style } from '../schema/style';
+import { inheritFont, ROOT_FONT } from '../schema/style';
 import { createApi, type Instance } from './api';
 import { componentOf, eachList, eachPlace, elementStyle, instancePath, portalName, renderable, renderPlace, toText, withId, type Place } from './evaluate';
 import { createReactive } from './reactive';
-
-const DEFAULT_FONT: Font = {
-	fontFamily: 'Inter',
-	fontSize: 16,
-	fontWeight: 400,
-	fontStyle: 'normal',
-	lineHeight: null,
-	letterSpacing: 0,
-	color: '#000000',
-	textAlign: 'start',
-	textDecoration: 'none',
-	textTransform: 'none'
-};
-
-const inheritFont = (font: Font, st: Style): Font => {
-	const next: any = { ...font };
-	for (const key of TYPO) if (st[key] !== undefined) next[key] = st[key];
-	return next;
-};
 
 function inlineRuns(parts: InlinePart[], font: Font, runs: Run[], scope: string): Run[] {
 	for (const part of parts) {
@@ -202,7 +183,7 @@ export function realize(program: Program, overrides: Record<string, unknown> = {
 	const instances: Instances = new Map();
 	const evaluate = () => {
 		const realizer = new Realizer(handles, instances, instance);
-		return realizer.finish(realizer.nodes(nodes, { instance: root, place: { path: '', keys: '' } }, DEFAULT_FONT));
+		return realizer.finish(realizer.nodes(nodes, { instance: root, place: { path: '', keys: '' } }, ROOT_FONT));
 	};
 	evaluate();
 	const tree = evaluate();

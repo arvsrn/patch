@@ -9,7 +9,7 @@
 
 import type { Concrete, Font, Run } from '../../schema/concrete';
 import { anchored, type Anchored } from '../../schema/anchor';
-import { effectiveSizing } from '../../schema/style';
+import { effectiveSizing, LINE_HEIGHT } from '../../schema/style';
 import type { DerivedText } from './glyphs';
 import { transformText } from './text';
 
@@ -97,8 +97,7 @@ export type FigmaNode = FigmaFrame | FigmaText;
 /** The browser viewport a snapshot stands for. */
 export const VIEWPORT = { width: 1280, height: 800 };
 
-/** The browser's `line-height: 1.2` when a text sets none. */
-const lineHeightOf = (font: Font) => font.lineHeight ?? Math.round(font.fontSize * 1.2 * 100) / 100;
+const lineHeightOf = (font: Font) => font.lineHeight ?? Math.round(font.fontSize * LINE_HEIGHT * 100) / 100;
 
 export function parseColor(hex: string): Color {
 	let h = hex.slice(1);

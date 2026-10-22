@@ -141,7 +141,34 @@ const ANCHORING: Longhand[] = ['anchor', 'anchorPosition', 'anchorOffset', 'anch
 const INTERACTION: Longhand[] = ['cursor', 'userSelect', 'pointerEvents'];
 const BOX: Longhand[] = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', ...ANCHORING, 'opacity', ...INTERACTION, 'touchAction'];
 /** Typography: inherited from parent to child. */
-export const TYPO: Longhand[] = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign', 'textDecoration', 'textTransform'];
+export const TYPO = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign', 'textDecoration', 'textTransform'] as const satisfies readonly Longhand[];
+
+/** The typography an element has: its own, else inherited. A `lineHeight` of null is `LINE_HEIGHT` × `fontSize`. */
+export type Font = { [K in (typeof TYPO)[number]]: K extends 'lineHeight' ? number | null : NonNullable<Style[K]> };
+
+/** The line height, as a multiple of the font size, of text that sets none. */
+export const LINE_HEIGHT = 1.2;
+
+/** The typography of the root: what every element inherits unless it or an ancestor sets it. */
+export const ROOT_FONT: Font = {
+	fontFamily: 'Inter',
+	fontSize: 16,
+	fontWeight: 400,
+	fontStyle: 'normal',
+	lineHeight: null,
+	letterSpacing: 0,
+	color: '#000000',
+	textAlign: 'start',
+	textDecoration: 'none',
+	textTransform: 'none'
+};
+
+/** `font` with the typography `st` sets. */
+export const inheritFont = (font: Font, st: Omit<Style, 'anchor'>): Font => {
+	const next: Record<string, unknown> = { ...font };
+	for (const key of TYPO) if (st[key] !== undefined) next[key] = st[key];
+	return next as Font;
+};
 const PAINT: Longhand[] = ['background', 'borderWidth', 'borderColor', 'borderRadius', 'boxShadow', ...SHORTHANDS.padding];
 const FLEX: Longhand[] = ['display', 'flexDirection', 'justifyContent', 'alignItems', 'flexWrap', 'gap', ...SHORTHANDS.overflow, 'overscrollBehavior'];
 const KINDS: Record<ElementKind, Longhand[]> = {

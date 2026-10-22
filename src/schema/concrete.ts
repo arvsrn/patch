@@ -2,7 +2,9 @@
 // fonts inherited. `runtime/realize.ts` produces it; the Figma snapshot
 // target consumes it.
 
-import type { Style } from './style';
+import type { Font, Style } from './style';
+
+export type { Font };
 
 /**
  * An element's resolved style. Its anchor is not a style value here but
@@ -10,19 +12,6 @@ import type { Style } from './style';
  * that element is not rendered. Absent when it is not anchored.
  */
 type Styled = { style: Omit<Style, 'anchor'>; anchor?: string | null };
-
-export type Font = {
-	fontFamily: string;
-	fontSize: number;
-	fontWeight: number;
-	fontStyle: 'normal' | 'italic';
-	lineHeight: number | null;
-	letterSpacing: number;
-	color: string;
-	textAlign: 'start' | 'center' | 'end';
-	textDecoration: 'none' | 'underline' | 'line-through';
-	textTransform: 'none' | 'uppercase' | 'lowercase' | 'capitalize';
-};
 
 export type Run = { text: string; font: Font };
 
