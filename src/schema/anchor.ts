@@ -40,12 +40,29 @@ export type AnchorOptions = {
 	fallbacks: string[] | null;
 };
 
-export const anchorOptions = (st: Style): AnchorOptions => ({
-	position: st.anchorPosition ?? 'bottom',
-	offset: st.anchorOffset ?? 0,
-	crossOffset: st.anchorCrossOffset ?? 0,
-	padding: st.anchorPadding ?? [0, 0, 0, 0],
-	fallbacks: st.anchorFallbacks ?? null
+/** How an anchored element is placed and sized. Each renderer adds the anchor itself, in its own terms. */
+export type Anchored = {
+	options: AnchorOptions;
+	/** `width: 'anchor'`, `height: 'anchor'`. */
+	matchWidth: boolean;
+	matchHeight: boolean;
+	/** `maxWidth: 'available'`, `maxHeight: 'available'`. */
+	availableWidth: boolean;
+	availableHeight: boolean;
+};
+
+export const anchored = (st: Omit<Style, 'anchor'>): Anchored => ({
+	options: {
+		position: st.anchorPosition ?? 'bottom',
+		offset: st.anchorOffset ?? 0,
+		crossOffset: st.anchorCrossOffset ?? 0,
+		padding: st.anchorPadding ?? [0, 0, 0, 0],
+		fallbacks: st.anchorFallbacks ?? null
+	},
+	matchWidth: st.width === 'anchor',
+	matchHeight: st.height === 'anchor',
+	availableWidth: st.maxWidth === 'available',
+	availableHeight: st.maxHeight === 'available'
 });
 
 const OPPOSITE: Record<string, string> = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };

@@ -11,20 +11,11 @@
 // It is hidden while it has no rendered anchor, or while its anchor is
 // scrolled or clipped completely out of view.
 
-import { available, boundary, choosePlacement, intersect, positionAt, type AnchorOptions, type Rect } from '../schema/anchor';
+import { available, boundary, choosePlacement, intersect, positionAt, type Anchored, type Rect } from '../schema/anchor';
 
 export type Anchoring = ReturnType<typeof createAnchoring>;
 
-export type AnchorSpec = {
-	anchor: Element | null;
-	options: AnchorOptions;
-	/** `width: 'anchor'`, `height: 'anchor'`. */
-	matchWidth: boolean;
-	matchHeight: boolean;
-	/** `maxWidth: 'available'`, `maxHeight: 'available'`. */
-	availableWidth: boolean;
-	availableHeight: boolean;
-};
+export type AnchorSpec = Anchored & { anchor: Element | null };
 
 /** Inline properties the engine sets, and which spec field makes it own each one (always: left/top/visibility). */
 const OWNED: [string, keyof AnchorSpec | null][] = [

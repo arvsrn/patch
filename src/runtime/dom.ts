@@ -2,7 +2,7 @@
 // Sizing semantics live in one fixed stylesheet keyed on data-* attributes;
 // each element's own style becomes inline CSS.
 
-import { anchorOptions } from '../schema/anchor';
+import { anchored } from '../schema/anchor';
 import type { ComponentNode, ElementNode, InlinePart, Program, ProgramNode, RenderNode, SpanNode } from '../schema/program';
 import { effectiveSizing, SHORTHANDS, sizingOf, type ElementKind, type Sizing, type Style } from '../schema/style';
 import { createApi, type ApiOptions, type Instance } from './api';
@@ -36,7 +36,7 @@ const FLEX_VALUE: Record<string, string> = { start: 'flex-start', center: 'cente
 const px = (v: unknown) => (v === 'auto' ? 'auto' : `${v}px`);
 const kebab = (key: string) => key.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
 /** Properties whose value is already the CSS value. */
-const VERBATIM = ['cursor', 'userSelect', 'pointerEvents', 'touchAction', 'overscrollBehavior', 'caretColor'];
+const VERBATIM = ['cursor', 'userSelect', 'pointerEvents', 'touchAction', 'overscrollBehavior', 'caretColor'] as const;
 
 /**
  * A validated style as inline CSS, plus data-* attributes: the authored
@@ -51,7 +51,7 @@ function toCss(kind: ElementKind, st: Style) {
 	if (st.textOverflow === 'ellipsis') css['-webkit-line-clamp'] = String(st.maxLines ?? 1);
 	if (typeof st.width === 'number') css.width = px(st.width);
 	if (typeof st.height === 'number') css.height = px(st.height);
-	for (const k of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'left', 'top', 'gap', 'fontSize', 'lineHeight', 'letterSpacing'])
+	for (const k of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'left', 'top', 'gap', 'fontSize', 'lineHeight', 'letterSpacing'] as const)
 		// Contextual values ("available") are set by the anchoring engine.
 		if (typeof st[k] === 'number') css[kebab(k)] = px(st[k]);
 	for (const k of VERBATIM) if (st[k]) css[kebab(k)] = st[k];
@@ -216,17 +216,7 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 			for (const [k, v] of Object.entries(css)) if (prev[k] !== v) el.style.setProperty(k, v);
 			for (const [k, v] of Object.entries(data)) el.setAttribute(`data-${k}`, v);
 			if (kind !== 'inline') {
-				const spec: AnchorSpec | null =
-					st.anchor === undefined
-						? null
-						: {
-								anchor: st.anchor instanceof Element ? st.anchor : null,
-								options: anchorOptions(st),
-								matchWidth: st.width === 'anchor',
-								matchHeight: st.height === 'anchor',
-								availableWidth: st.maxWidth === 'available',
-								availableHeight: st.maxHeight === 'available'
-							};
+				const spec: AnchorSpec | null = st.anchor === undefined ? null : { anchor: st.anchor instanceof Element ? st.anchor : null, ...anchored(st) };
 				anchoring.track(el, spec, css);
 			}
 			prev = css;

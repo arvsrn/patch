@@ -3,30 +3,30 @@
 // styles against it, the runtime validates and resolves every style with it,
 // and editor completion lists from it.
 
-import { ANCHOR_POSITIONS, isDesignNode } from './anchor';
-
-export type Style = Record<string, any>;
+import { ANCHOR_POSITIONS, isDesignNode, type DesignNode } from './anchor';
 
 /** What an element is for styling purposes. `inline` is a <span> nested in text. */
 export type ElementKind = 'frame' | 'text' | 'input' | 'textarea' | 'inline';
 /** What a style is checked for: an element kind, or `any` element (a `$style` on its own). */
 export type StyleKind = ElementKind | 'any';
 
-const isPx = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
-const isNum = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
-const isColor = (v: unknown) => typeof v === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(v);
+// Validators are type guards: what each accepts is the type of its property in `Style`.
+const isPx = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isColor = (v: unknown): v is string => typeof v === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(v);
 
 // Validators carry the string literals they accept, for editor completion.
 const literals = <F extends (v: any) => boolean>(values: string[], check: F) => Object.assign(check, { values });
-const oneOf = (...values: string[]) => literals(values, (v: unknown) => values.includes(v as string));
-const isSize = literals(['hug', 'fill', 'anchor'], (v: unknown) => isPx(v) || v === 'hug' || v === 'fill' || v === 'anchor');
-const isMaxSize = literals(['available'], (v: unknown) => isPx(v) || v === 'available');
+const oneOf = <const V extends string[]>(...values: V) => literals(values, (v: unknown): v is V[number] => values.includes(v as string));
+const isSize = literals(['hug', 'fill', 'anchor'], (v: unknown): v is number | 'hug' | 'fill' | 'anchor' => isPx(v) || v === 'hug' || v === 'fill' || v === 'anchor');
+const isMaxSize = literals(['available'], (v: unknown): v is number | 'available' => isPx(v) || v === 'available');
 const isPlacement = oneOf(...ANCHOR_POSITIONS);
 const PLACEMENT_HINT = ANCHOR_POSITIONS.map((p) => `"${p}"`).join(', ');
 /** An element from `bind:this` (a DOM element, or its design-time stand-in), or null: anchored to nothing yet. */
-const isAnchorRef = (v: unknown) => v === null || v === undefined || isDesignNode(v) || (typeof Element !== 'undefined' && v instanceof Element);
-const isMargin = literals(['auto'], (v: unknown) => isNum(v) || v === 'auto');
-const isShadow = (v: any) =>
+const isAnchorRef = (v: unknown): v is Element | DesignNode | null | undefined =>
+	v === null || v === undefined || isDesignNode(v) || (typeof Element !== 'undefined' && v instanceof Element);
+const isMargin = literals(['auto'], (v: unknown): v is number | 'auto' => isNum(v) || v === 'auto');
+const isShadow = (v: any): v is Partial<Shadow> =>
 	!!v &&
 	typeof v === 'object' &&
 	Object.keys(v).every((k) => ['x', 'y', 'blur', 'spread', 'color', 'inset'].includes(k)) &&
@@ -43,11 +43,12 @@ const CURSORS = [
 	'ew-resize', 'ns-resize', 'nesw-resize', 'nwse-resize', 'col-resize', 'row-resize', 'zoom-in', 'zoom-out', 'none'
 ];
 /** `oneOf` with its hint: `"a", "b" or "c"`. */
-const choice = (...values: string[]): [(v: any) => boolean, string] => {
+const choice = <const V extends string[]>(...values: V) => {
 	const quoted = values.map((v) => `"${v}"`);
-	return [oneOf(...values), `${quoted.slice(0, -1).join(', ')} or ${quoted[quoted.length - 1]}`];
+	return [oneOf(...values), `${quoted.slice(0, -1).join(', ')} or ${quoted[quoted.length - 1]}`] as const;
 };
-const SPEC: Record<string, [(v: any) => boolean, string]> = {
+type Spec = readonly [(v: any) => boolean, string];
+const SPEC = {
 	display: [oneOf('flex'), '"flex" (every container is a flex container)'],
 	flexDirection: [oneOf('row', 'column'), '"row" or "column"'],
 	justifyContent: [oneOf('start', 'center', 'end', 'space-between'), '"start", "center", "end" or "space-between"'],
@@ -76,55 +77,74 @@ const SPEC: Record<string, [(v: any) => boolean, string]> = {
 	anchorPosition: [isPlacement, PLACEMENT_HINT],
 	anchorOffset: [isNum, 'a pixel number'],
 	anchorCrossOffset: [isNum, 'a pixel number'],
-	anchorPadding: [(v) => sides(v, false) !== null, 'a pixel number, [vertical, horizontal] or [top, right, bottom, left]'],
-	anchorFallbacks: [(v) => Array.isArray(v) && v.every(isPlacement), `an array of placements: ${PLACEMENT_HINT}`],
+	anchorPadding: [(v: unknown): v is Sides => sides(v, false) !== null, 'a pixel number, [vertical, horizontal] or [top, right, bottom, left]'],
+	anchorFallbacks: [(v: unknown): v is string[] => Array.isArray(v) && v.every(isPlacement), `an array of placements: ${PLACEMENT_HINT}`],
 	background: [isColor, 'a hex color'],
 	color: [isColor, 'a hex color'],
-	opacity: [(v) => isNum(v) && v >= 0 && v <= 1, 'a number from 0 to 1'],
+	opacity: [(v: unknown): v is number => isNum(v) && v >= 0 && v <= 1, 'a number from 0 to 1'],
 	borderWidth: [isPx, 'a pixel number'],
 	borderColor: [isColor, 'a hex color'],
 	borderRadius: [
-		(v) => isPx(v) || (Array.isArray(v) && v.length === 4 && v.every(isPx)),
+		(v: unknown): v is number | Sides => isPx(v) || (Array.isArray(v) && v.length === 4 && v.every(isPx)),
 		'a pixel number or [topLeft, topRight, bottomRight, bottomLeft]'
 	],
 	overflowX: [isOverflow, OVERFLOW_HINT],
 	overflowY: [isOverflow, OVERFLOW_HINT],
-	boxShadow: [(v) => (Array.isArray(v) ? v.every(isShadow) : isShadow(v)), '{ x, y, blur, spread, color, inset } or an array of them'],
-	fontFamily: [(v) => typeof v === 'string' && v.length > 0, 'a font family name'],
-	fontSize: [(v) => isPx(v) && v > 0, 'a pixel number'],
-	fontWeight: [(v) => Number.isInteger(v) && v >= 1 && v <= 1000, 'a number from 1 to 1000'],
+	boxShadow: [(v: unknown): v is Partial<Shadow> | Partial<Shadow>[] => (Array.isArray(v) ? v.every(isShadow) : isShadow(v)), '{ x, y, blur, spread, color, inset } or an array of them'],
+	fontFamily: [(v: unknown): v is string => typeof v === 'string' && v.length > 0, 'a font family name'],
+	fontSize: [(v: unknown): v is number => isPx(v) && v > 0, 'a pixel number'],
+	fontWeight: [(v: unknown): v is number => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 1000, 'a number from 1 to 1000'],
 	fontStyle: [oneOf('normal', 'italic'), '"normal" or "italic"'],
-	lineHeight: [(v) => isPx(v) && v > 0, 'a pixel number'],
+	lineHeight: [(v: unknown): v is number => isPx(v) && v > 0, 'a pixel number'],
 	letterSpacing: [isNum, 'a pixel number'],
 	textAlign: [oneOf('start', 'center', 'end'), '"start", "center" or "end"'],
 	textDecoration: choice('none', 'underline', 'line-through'),
 	textTransform: choice('none', 'uppercase', 'lowercase', 'capitalize'),
 	textOverflow: choice('clip', 'ellipsis'),
-	maxLines: [(v) => Number.isInteger(v) && v >= 1, 'a whole number of at least 1'],
+	maxLines: [(v: unknown): v is number => Number.isInteger(v) && (v as number) >= 1, 'a whole number of at least 1'],
 	cursor: choice(...CURSORS),
 	userSelect: choice('auto', 'none', 'text', 'all'),
 	pointerEvents: choice('auto', 'none'),
 	touchAction: choice('auto', 'none', 'pan-x', 'pan-y', 'manipulation'),
 	overscrollBehavior: choice('auto', 'contain', 'none'),
 	caretColor: [isColor, 'a hex color']
-};
+} satisfies Record<string, Spec>;
 
-export const SHORTHANDS: Record<string, string[]> = {
+/** [top, right, bottom, left], or for a radius [topLeft, topRight, bottomRight, bottomLeft]. */
+export type Sides<T = number> = [T, T, T, T];
+export type Shadow = { x: number; y: number; blur: number; spread: number; color: string; inset: boolean };
+
+/** A longhand style property. */
+export type Longhand = keyof typeof SPEC;
+type Accepted<K extends Longhand> = (typeof SPEC)[K][0] extends (v: any) => v is infer T ? T : never;
+/** Properties `normalizeStyle` stores in another form than they are written in. */
+type Normalized = {
+	anchor: Element | DesignNode | null;
+	anchorPadding: Sides;
+	borderRadius: Sides;
+	boxShadow: Shadow[];
+};
+/** A normalized style: longhands only, each holding a value its validator accepts. */
+export type Style = { [K in Longhand]?: K extends keyof Normalized ? Normalized[K] : Accepted<K> };
+
+const specOf = (key: string): Spec | undefined => (SPEC as Record<string, Spec>)[key];
+
+export const SHORTHANDS: Record<string, Longhand[]> = {
 	padding: ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'],
 	margin: ['marginTop', 'marginRight', 'marginBottom', 'marginLeft'],
 	overflow: ['overflowX', 'overflowY']
 };
 
 /** Anchored positioning (see schema/anchor.ts). */
-const ANCHORING = ['anchor', 'anchorPosition', 'anchorOffset', 'anchorCrossOffset', 'anchorPadding', 'anchorFallbacks'];
+const ANCHORING: Longhand[] = ['anchor', 'anchorPosition', 'anchorOffset', 'anchorCrossOffset', 'anchorPadding', 'anchorFallbacks'];
 /** Interaction: how an element responds to the pointer and selection. No effect on snapshots. */
-const INTERACTION = ['cursor', 'userSelect', 'pointerEvents'];
-const BOX = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', ...ANCHORING, 'opacity', ...INTERACTION, 'touchAction'];
+const INTERACTION: Longhand[] = ['cursor', 'userSelect', 'pointerEvents'];
+const BOX: Longhand[] = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', ...ANCHORING, 'opacity', ...INTERACTION, 'touchAction'];
 /** Typography: inherited from parent to child. */
-export const TYPO = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign', 'textDecoration', 'textTransform'];
-const PAINT = ['background', 'borderWidth', 'borderColor', 'borderRadius', 'boxShadow', ...SHORTHANDS.padding];
-const FLEX = ['display', 'flexDirection', 'justifyContent', 'alignItems', 'flexWrap', 'gap', ...SHORTHANDS.overflow, 'overscrollBehavior'];
-const KINDS: Record<ElementKind, string[]> = {
+export const TYPO: Longhand[] = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign', 'textDecoration', 'textTransform'];
+const PAINT: Longhand[] = ['background', 'borderWidth', 'borderColor', 'borderRadius', 'boxShadow', ...SHORTHANDS.padding];
+const FLEX: Longhand[] = ['display', 'flexDirection', 'justifyContent', 'alignItems', 'flexWrap', 'gap', ...SHORTHANDS.overflow, 'overscrollBehavior'];
+const KINDS: Record<ElementKind, Longhand[]> = {
 	frame: [...BOX, ...TYPO, ...PAINT, ...FLEX, 'caretColor'],
 	input: [...BOX, ...TYPO, ...PAINT, 'caretColor'],
 	textarea: [...BOX, ...TYPO, ...PAINT, 'caretColor'],
@@ -162,7 +182,7 @@ const EXPAND: Record<string, [(v: unknown) => unknown[] | null, string]> = {
 export function normalizeStyle(input: unknown): Style {
 	if (!input || typeof input !== 'object' || Array.isArray(input))
 		throw new Error(`A style must be an object, $style(...) value, or array of them; got ${JSON.stringify(input)}`);
-	const out: Style = {};
+	const out: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(input)) {
 		// A nullish anchor is kept: the element is anchored, to nothing yet.
 		if ((value === undefined || value === null) && key !== 'anchor') continue;
@@ -173,7 +193,7 @@ export function normalizeStyle(input: unknown): Style {
 			SHORTHANDS[key].forEach((longhand, i) => (out[longhand] = expanded[i]));
 			continue;
 		}
-		const spec = SPEC[key];
+		const spec = specOf(key);
 		if (!spec) throw new Error(`Unsupported style property "${key}"`);
 		if (!spec[0](value)) throw new Error(`Invalid ${key}: ${JSON.stringify(value)} (expected ${spec[1]})`);
 		out[key] =
@@ -187,17 +207,17 @@ export function normalizeStyle(input: unknown): Style {
 					? (Array.isArray(value) ? value : [value]).map((s: any) => ({ x: 0, y: 0, blur: 0, spread: 0, color: '#00000040', inset: false, ...s }))
 					: value;
 	}
-	return Object.freeze(out);
+	return Object.freeze(out) as Style;
 }
 
 /** Fields of absolute positioning: an entry switching to `position: 'flow'` discards earlier ones. */
-const OFFSETS = ['left', 'top', ...ANCHORING];
+const OFFSETS: Longhand[] = ['left', 'top', ...ANCHORING];
 
 /**
  * The longhands a normalized entry discards from the entries merged before
  * it: `position: 'flow'` leaves absolute positioning.
  */
-export const discards = (entry: Style): readonly string[] => (entry.position === 'flow' ? OFFSETS : []);
+export const discards = (entry: Style): readonly Longhand[] => (entry.position === 'flow' ? OFFSETS : []);
 
 /**
  * `style={a}`, `style={[a, cond && b]}`: merges left to right, skipping falsy
@@ -205,7 +225,7 @@ export const discards = (entry: Style): readonly string[] => (entry.position ===
  * `normalizeStyle`); an entry first `discards` what it leaves behind.
  */
 export function resolveStyle(value: unknown): Style {
-	const out: Style = {};
+	const out: Record<string, unknown> = {};
 	const add = (v: unknown) => {
 		if (!v) return;
 		if (Array.isArray(v)) return v.forEach(add);
@@ -214,13 +234,13 @@ export function resolveStyle(value: unknown): Style {
 		Object.assign(out, st);
 	};
 	add(value);
-	return out;
+	return out as Style;
 }
 
 /** Throws when `key` (a property or shorthand) is unknown or not allowed on `kind`. */
 export function checkKey(kind: StyleKind, key: string) {
 	for (const k of SHORTHANDS[key] ?? [key]) {
-		if (!SPEC[k]) throw new Error(`Unsupported style property "${key}"`);
+		if (!specOf(k)) throw new Error(`Unsupported style property "${key}"`);
 		if (!ALLOWED[kind].includes(k)) throw new Error(`"${key}" is not supported on ${KIND_LABEL[kind]}`);
 	}
 }
@@ -314,7 +334,7 @@ export function checkStyle(kind: ElementKind, st: Style) {
 }
 
 /** The string literals a longhand property accepts. */
-export const styleLiterals = (key: string): string[] => ((SPEC[key]?.[0] as any)?.values ?? []) as string[];
+export const styleLiterals = (key: string): string[] => ((specOf(key)?.[0] as any)?.values ?? []) as string[];
 
 export type Sizing = 'fixed' | 'hug' | 'fill';
 
@@ -339,7 +359,7 @@ export function styleProperties(kind: StyleKind): StyleProperty[] {
 	return [...Object.keys(SHORTHANDS), ...Object.keys(SPEC)]
 		.filter((key) => (SHORTHANDS[key] ?? [key]).every((k) => ALLOWED[kind].includes(k)))
 		.map((key) => {
-			const spec = SPEC[SHORTHANDS[key]?.[0] ?? key];
+			const spec = specOf(SHORTHANDS[key]?.[0] ?? key)!;
 			return { name: key, hint: key in SHORTHANDS ? EXPAND[key][1] : spec[1], values: ((spec[0] as any).values ?? []) as string[] };
 		});
 }

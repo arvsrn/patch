@@ -8,8 +8,8 @@
 // degraded with a warning. Positions and resolved sizes come from layout.ts.
 
 import type { Concrete, Font, Run } from '../../schema/concrete';
-import { anchorOptions, type AnchorOptions } from '../../schema/anchor';
-import { effectiveSizing, type Style } from '../../schema/style';
+import { anchored, type Anchored } from '../../schema/anchor';
+import { effectiveSizing } from '../../schema/style';
 import type { DerivedText } from './glyphs';
 import { transformText } from './text';
 
@@ -34,7 +34,7 @@ type Layer = {
 	/** The concrete id of the element it stands for: what anchored layers refer to. */
 	id?: string;
 	/** Placed and sized from the layer with id `to` by layout (see schema/anchor.ts); null: no anchor, left out. */
-	anchor?: { to: string | null; options: AnchorOptions; matchWidth: boolean; matchHeight: boolean; availableWidth: boolean; availableHeight: boolean };
+	anchor?: Anchored & { to: string | null };
 	opacity: number;
 	/** Resolved by layout: position in the parent and size. */
 	x: number;
@@ -160,19 +160,11 @@ class Converter {
 		if (st.alignSelf) layer.alignSelf = ALIGN[st.alignSelf];
 		if (st.position === 'absolute') layer.absolute = { left: st.left, top: st.top };
 		layer.id = n.id;
-		if (st.anchor !== undefined)
-			layer.anchor = {
-				to: st.anchor,
-				options: anchorOptions(st),
-				matchWidth: st.width === 'anchor',
-				matchHeight: st.height === 'anchor',
-				availableWidth: st.maxWidth === 'available',
-				availableHeight: st.maxHeight === 'available'
-			};
+		if (n.anchor !== undefined) layer.anchor = { to: n.anchor, ...anchored(st) };
 		return layer;
 	}
 
-	private frame(n: Concrete, name: string, st: Style, children: FigmaNode[]): FigmaFrame {
+	private frame(n: Concrete, name: string, st: Concrete['style'], children: FigmaNode[]): FigmaFrame {
 		const direction = st.flexDirection === 'row' ? 'HORIZONTAL' : 'VERTICAL';
 		if (st.flexWrap === 'wrap' && direction === 'VERTICAL') this.warn(n.id, 'Figma auto layout wraps rows only; the column is not wrapped');
 		const radius = (st.borderRadius ?? [0, 0, 0, 0]) as FigmaFrame['radius'];

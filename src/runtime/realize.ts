@@ -125,19 +125,22 @@ class Realizer {
 	private element(d: ElementNode, id: string, scope: Scope, font: Font): Concrete {
 		const st = elementStyle(d, d.kind);
 		const own = inheritFont(font, st);
+		// A stand-in for an element holds its concrete id; anything else anchors to nothing.
+		const { anchor, ...style } = st;
+		const styled = { style, ...(anchor === undefined ? {} : { anchor: isDesignNode(anchor) ? anchor[DESIGN_NODE] : null }) };
 		const attr = (name: string) => (d.attrs[name] ? toText(withId(d.id, d.attrs[name])) : '');
 		if (d.ref) {
 			let handle = this.handles.get(id);
 			if (!handle) this.handles.set(id, (handle = Object.freeze({ [DESIGN_NODE]: id })));
 			d.ref.set(handle);
 		}
-		if (d.kind === 'frame') return { type: 'frame', id, tag: d.tag, style: st, font: own, children: this.nodes(d.kids, scope, own) };
-		if (d.kind === 'text') return { type: 'text', id, tag: d.tag, style: st, font: own, runs: inlineRuns(d.kids, own, [], d.id) };
+		if (d.kind === 'frame') return { type: 'frame', id, tag: d.tag, ...styled, font: own, children: this.nodes(d.kids, scope, own) };
+		if (d.kind === 'text') return { type: 'text', id, tag: d.tag, ...styled, font: own, runs: inlineRuns(d.kids, own, [], d.id) };
 		return {
 			type: 'input',
 			id,
 			tag: d.kind,
-			style: st,
+			...styled,
 			font: own,
 			value: attr('value'),
 			placeholder: attr('placeholder'),
@@ -176,26 +179,19 @@ class Realizer {
 	}
 }
 
-/**
- * Each anchored element's `anchor` becomes the concrete id of the element it
- * refers to, or null when that element is not rendered (or there is none).
- */
+/** An anchor that is not rendered is no anchor: null. */
 function resolveAnchors(tree: Concrete[]) {
 	const ids = new Set<string>();
 	const anchored: Concrete[] = [];
 	const walk = (nodes: Concrete[]) => {
 		for (const n of nodes) {
 			ids.add(n.id);
-			if (n.style.anchor !== undefined) anchored.push(n);
+			if (n.anchor) anchored.push(n);
 			if (n.type === 'frame') walk(n.children);
 		}
 	};
 	walk(tree);
-	for (const n of anchored) {
-		const ref = n.style.anchor;
-		const id = isDesignNode(ref) ? ref[DESIGN_NODE] : null;
-		n.style = { ...n.style, anchor: id !== null && ids.has(id) ? id : null };
-	}
+	for (const n of anchored) if (!ids.has(n.anchor!)) n.anchor = null;
 }
 
 /** Runs the program without effects and evaluates its template (twice, for `bind:this`; see above). */
