@@ -170,7 +170,7 @@ class Converter {
 			radius,
 			// Clipped or scrolling on either axis. A snapshot shows a scroll container at its initial scroll position.
 			clip: [st.overflowX, st.overflowY].some((v) => v !== undefined && v !== 'visible'),
-			shadows: (st.shadow ?? []).map((s: any) => ({ color: parseColor(s.color), x: s.x, y: s.y, blur: s.blur, spread: s.spread })),
+			shadows: (st.boxShadow ?? []).map((s: any) => ({ color: parseColor(s.color), x: s.x, y: s.y, blur: s.blur, spread: s.spread })),
 			children
 		};
 	}

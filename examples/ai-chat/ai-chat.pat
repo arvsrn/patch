@@ -368,7 +368,7 @@
 		background: '#ffffff',
 		color: ink,
 		fontSize: 14,
-		shadow: [
+		boxShadow: [
 			{ y: 2, blur: 4, color: '#1f1f1d0f' },
 			{ y: 12, blur: 32, spread: -8, color: '#1f1f1d33' }
 		]
@@ -387,7 +387,7 @@
 		<button
 			style={[
 				sidebarItem,
-				{ borderWidth: 1, borderColor: line, background: '#ffffff', fontWeight: 500, shadow: { y: 1, blur: 2, color: '#1f1f1d0d' } }
+				{ borderWidth: 1, borderColor: line, background: '#ffffff', fontWeight: 500, boxShadow: { y: 1, blur: 2, color: '#1f1f1d0d' } }
 			]}
 			onclick={() => openChat(null)}
 		>
@@ -658,7 +658,7 @@
 						borderWidth: 1,
 						borderColor: '#dedcd6',
 						background: '#ffffff',
-						shadow: [
+						boxShadow: [
 							{ y: 1, blur: 2, color: '#1f1f1d0d' },
 							{ y: 8, blur: 24, spread: -12, color: '#1f1f1d26' }
 						]
@@ -718,7 +718,7 @@
 					background: ink,
 					color: '#ffffff',
 					fontWeight: 500,
-					shadow: { y: 4, blur: 12, color: '#1f1f1d40' }
+					boxShadow: { y: 4, blur: 12, color: '#1f1f1d40' }
 				}
 			]}
 			onclick={jumpToLatest}

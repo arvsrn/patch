@@ -429,8 +429,8 @@ The merge rules are:
    [{ paddingLeft: 0 }, { padding: 8 }]  // 8 8 8 8
    [{ overflow: 'hidden' }, { overflowY: 'auto' }]  // x hidden, y auto
    ```
-3. `borderRadius` and `shadow` are replaced as a whole.
-4. A property whose value is `null` or `undefined` is ignored. It does **not** unset an earlier value. To override something, set an explicit neutral value: `width: 'hug'`, `gap: 0`, `borderWidth: 0`, `shadow: []`, `opacity: 1`, or `background: '#0000'`.
+3. `borderRadius` and `boxShadow` are replaced as a whole.
+4. A property whose value is `null` or `undefined` is ignored. It does **not** unset an earlier value. To override something, set an explicit neutral value: `width: 'hug'`, `gap: 0`, `borderWidth: 0`, `boxShadow: []`, `opacity: 1`, or `background: '#0000'`.
 5. `left`, `top` and the [anchor properties](#anchored-positioning) belong to absolute positioning. An entry with `position: 'flow'` leaves that mode and discards those set by earlier entries, so switching back to `'absolute'` later does not bring them back:
    ```ts
    [{ position: 'absolute', left: 4 }, { position: 'flow' }]                          // { position: 'flow' }
@@ -514,7 +514,7 @@ Units are pixels. All numbers must be finite.
 | `borderWidth` | *px* | `0` |
 | `borderColor` | *color* | `'#000000'` |
 | `borderRadius` | *px*, or `[topLeft, topRight, bottomRight, bottomLeft]` | `0` |
-| `shadow` | `{ x?, y?, blur?, spread?, color? }` or an array of them | none |
+| `boxShadow` | `{ x?, y?, blur?, spread?, color? }` or an array of them | none |
 
 A shadow's `x`, `y`, and `spread` are *num*, `blur` is *px*, and `color` is *color*. Missing fields default to `0, 0, 0, 0, '#00000040'`. Other keys (such as `inset`) are rejected. Shadows are outer drop shadows, and an array draws several.
 

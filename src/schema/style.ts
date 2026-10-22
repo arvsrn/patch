@@ -77,7 +77,7 @@ const SPEC: Record<string, [(v: any) => boolean, string]> = {
 	],
 	overflowX: [isOverflow, OVERFLOW_HINT],
 	overflowY: [isOverflow, OVERFLOW_HINT],
-	shadow: [(v) => (Array.isArray(v) ? v.every(isShadow) : isShadow(v)), '{ x, y, blur, spread, color } or an array of them'],
+	boxShadow: [(v) => (Array.isArray(v) ? v.every(isShadow) : isShadow(v)), '{ x, y, blur, spread, color } or an array of them'],
 	fontFamily: [(v) => typeof v === 'string' && v.length > 0, 'a font family name'],
 	fontSize: [(v) => isPx(v) && v > 0, 'a pixel number'],
 	fontWeight: [(v) => Number.isInteger(v) && v >= 1 && v <= 1000, 'a number from 1 to 1000'],
@@ -98,7 +98,7 @@ const ANCHORING = ['anchor', 'anchorPosition', 'anchorOffset', 'anchorCrossOffse
 const BOX = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', ...SHORTHANDS.margin, 'alignSelf', 'position', 'left', 'top', ...ANCHORING, 'opacity'];
 /** Typography: inherited from parent to child. */
 export const TYPO = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign'];
-const PAINT = ['background', 'borderWidth', 'borderColor', 'borderRadius', 'shadow', ...SHORTHANDS.padding];
+const PAINT = ['background', 'borderWidth', 'borderColor', 'borderRadius', 'boxShadow', ...SHORTHANDS.padding];
 const FLEX = ['display', 'flexDirection', 'justifyContent', 'alignItems', 'flexWrap', 'gap', ...SHORTHANDS.overflow];
 const ALLOWED: Record<ElementKind, string[]> = {
 	frame: [...BOX, ...TYPO, ...PAINT, ...FLEX],
@@ -157,7 +157,7 @@ export function normalizeStyle(input: unknown): Style {
 					? sides(value, false)
 					: key === 'borderRadius' && typeof value === 'number'
 				? [value, value, value, value]
-				: key === 'shadow'
+				: key === 'boxShadow'
 					? (Array.isArray(value) ? value : [value]).map((s: any) => ({ x: 0, y: 0, blur: 0, spread: 0, color: '#00000040', ...s }))
 					: value;
 	}

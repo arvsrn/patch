@@ -259,7 +259,7 @@
 		fontWeight: 500,
 		color: '#3c3c43'
 	});
-	const primary = $style({ background: accent, color: '#ffffff', shadow: { y: 1, blur: 2, color: '#1b1b1f26' } });
+	const primary = $style({ background: accent, color: '#ffffff', boxShadow: { y: 1, blur: 2, color: '#1b1b1f26' } });
 	const iconButton = $style({
 		width: 24,
 		height: 24,
@@ -316,12 +316,12 @@
 		borderWidth: 1,
 		borderColor: line,
 		background: '#ffffff',
-		shadow: { y: 1, blur: 2, color: '#1b1b1f0d' }
+		boxShadow: { y: 1, blur: 2, color: '#1b1b1f0d' }
 	});
-	const cardHover = $style({ borderColor: '#d3d4da', shadow: { y: 2, blur: 6, color: '#1b1b1f14' } });
+	const cardHover = $style({ borderColor: '#d3d4da', boxShadow: { y: 2, blur: 6, color: '#1b1b1f14' } });
 	const cardSelected = $style({
 		borderColor: accent,
-		shadow: [
+		boxShadow: [
 			{ spread: 2, color: '#5e6ad22e' },
 			{ y: 2, blur: 6, color: '#1b1b1f14' }
 		]
@@ -406,7 +406,7 @@
 		borderWidth: 1,
 		borderColor: line,
 		background: '#ffffff',
-		shadow: { y: 1, blur: 2, color: '#1b1b1f0d' }
+		boxShadow: { y: 1, blur: 2, color: '#1b1b1f0d' }
 	});
 	const property = $style({ width: 'fill', flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 30 });
 	const propertyLabel = $style({ width: 76, fontSize: 12.5, color: muted });
@@ -435,7 +435,7 @@
 		overflowY: 'auto',
 		color: ink,
 		fontSize: 13,
-		shadow: [
+		boxShadow: [
 			{ y: 2, blur: 4, color: '#1b1b1f0f' },
 			{ y: 12, blur: 32, spread: -8, color: '#1b1b1f33' }
 		]

@@ -78,7 +78,7 @@ test('fixed, hug and fill keep their meaning as Figma sizing', async () => {
 
 test('alignment, padding, wrap, clipping and paint map onto the frame', async () => {
 	const { find, nodes } = await snapshot(
-		`<div style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, width: 100, padding: [1, 2, 3, 4], justifyContent: 'center', alignItems: 'end', overflow: 'hidden', background: '#ff000080', borderWidth: 2, borderColor: '#00f', borderRadius: [1, 2, 3, 4], opacity: 0.5, shadow: { x: 0, y: 8, blur: 24, spread: -8, color: '#18181b1f' }, minWidth: 10, maxHeight: 500 }}>
+		`<div style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, width: 100, padding: [1, 2, 3, 4], justifyContent: 'center', alignItems: 'end', overflow: 'hidden', background: '#ff000080', borderWidth: 2, borderColor: '#00f', borderRadius: [1, 2, 3, 4], opacity: 0.5, boxShadow: { x: 0, y: 8, blur: 24, spread: -8, color: '#18181b1f' }, minWidth: 10, maxHeight: 500 }}>
 			<button style={{ width: 40, height: 10 }}></button><button style={{ width: 40, height: 20 }}></button><button style={{ width: 40, height: 10, alignSelf: 'start' }}></button>
 		</div>`
 	);
