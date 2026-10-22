@@ -78,7 +78,7 @@ test('fixed, hug and fill keep their meaning as Figma sizing', async () => {
 
 test('alignment, padding, wrap, clipping and paint map onto the frame', async () => {
 	const { find, nodes } = await snapshot(
-		`<div style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, width: 100, padding: [1, 2, 3, 4], justifyContent: 'center', alignItems: 'end', overflow: 'hidden', background: '#ff000080', borderWidth: 2, borderColor: '#00f', borderRadius: [1, 2, 3, 4], opacity: 0.5, boxShadow: { x: 0, y: 8, blur: 24, spread: -8, color: '#18181b1f' }, minWidth: 10, maxHeight: 500 }}>
+		`<div style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, width: 100, padding: [1, 2, 3, 4], justifyContent: 'center', alignItems: 'end', overflow: 'hidden', background: '#ff000080', borderWidth: 2, borderColor: '#00f', borderRadius: [1, 2, 3, 4], opacity: 0.5, boxShadow: [{ x: 0, y: 8, blur: 24, spread: -8, color: '#18181b1f' }, { y: 1, blur: 2, inset: true }], minWidth: 10, maxHeight: 500 }}>
 			<button style={{ width: 40, height: 10 }}></button><button style={{ width: 40, height: 20 }}></button><button style={{ width: 40, height: 10, alignSelf: 'start' }}></button>
 		</div>`
 	);
@@ -111,6 +111,7 @@ test('alignment, padding, wrap, clipping and paint map onto the frame', async ()
 	expect(div.strokePaints[0].color).toEqual({ r: 0, g: 0, b: 1, a: 1 });
 	expect(div.effects[0]).toMatchObject({ type: 'DROP_SHADOW', offset: { x: 0, y: 8 }, radius: 24, spread: -8 });
 	expect(div.effects[0].color.a).toBeCloseTo(0x1f / 255, 5);
+	expect(div.effects[1]).toMatchObject({ type: 'INNER_SHADOW', offset: { x: 0, y: 1 }, radius: 2 });
 	// Two rows: 40 + 6 + 40 fit in 94; the third wraps. Rows are 20 and 10 tall.
 	const buttons = nodes.filter((n) => n.name === 'button');
 	expect(div.size).toEqual({ x: 100, y: 1 + 20 + 6 + 10 + 3 });

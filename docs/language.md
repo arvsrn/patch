@@ -514,9 +514,9 @@ Units are pixels. All numbers must be finite.
 | `borderWidth` | *px* | `0` |
 | `borderColor` | *color* | `'#000000'` |
 | `borderRadius` | *px*, or `[topLeft, topRight, bottomRight, bottomLeft]` | `0` |
-| `boxShadow` | `{ x?, y?, blur?, spread?, color? }` or an array of them | none |
+| `boxShadow` | `{ x?, y?, blur?, spread?, color?, inset? }` or an array of them | none |
 
-A shadow's `x`, `y`, and `spread` are *num*, `blur` is *px*, and `color` is *color*. Missing fields default to `0, 0, 0, 0, '#00000040'`. Other keys (such as `inset`) are rejected. Shadows are outer drop shadows, and an array draws several.
+A shadow's `x`, `y`, and `spread` are *num*, `blur` is *px*, `color` is *color*, and `inset` is a boolean. Missing fields default to `0, 0, 0, 0, '#00000040', false`. Other keys are rejected. A shadow is drawn outside the box, or inside it with `inset: true` (an inner shadow in Figma), and an array draws several.
 
 ### Typography (all elements, inherited)
 
@@ -771,7 +771,7 @@ The Figma target approximates what Figma cannot express, and prints a warning ea
 | spread attributes, arbitrary HTML attributes | none |
 | `$props`, `$state.raw`, `$bindable`, `$inspect`, stores (`$x`) | none |
 | DOM manipulation and measurement | template and `style` |
-| CSS grid, `z-index`, `right`/`bottom`, percentages, units, named colors, gradients, images, per-side borders, inset shadows, transforms | none |
+| CSS grid, `z-index`, `right`/`bottom`, percentages, units, named colors, gradients, images, per-side borders, transforms | none |
 
 ## Open questions
 

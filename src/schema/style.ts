@@ -27,10 +27,11 @@ const isMargin = literals(['auto'], (v: unknown) => isNum(v) || v === 'auto');
 const isShadow = (v: any) =>
 	!!v &&
 	typeof v === 'object' &&
-	Object.keys(v).every((k) => ['x', 'y', 'blur', 'spread', 'color'].includes(k)) &&
+	Object.keys(v).every((k) => ['x', 'y', 'blur', 'spread', 'color', 'inset'].includes(k)) &&
 	['x', 'y', 'spread'].every((k) => v[k] === undefined || isNum(v[k])) &&
 	(v.blur === undefined || isPx(v.blur)) &&
-	(v.color === undefined || isColor(v.color));
+	(v.color === undefined || isColor(v.color)) &&
+	(v.inset === undefined || typeof v.inset === 'boolean');
 
 const sizeHint = 'a pixel number, "hug", "fill" or "anchor"';
 const isOverflow = oneOf('visible', 'hidden', 'auto', 'scroll');
@@ -86,7 +87,7 @@ const SPEC: Record<string, [(v: any) => boolean, string]> = {
 	],
 	overflowX: [isOverflow, OVERFLOW_HINT],
 	overflowY: [isOverflow, OVERFLOW_HINT],
-	boxShadow: [(v) => (Array.isArray(v) ? v.every(isShadow) : isShadow(v)), '{ x, y, blur, spread, color } or an array of them'],
+	boxShadow: [(v) => (Array.isArray(v) ? v.every(isShadow) : isShadow(v)), '{ x, y, blur, spread, color, inset } or an array of them'],
 	fontFamily: [(v) => typeof v === 'string' && v.length > 0, 'a font family name'],
 	fontSize: [(v) => isPx(v) && v > 0, 'a pixel number'],
 	fontWeight: [(v) => Number.isInteger(v) && v >= 1 && v <= 1000, 'a number from 1 to 1000'],
@@ -176,7 +177,7 @@ export function normalizeStyle(input: unknown): Style {
 					: key === 'borderRadius' && typeof value === 'number'
 				? [value, value, value, value]
 				: key === 'boxShadow'
-					? (Array.isArray(value) ? value : [value]).map((s: any) => ({ x: 0, y: 0, blur: 0, spread: 0, color: '#00000040', ...s }))
+					? (Array.isArray(value) ? value : [value]).map((s: any) => ({ x: 0, y: 0, blur: 0, spread: 0, color: '#00000040', inset: false, ...s }))
 					: value;
 	}
 	return Object.freeze(out);

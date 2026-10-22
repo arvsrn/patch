@@ -94,7 +94,7 @@ function frameFields(n: FigmaFrame): NodeChange {
 					rectangleCornerRadiiIndependent: true
 				}),
 		effects: n.shadows.map((s) => ({
-			type: 'DROP_SHADOW',
+			type: s.inset ? 'INNER_SHADOW' : 'DROP_SHADOW',
 			color: s.color,
 			offset: { x: s.x, y: s.y },
 			radius: s.blur,

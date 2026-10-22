@@ -16,7 +16,7 @@ export type Sizing = { kind: 'FIXED'; value: number } | { kind: 'HUG' } | { kind
 export type Color = { r: number; g: number; b: number; a: number };
 /** A solid paint: the color is opaque, its alpha is the paint's opacity, as Figma stores it. */
 export type Paint = { color: Color; opacity: number };
-export type Shadow = { color: Color; x: number; y: number; blur: number; spread: number };
+export type Shadow = { color: Color; x: number; y: number; blur: number; spread: number; inset: boolean };
 export type Align = 'MIN' | 'CENTER' | 'MAX';
 
 type Layer = {
@@ -170,7 +170,7 @@ class Converter {
 			radius,
 			// Clipped or scrolling on either axis. A snapshot shows a scroll container at its initial scroll position.
 			clip: [st.overflowX, st.overflowY].some((v) => v !== undefined && v !== 'visible'),
-			shadows: (st.boxShadow ?? []).map((s: any) => ({ color: parseColor(s.color), x: s.x, y: s.y, blur: s.blur, spread: s.spread })),
+			shadows: (st.boxShadow ?? []).map((s: any) => ({ color: parseColor(s.color), x: s.x, y: s.y, blur: s.blur, spread: s.spread, inset: s.inset })),
 			children
 		};
 	}
