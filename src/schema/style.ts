@@ -191,12 +191,18 @@ export function normalizeStyle(input: unknown): Style {
 }
 
 /** Fields of absolute positioning: an entry switching to `position: 'flow'` discards earlier ones. */
-export const OFFSETS = ['left', 'top', ...ANCHORING];
+const OFFSETS = ['left', 'top', ...ANCHORING];
+
+/**
+ * The longhands a normalized entry discards from the entries merged before
+ * it: `position: 'flow'` leaves absolute positioning.
+ */
+export const discards = (entry: Style): readonly string[] => (entry.position === 'flow' ? OFFSETS : []);
 
 /**
  * `style={a}`, `style={[a, cond && b]}`: merges left to right, skipping falsy
- * entries. A null or undefined property does not override; `position:
- * 'flow'` leaves absolute positioning, discarding offsets set before it.
+ * entries. A null or undefined property does not override (see
+ * `normalizeStyle`); an entry first `discards` what it leaves behind.
  */
 export function resolveStyle(value: unknown): Style {
 	const out: Style = {};
@@ -204,7 +210,7 @@ export function resolveStyle(value: unknown): Style {
 		if (!v) return;
 		if (Array.isArray(v)) return v.forEach(add);
 		const st = normalizeStyle(v);
-		if (st.position === 'flow') for (const key of OFFSETS) delete out[key];
+		for (const key of discards(st)) delete out[key];
 		Object.assign(out, st);
 	};
 	add(value);
@@ -223,6 +229,11 @@ export function checkKey(kind: StyleKind, key: string) {
  * A rule about how properties of one merged style combine. `fails` reads
  * only `keys` (normalized longhands) and returns the problem, if any.
  * `kinds`: the element kinds it applies to (all when absent).
+ *
+ * The compiler reports a rule as certain to fail by trying, for each key
+ * whose value it cannot see, absent, 0, 1 and the key's string literals
+ * (check/styles.ts). So `fails` must be decided by those values: compare
+ * with literals, `undefined` and truthiness, not with ranges.
  */
 export type StyleRule = { keys: string[]; kinds?: ElementKind[]; fails: (st: Style, kind: ElementKind) => string | null };
 

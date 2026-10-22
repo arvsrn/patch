@@ -7,7 +7,7 @@
 import { literal, NOT_STATIC, propertyName, unwrap, type Estree } from '../ast';
 import type { Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
-import { checkKey, normalizeStyle, OFFSETS, rulesFor, SHORTHANDS, styleLiterals, type ElementKind, type StyleRule } from '../schema/style';
+import { checkKey, discards, normalizeStyle, rulesFor, SHORTHANDS, styleLiterals, type ElementKind, type StyleRule } from '../schema/style';
 import type { StyledElement, StyleShape, Styles } from '../styles';
 
 /**
@@ -121,11 +121,14 @@ function merge(entries: (Estree | null)[]): Merged {
 			unknownAll();
 			continue;
 		}
-		// `position: 'flow'` discards offsets from earlier entries (known absent, even when open).
+		// What the entry discards from earlier ones is known absent, even when open.
+		// A position that is not visible may discard what any position does.
 		const position = entry.properties.find((p: Estree) => p.type === 'Property' && !p.computed && propertyName(p) === 'position');
 		const mode = position ? literal(position.value) : undefined;
-		if (mode === 'flow') for (const key of OFFSETS) merged.values.set(key, undefined);
-		else if (mode === NOT_STATIC) for (const key of OFFSETS) if (merged.values.has(key) || merged.open) merged.values.set(key, UNKNOWN);
+		if (mode !== NOT_STATIC) for (const key of discards({ position: mode })) merged.values.set(key, undefined);
+		else
+			for (const key of new Set(styleLiterals('position').flatMap((p) => discards({ position: p }))))
+				if (merged.values.has(key) || merged.open) merged.values.set(key, UNKNOWN);
 		for (const p of entry.properties) {
 			if (p.type !== 'Property' || p.computed) {
 				unknownAll();
@@ -133,7 +136,6 @@ function merge(entries: (Estree | null)[]): Merged {
 			}
 			const key = propertyName(p);
 			const value = literal(p.value);
-			if ((value === null || value === undefined) && key !== 'anchor') continue;
 			const longhands = SHORTHANDS[key] ?? [key];
 			// An anchor is kept even when nullish, so whatever it holds, the element is anchored.
 			if (key === 'anchor' && value === NOT_STATIC) {
