@@ -8,7 +8,6 @@
 //   `$state(x)` / `$state()`          → `$$rt.state("name", () => (x))` / `$$rt.state("name")`
 //   `$derived(expr)`                  → `$$rt.derived(() => (expr))`
 //   `$derived.by` / `$effect` / `$style` → `$$rt.derived` / `$$rt.effect` / `$$rt.style`
-//   `style={{ gap: 4 }}`              → `style={$$rt.style({ gap: 4 })}`
 //   `let { a, b: c, d = 1 } = $props()` → `let a = $$rt.prop("a"), c = $$rt.prop("b"), d = $$rt.prop("d", () => (1))`
 //   `import { getContext } from 'patch'` → `const getContext = $$rt.getContext` (per instance)
 //   `import …`                        → moved to the top of the module
@@ -16,11 +15,10 @@
 import { isSignal, type Bindings } from '../bind';
 import type { Component } from '../ir';
 import { RUNES, type Rune } from '../schema/program';
-import type { Styles } from '../styles';
 import type { Edits } from './edits';
 
 /** Records every script and template expression edit. Returns the script body and its imports. */
-export function emitScript(component: Component, bindings: Bindings, styles: Styles, source: string, edits: Edits) {
+export function emitScript(component: Component, bindings: Bindings, source: string, edits: Edits) {
 	const script = component.script;
 	const imports: string[] = [];
 	for (const statement of script?.imports ?? []) {
@@ -58,11 +56,6 @@ export function emitScript(component: Component, bindings: Bindings, styles: Sty
 			edits.before(first.start, '() => (');
 			edits.after(first.end, ')');
 		}
-	}
-	for (const use of styles.uses) {
-		if (!use.direct) continue;
-		edits.before(use.object.start, '$$rt.style(');
-		edits.after(use.object.end, ')');
 	}
 
 	// Last: the fallbacks are rendered with every edit inside them.

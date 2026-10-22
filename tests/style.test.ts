@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { analyze, compile } from '../src';
+import { analyze } from '../src';
 
 const messages = (source: string) => analyze(source).diagnostics.map((d) => `${d.line}:${d.column} ${d.message}`);
 const SPAN = '"padding" is not supported on nested <span>s inside text; only typography, cursor, userSelect and pointerEvents are allowed there';
@@ -19,9 +19,3 @@ test('shared styles are checked against every element that uses them', () => {
 	]);
 });
 
-test('a direct style object compiles to the same code as $style(...)', () => {
-	const strip = (module: string) => module.replace(/id: "[^"]*"/g, '');
-	const direct = compile(`<script>let d = $state(false)</script><div style={[{ gap: 4 }, d && { opacity: 0.5 }]}><p style={{ color: '#111111' }}>x</p></div>`);
-	const explicit = compile(`<script>let d = $state(false)</script><div style={[$style({ gap: 4 }), d && $style({ opacity: 0.5 })]}><p style={$style({ color: '#111111' })}>x</p></div>`);
-	expect(strip(direct.module)).toBe(strip(explicit.module));
-});

@@ -150,10 +150,10 @@ export function compile(source: string, filename = 'app.pat'): Compiled {
 	const reporter = new Reporter(source);
 	const result = check(source, filename, reporter);
 	if (!result || reporter.hasErrors()) throw new CompileError(reporter.diagnostics, source, filename);
-	const { component, bindings, styles } = result;
+	const { component, bindings } = result;
 
 	const edits = new Edits(source);
-	const script = emitScript(component, bindings, styles, source, edits);
+	const script = emitScript(component, bindings, source, edits);
 	const position = (offset: number) => {
 		const { line, column } = reporter.position(offset);
 		return `${line}:${column}`;

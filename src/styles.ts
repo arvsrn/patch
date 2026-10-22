@@ -1,7 +1,6 @@
 // Static style analysis: every style object the compiler can see, paired with
 // the element kind it styles, and the shape of every element's style=.
-// `check/styles.ts` validates them, `emit` wraps the ones written in place in
-// style=, and completion lists from them.
+// `check/styles.ts` validates them and completion lists from them.
 
 import { children, propertyName, unwrap, type Estree } from './ast';
 import type { Bindings } from './bind';
@@ -14,8 +13,6 @@ export type StyleUse = {
 	object: Estree;
 	/** The kind it is checked for. A `$style(...)` on its own is checked for `any` element. */
 	kind: StyleKind;
-	/** Written in place in a style= attribute (`style={{ gap: 4 }}`): compiled as `$style(...)`. */
-	direct: boolean;
 };
 
 /**
@@ -50,24 +47,23 @@ export function collectStyles(component: Component, bindings: Bindings): Styles 
 	// Through arrays, `&&` / `||` / `??`, ternaries, names given one value,
 	// members of object constants and calls of functions declared once:
 	// object literals, `$style({...})` objects, CSS strings.
-	//   inAttribute: written in place in style= (not reached through a name or call).
 	//   held: reached through a name, so an object or array literal may have
 	//         been changed since (its keys are still checked; its contents
 	//         count as unknown). `$style` values are frozen.
 	//   seen: names and functions on the way here, against cycles.
-	type Path = { inAttribute: boolean; held: boolean; seen: Set<unknown> };
+	type Path = { held: boolean; seen: Set<unknown> };
 	const shape = (expr: Estree, kind: StyleKind, path: Path): StyleShape => {
 		const e = unwrap(expr);
-		const object = (object: Estree, direct: boolean, frozen: boolean): StyleShape => {
-			styles.uses.push({ object, kind, direct });
+		const object = (object: Estree, frozen: boolean): StyleShape => {
+			styles.uses.push({ object, kind });
 			return frozen ? { type: 'object', object } : UNKNOWN;
 		};
 		const of = (node: Estree) => shape(node, kind, path);
 		const through = (node: Estree, held: boolean, via: unknown) =>
-			shape(node, kind, { inAttribute: false, held, seen: via ? new Set(path.seen).add(via) : path.seen });
+			shape(node, kind, { held, seen: via ? new Set(path.seen).add(via) : path.seen });
 		switch (e?.type) {
 			case 'ObjectExpression':
-				return object(e, path.inAttribute, !path.held);
+				return object(e, !path.held);
 			case 'ArrayExpression': {
 				const list: StyleShape = { type: 'list', items: e.elements.map((el: Estree) => (!el ? NONE : of(el.type === 'SpreadElement' ? el.argument : el))) };
 				return path.held ? UNKNOWN : list;
@@ -99,7 +95,7 @@ export function collectStyles(component: Component, bindings: Bindings): Styles 
 			}
 			case 'CallExpression': {
 				const arg = unwrap(e.arguments[0]);
-				if (bindings.runeCall(e)?.name === '$style') return arg?.type === 'ObjectExpression' ? object(arg, false, true) : UNKNOWN;
+				if (bindings.runeCall(e)?.name === '$style') return arg?.type === 'ObjectExpression' ? object(arg, true) : UNKNOWN;
 				// A function's result: one of its return values. Each call makes new objects.
 				const fn = unwrap(valueOf(e.callee));
 				if (!/^(Arrow)?Function(Expression|Declaration)$/.test(fn?.type) || path.seen.has(fn)) return UNKNOWN;
@@ -119,11 +115,11 @@ export function collectStyles(component: Component, bindings: Bindings): Styles 
 	};
 
 	// A `$style({...})` anywhere: checked on its own, for any element.
-	for (const call of bindings.runeCalls) if (call.name === '$style') shape(call.node.arguments[0], 'any', { inAttribute: false, held: false, seen: new Set() });
+	for (const call of bindings.runeCalls) if (call.name === '$style') shape(call.node.arguments[0], 'any', { held: false, seen: new Set() });
 	// A style= attribute: checked for the element it styles.
 	for (const element of elements(component.template)) {
 		const kind = element.type === 'span' ? 'inline' : element.kind;
-		styles.elements.push({ kind, style: element.style, nameSpan: element.nameSpan, shape: element.style ? shape(element.style, kind, { inAttribute: true, held: false, seen: new Set() }) : NONE });
+		styles.elements.push({ kind, style: element.style, nameSpan: element.nameSpan, shape: element.style ? shape(element.style, kind, { held: false, seen: new Set() }) : NONE });
 	}
 	return styles;
 }
