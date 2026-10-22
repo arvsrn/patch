@@ -56,6 +56,9 @@ test('a declaration cannot take a rune name, so a rune call is never a user func
 		reserved('$s'),
 		reserved('$p')
 	]);
+	// The index is reported where it is written, not where its name appears in the item's type.
+	const typed = `<script lang="ts">let xs = $state([1]);</script>{#each xs as item: $I, $I}<p>{$I}</p>{/each}`;
+	expect(analyze(typed).diagnostics.map((d) => d.start)).toEqual([typed.lastIndexOf('$I, ') + 4]);
 });
 
 test('a bare $ is an ordinary name', () => {

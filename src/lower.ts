@@ -256,8 +256,8 @@ class TemplateLowering {
 			this.reporter.report(node, '{#each} needs `as item` with a plain identifier');
 			return [];
 		}
-		// svelte gives the index as a bare name; it follows the item.
-		const at = node.index ? this.source.indexOf(node.index, node.context.end) : -1;
+		// svelte gives the index as a bare name; it follows the item and its type annotation.
+		const at = node.index ? this.source.indexOf(node.index, (node.context.typeAnnotation ?? node.context).end) : -1;
 		const index = node.index ? { type: 'Identifier', name: node.index, start: at, end: at + node.index.length } : null;
 		return [{ type: 'each', span: spanOf(node), list: node.expression, item: node.context, index, key: node.key ?? null, body }];
 	}
