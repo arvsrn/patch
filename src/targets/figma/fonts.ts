@@ -13,7 +13,7 @@ import * as fontkit from 'fontkit';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { FontKey, WidthOf } from './text';
+import { approximateMetrics, type FontKey, type MetricsOf, type WidthOf } from './text';
 
 type Face = { font: fontkit.Font; family: string[]; weight: number; italic: boolean };
 
@@ -111,6 +111,8 @@ function instance(font: fontkit.Font, key: FontKey): fontkit.Font {
 
 export type Fonts = {
 	widthOf: WidthOf;
+	/** From the font file; approximated for a font that is not found. */
+	metricsOf: MetricsOf;
 	/** The font a style is drawn with (a variable font set to its weight and size), or null. */
 	fontFor: (key: FontKey) => { font: fontkit.Font; id: string } | null;
 	/** The families looked up so far that are not installed. */
@@ -148,5 +150,11 @@ export function loadFonts(): Fonts {
 		}
 		return units * key.size;
 	};
-	return { widthOf, fontFor, warnings: () => [...warnings] };
+	const metricsOf: MetricsOf = (key) => {
+		const sized = fontFor(key);
+		if (!sized) return approximateMetrics(key);
+		const { font } = sized;
+		return { ascent: (font.ascent / font.unitsPerEm) * key.size, descent: (-font.descent / font.unitsPerEm) * key.size };
+	};
+	return { widthOf, metricsOf, fontFor, warnings: () => [...warnings] };
 }

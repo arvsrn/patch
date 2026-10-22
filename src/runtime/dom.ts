@@ -32,7 +32,7 @@ html,body{margin:0;padding:0}
 button[data-p]{cursor:pointer}
 [data-host]{width:100vw;height:100vh;overflow:auto;background:#fff;font-family:"Inter";font-size:16px;font-weight:400;font-style:normal;line-height:1.2;letter-spacing:0;color:#000;text-align:start}
 `;
-const FLEX_VALUE: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', 'space-between': 'space-between' };
+const FLEX_VALUE: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', 'space-between': 'space-between', baseline: 'baseline' };
 const px = (v: unknown) => (v === 'auto' ? 'auto' : `${v}px`);
 const kebab = (key: string) => key.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
 /** Properties whose value is already the CSS value. */

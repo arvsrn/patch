@@ -478,7 +478,7 @@ Units are pixels. All numbers must be finite.
 | `display` | `'flex'` (has no effect: every container is flex) | `'flex'` |
 | `flexDirection` | `'row'`, `'column'` | `'column'` |
 | `justifyContent` | `'start'`, `'center'`, `'end'`, `'space-between'` | `'start'` |
-| `alignItems` | `'start'`, `'center'`, `'end'` (no `'stretch'`: use `'fill'`) | `'start'` |
+| `alignItems` | `'start'`, `'center'`, `'end'`, `'baseline'` (no `'stretch'`: use `'fill'`) | `'start'` |
 | `flexWrap` | `'wrap'`, `'nowrap'` | `'nowrap'` |
 | `gap` | *px* | `0` |
 | `overflow` | `'visible'`, `'hidden'`, `'auto'`, `'scroll'`: shorthand for both axes | `'visible'` |
@@ -493,7 +493,7 @@ Units are pixels. All numbers must be finite.
 | `maxWidth`, `maxHeight` | *px*, or `'available'` (the room at the anchored placement; [anchored](#anchored-positioning) elements only) | none |
 | `margin` | *num* or `'auto'`; or `[vertical, horizontal]`; or `[top, right, bottom, left]` | `0` |
 | `marginTop`, `marginRight`, `marginBottom`, `marginLeft` | *num* or `'auto'` | `0` |
-| `alignSelf` | `'start'`, `'center'`, `'end'` | parent's `alignItems` |
+| `alignSelf` | `'start'`, `'center'`, `'end'`, `'baseline'` | parent's `alignItems` |
 | `position` | `'flow'`, `'absolute'` | `'flow'` |
 | `left`, `top` | *num* | none |
 | `anchor` | an element from `bind:this` (or `null`/`undefined`: none yet) | none |
@@ -592,6 +592,15 @@ These are checked on the merged style, by the compiler where the outcome is cert
 ## Layout
 
 Every container is a flex box. Children follow source order along the main axis (`flexDirection`) and are separated by `gap`. On the cross axis they are placed by `alignItems`, which a child can override with `alignSelf`. Children never shrink or grow unless they are sized `'fill'`.
+
+In a row, `'baseline'` lines up the first baselines of the children aligned that way, as in CSS: a text's first line, a container's first child (in a row, its first baseline-aligned child), or the bottom edge of an element without text. A row that hugs its height grows to fit them. In a column, `'baseline'` is `'start'`.
+
+```svelte
+<div style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+	<p style={{ fontSize: 24, fontWeight: 600 }}>Issues</p>
+	<p style={{ fontSize: 13, color: '#71717a' }}>128 open</p>
+</div>
+```
 
 ### Sizing
 

@@ -70,7 +70,7 @@ function childLayout(n: FigmaNode, parent: FigmaFrame | null): NodeChange {
 	const out: NodeChange = {};
 	if (main.kind === 'FILL') out.stackChildPrimaryGrow = 1;
 	if (cross.kind === 'FILL') out.stackChildAlignSelf = 'STRETCH';
-	else if (n.alignSelf) out.stackChildAlignSelf = n.alignSelf;
+	else if (n.alignSelf) out.stackChildAlignSelf = n.alignSelf === 'BASELINE' && !horizontal ? 'MIN' : n.alignSelf;
 	return out;
 }
 

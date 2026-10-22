@@ -18,7 +18,7 @@ export { decodeFigmaClipboard } from './encode';
 export function toFigmaLayers(tree: Concrete[], name: string, widthOf?: WidthOf): { root: FigmaFrame; blobs: Uint8Array[]; warnings: string[] } {
 	const { root, warnings } = toFigma(tree, name);
 	const fonts = widthOf ? null : loadFonts();
-	layout(root, measureWith(widthOf ?? fonts!.widthOf));
+	layout(root, widthOf ? measureWith(widthOf) : measureWith(fonts!.widthOf, fonts!.metricsOf));
 	const blobs = fonts ? deriveTexts(root, fonts) : [];
 	return { root, blobs, warnings: [...warnings, ...(fonts?.warnings() ?? [])] };
 }

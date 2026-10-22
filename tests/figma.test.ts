@@ -192,6 +192,20 @@ test('inputs become frames holding their value or placeholder', async () => {
 	expect(value.fillPaints[0].opacity).toBe(1);
 });
 
+test('a baseline row lines up first baselines and grows to fit them', async () => {
+	const { find, children } = await snapshot(
+		`<div style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+			<p style={{ fontSize: 20 }}>a</p>
+			<p style={{ fontSize: 10 }}>b</p>
+			<button style={{ width: 10, height: 30 }}></button>
+		</div>`
+	);
+	const row = find('div');
+	// Baselines (ascent 0.8, descent 0.2): 18 in a 24px line, 9 in a 12px line, the button's bottom edge at 30.
+	expect(row).toMatchObject({ stackCounterAlignItems: 'BASELINE', size: { y: 30 + 6 } });
+	expect(children(row).map((n: any) => n.transform.m12)).toEqual([12, 21, 0]);
+});
+
 test('absolute children leave the flow at their offsets or where the browser puts them', async () => {
 	const { nodes } = await snapshot(
 		`<div style={{ width: 100, height: 100, padding: 10, alignItems: 'center' }}>
@@ -229,8 +243,8 @@ test('lines break at spaces, with spaces at a break hanging', () => {
 	const style = { family: 'Inter', size: 10, weight: 400, italic: false, letterSpacing: 0, paint: { color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 } };
 	const node = { runs: [{ text: 'aaaa bbbb\ncc', style }], lineHeight: 12, truncate: false } as any;
 	const measure = measureWith(widthOf);
-	expect(measure(node)).toEqual({ width: 45, height: 24 });
-	expect(measure(node, 44)).toEqual({ width: 20, height: 36 });
+	expect(measure(node)).toMatchObject({ width: 45, height: 24 });
+	expect(measure(node, 44)).toMatchObject({ width: 20, height: 36 });
 	expect(measure({ ...node, truncate: true }, 44).height).toBe(12);
 });
 

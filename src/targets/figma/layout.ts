@@ -4,6 +4,10 @@
 //
 // Fill shares the free space of the main axis equally and stretches across
 // it; hug is the content size; fixed is the value. min/max clamp the result.
+//
+// Baseline-aligned items of a row line up their first baselines, as in CSS:
+// a text's first line, a frame's first item (in a row, its first
+// baseline-aligned one), else the bottom edge.
 
 import { available, boundary, choosePlacement, intersect, positionAt, type Rect } from '../../schema/anchor';
 import type { FigmaFrame, FigmaNode, FigmaText } from './adapter';
@@ -22,16 +26,55 @@ const gaps = (frame: FigmaFrame, n: number) => frame.gap * Math.max(0, n - 1);
 
 /** Lays out every layer, then places anchored layers (which may resize them and lay out again). */
 export function layout(root: FigmaFrame, measure: TextMeasure) {
-	resolve(root, measure);
-	anchorLayers(root, () => resolve(root, measure));
+	const run = () => settle(root, measure);
+	run();
+	anchorLayers(root, run);
 }
 
-/** One layout pass: every size and position from the sizing intents. */
-function resolve(root: FigmaFrame, measure: TextMeasure) {
+/**
+ * Lays out until frame baselines settle: how a row's items line up sets its
+ * height, and their baselines come from their own layout.
+ */
+function settle(root: FigmaFrame, measure: TextMeasure) {
+	let known = new Map<FigmaNode, number>();
+	for (let pass = 0; pass < 4; pass++) {
+		const { baselines, aligned } = resolve(root, measure, known);
+		const settled = baselines.size === known.size && [...baselines].every(([n, b]) => Math.abs((known.get(n) ?? NaN) - b) < 0.01);
+		if (!aligned || settled) return;
+		known = baselines;
+	}
+}
+
+/**
+ * One layout pass: every size and position from the sizing intents. `known`:
+ * frame baselines from the previous pass, for the heights of rows. Returns
+ * this pass's, and whether any row aligns baselines.
+ */
+function resolve(root: FigmaFrame, measure: TextMeasure, known: Map<FigmaNode, number>) {
 	const hugWidths = new Map<FigmaNode, number>();
 	const rows = new Map<FigmaFrame, FigmaNode[][]>();
+	const baselines = new Map<FigmaNode, number>();
+	let aligned = false;
 	/** Text wraps at its width; truncated text also at a width it hugs, which may be limited. */
 	const wraps = (n: FigmaText) => n.width.kind !== 'HUG' || n.maxLines !== undefined;
+	const byBaseline = (frame: FigmaFrame, n: FigmaNode) => frame.direction === 'HORIZONTAL' && n.height.kind !== 'FILL' && (n.alignSelf ?? frame.align) === 'BASELINE';
+	/** A layer's first baseline below its top, from `frames` for a frame (null: not known yet). */
+	const baselineOf = (n: FigmaNode, frames: Map<FigmaNode, number>) => (n.type === 'TEXT' ? measure(n, wraps(n) ? n.w : undefined).baseline : (frames.get(n) ?? null));
+	/**
+	 * A row line's height: its tallest item, or its baseline-aligned items
+	 * lined up, whichever is taller. `top`: where each of those goes.
+	 */
+	const lineOf = (frame: FigmaFrame, line: FigmaNode[], height: (n: FigmaNode) => number, frames: Map<FigmaNode, number>) => {
+		const bases = new Map<FigmaNode, number>();
+		for (const n of line) {
+			const b = byBaseline(frame, n) ? baselineOf(n, frames) : null;
+			if (b !== null) bases.set(n, b);
+		}
+		const above = Math.max(0, ...bases.values());
+		const below = Math.max(0, ...[...bases].map(([n, b]) => height(n) - b));
+		const plain = Math.max(0, ...line.filter((n) => !bases.has(n)).map(height));
+		return { cross: Math.max(plain, bases.size ? above + below : 0), top: new Map([...bases].map(([n, b]) => [n, above - b])) };
+	};
 
 	/** Width from content, before any fill: unwrapped text, children side by side or stacked. */
 	const hugWidth = (node: FigmaNode): number => {
@@ -102,7 +145,7 @@ function resolve(root: FigmaFrame, measure: TextMeasure) {
 			const lines = node.direction === 'VERTICAL' ? null : (rows.get(node) ?? [flow(node)]);
 			const kids = flow(node).map(ownHeight);
 			const content = lines
-				? sum(lines.map((l) => Math.max(0, ...l.map(ownHeight)))) + node.gap * Math.max(0, lines.length - 1)
+				? sum(lines.map((l) => lineOf(node, l, ownHeight, known).cross)) + node.gap * Math.max(0, lines.length - 1)
 				: sum(kids) + gaps(node, kids.length);
 			h = content + node.padding[0] + node.padding[2];
 		}
@@ -121,7 +164,7 @@ function resolve(root: FigmaFrame, measure: TextMeasure) {
 			heights = new Map();
 			const lines = rows.get(node) ?? [kids];
 			for (const l of lines) {
-				const cross = lines.length > 1 ? Math.max(0, ...l.map(ownHeight)) : inner;
+				const cross = lines.length > 1 ? lineOf(node, l, ownHeight, known).cross : inner;
 				for (const k of l) heights.set(k, k.height.kind === 'FILL' ? clamp(k, 'height', cross) : ownHeight(k));
 			}
 		}
@@ -129,7 +172,9 @@ function resolve(root: FigmaFrame, measure: TextMeasure) {
 		for (const k of node.children) if (k.absolute) resolveHeight(k, ownHeight(k));
 	};
 
+	// Bottom-up, so a frame's items have their baselines when it is placed.
 	const place = (frame: FigmaFrame) => {
+		for (const n of frame.children) if (n.type === 'FRAME') place(n);
 		const horizontal = frame.direction === 'HORIZONTAL';
 		const [top, right, bottom, left] = frame.padding;
 		const mainStart = horizontal ? left : top;
@@ -150,7 +195,9 @@ function resolve(root: FigmaFrame, measure: TextMeasure) {
 		const lines = rows.get(frame) ?? [flow(frame)];
 		let crossStart = horizontal ? top : left;
 		for (const line of lines) {
-			const lineCross = lines.length > 1 ? Math.max(0, ...line.map(cross)) : innerCross;
+			const lined = lineOf(frame, line, cross, baselines);
+			if (lined.top.size) aligned = true;
+			const lineCross = lines.length > 1 ? lined.cross : innerCross;
 			const free = innerMain - sum(line.map(main)) - gaps(frame, line.length);
 			let spacing = frame.gap;
 			let m = mainStart;
@@ -158,11 +205,14 @@ function resolve(root: FigmaFrame, measure: TextMeasure) {
 			else if (frame.justify === 'MAX') m += free;
 			else if (frame.justify === 'SPACE_BETWEEN' && line.length > 1) spacing += free / (line.length - 1);
 			for (const n of line) {
-				set(n, m, crossStart + crossOffset(n, lineCross));
+				set(n, m, crossStart + (lined.top.get(n) ?? crossOffset(n, lineCross)));
 				m += main(n) + spacing;
 			}
 			crossStart += lineCross + frame.gap;
 		}
+		const first = lines[0] ?? [];
+		const lead = (horizontal && first.find((n) => byBaseline(frame, n))) || first[0];
+		baselines.set(frame, lead ? lead.y + (baselineOf(lead, baselines) ?? lead.h) : frame.h);
 
 		// Absolute children: the given offsets, else where the browser puts an
 		// out-of-flow child, as if it were the only item.
@@ -174,12 +224,12 @@ function resolve(root: FigmaFrame, measure: TextMeasure) {
 			if (n.absolute.left !== undefined) n.x = n.absolute.left;
 			if (n.absolute.top !== undefined) n.y = n.absolute.top;
 		}
-		for (const n of frame.children) if (n.type === 'FRAME') place(n);
 	};
 
 	resolveWidth(root, own(root));
 	resolveHeight(root, ownHeight(root));
 	place(root);
+	return { baselines, aligned };
 }
 
 /**

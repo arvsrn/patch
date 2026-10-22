@@ -28,7 +28,21 @@ export function transformText(text: string, transform: Font['textTransform'], be
 export type FontKey = Pick<TextStyle, 'family' | 'size' | 'weight' | 'italic'>;
 /** Advance width of `text` on one line, without letter spacing. */
 export type WidthOf = (font: FontKey, text: string) => number;
-export type TextMeasure = (node: FigmaText, maxWidth?: number) => { width: number; height: number };
+/** A font's ascent and descent at its size, in pixels, both positive. */
+export type MetricsOf = (font: FontKey) => { ascent: number; descent: number };
+/** Size, and where the first line's baseline sits below the top. */
+export type TextMeasure = (node: FigmaText, maxWidth?: number) => { width: number; height: number; baseline: number };
+
+/** Typical proportions, for when no font file is read. */
+export const approximateMetrics: MetricsOf = (font) => ({ ascent: font.size * 0.8, descent: font.size * 0.2 });
+
+/** Where the baseline of a line set in `styles` sits below its top: the content area is centered in the line height. */
+export function baselineIn(lineHeight: number, styles: TextStyle[], metricsOf: MetricsOf): number {
+	const metrics = styles.map(metricsOf);
+	const ascent = Math.max(...metrics.map((m) => m.ascent));
+	const descent = Math.max(...metrics.map((m) => m.descent));
+	return (lineHeight - ascent - descent) / 2 + ascent;
+}
 
 /** A single-style piece of a word or of the spaces between words, placed on its line. */
 export type Placed = { text: string; style: TextStyle; start: number; x: number; width: number };
@@ -90,12 +104,13 @@ export function breakLines(node: FigmaText, widthOf: WidthOf, maxWidth?: number)
 	return out;
 }
 
-export function measureWith(widthOf: WidthOf): TextMeasure {
+export function measureWith(widthOf: WidthOf, metricsOf: MetricsOf = approximateMetrics): TextMeasure {
 	return (node, maxWidth) => {
 		const lines = breakLines(node, widthOf, maxWidth);
 		const width = Math.max(0, ...lines.map((l) => l.width));
 		const empty = node.runs.every((r) => !r.text);
 		const count = node.truncate ? 1 : empty ? (node.editable ? 1 : 0) : Math.min(lines.length, node.maxLines ?? Infinity);
-		return { width: Math.ceil(width * 100) / 100, height: count * node.lineHeight };
+		const first = lines[0]?.pieces.length ? lines[0].pieces.map((p) => p.style) : [node.base];
+		return { width: Math.ceil(width * 100) / 100, height: count * node.lineHeight, baseline: baselineIn(node.lineHeight, first, metricsOf) };
 	};
 }

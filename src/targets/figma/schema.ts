@@ -19,8 +19,8 @@ enum StrokeJoin { MITER = 0; }
 enum StackMode { NONE = 0; HORIZONTAL = 1; VERTICAL = 2; }
 enum StackSize { FIXED = 0; RESIZE_TO_FIT = 1; RESIZE_TO_FIT_WITH_IMPLICIT_SIZE = 2; }
 enum StackJustify { MIN = 0; CENTER = 1; MAX = 2; SPACE_BETWEEN = 4; }
-enum StackAlign { MIN = 0; CENTER = 1; MAX = 2; }
-enum StackCounterAlign { MIN = 0; CENTER = 1; MAX = 2; STRETCH = 3; AUTO = 4; }
+enum StackAlign { MIN = 0; CENTER = 1; MAX = 2; BASELINE = 3; }
+enum StackCounterAlign { MIN = 0; CENTER = 1; MAX = 2; STRETCH = 3; AUTO = 4; BASELINE = 5; }
 enum StackPositioning { AUTO = 0; ABSOLUTE = 1; }
 enum StackWrap { NO_WRAP = 0; WRAP = 1; }
 enum ConstraintType { MIN = 0; }

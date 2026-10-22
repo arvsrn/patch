@@ -18,7 +18,7 @@ export type Color = { r: number; g: number; b: number; a: number };
 /** A solid paint: the color is opaque, its alpha is the paint's opacity, as Figma stores it. */
 export type Paint = { color: Color; opacity: number };
 export type Shadow = { color: Color; x: number; y: number; blur: number; spread: number; inset: boolean };
-export type Align = 'MIN' | 'CENTER' | 'MAX';
+export type Align = 'MIN' | 'CENTER' | 'MAX' | 'BASELINE';
 
 type Layer = {
 	name: string;
@@ -114,7 +114,7 @@ const paint = (hex: string, opacity = 1): Paint => {
 
 const sizing = (value: unknown): Sizing => (typeof value === 'number' ? { kind: 'FIXED', value } : { kind: value === 'fill' ? 'FILL' : 'HUG' });
 const KIND = { FIXED: 'fixed', HUG: 'hug', FILL: 'fill' } as const;
-const ALIGN: Record<string, Align> = { start: 'MIN', center: 'CENTER', end: 'MAX' };
+const ALIGN: Record<string, Align> = { start: 'MIN', center: 'CENTER', end: 'MAX', baseline: 'BASELINE' };
 const TEXT_ALIGN = { start: 'LEFT', center: 'CENTER', end: 'RIGHT' } as const;
 const DECORATION = { none: 'NONE', underline: 'UNDERLINE', 'line-through': 'STRIKETHROUGH' } as const;
 const TEXT_CASE = { none: 'ORIGINAL', uppercase: 'UPPER', lowercase: 'LOWER', capitalize: 'TITLE' } as const;
@@ -182,7 +182,8 @@ class Converter {
 			gap: st.gap ?? 0,
 			padding: [st.paddingTop ?? 0, st.paddingRight ?? 0, st.paddingBottom ?? 0, st.paddingLeft ?? 0],
 			justify: st.justifyContent === 'space-between' ? 'SPACE_BETWEEN' : ALIGN[st.justifyContent ?? 'start'],
-			align: ALIGN[st.alignItems ?? 'start'],
+			// Baselines line up along a row; in a column, "baseline" is "start", as in CSS.
+			align: direction === 'VERTICAL' && st.alignItems === 'baseline' ? 'MIN' : ALIGN[st.alignItems ?? 'start'],
 			wrap: st.flexWrap === 'wrap' && direction === 'HORIZONTAL',
 			fills: st.background ? [paint(st.background)] : [],
 			stroke: st.borderWidth ? { paint: paint(st.borderColor ?? '#000000'), weight: st.borderWidth } : null,

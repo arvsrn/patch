@@ -13,7 +13,7 @@
 import type * as fontkit from 'fontkit';
 import type { FigmaFrame, FigmaNode, FigmaText, TextStyle } from './adapter';
 import type { Fonts } from './fonts';
-import { breakLines } from './text';
+import { baselineIn, breakLines } from './text';
 
 export type DerivedGlyph = { blob: number; x: number; y: number; size: number; firstCharacter: number; advance: number; style: TextStyle };
 export type DerivedText = {
@@ -91,10 +91,6 @@ export function deriveTexts(root: FigmaFrame, fonts: Fonts): Uint8Array[] {
 		// All or nothing: a layer drawn with some glyphs missing would show gaps.
 		if ([...sized.values()].some((f) => !f)) return null;
 		const fontOf = (s: TextStyle) => sized.get(s)!;
-		const metrics = (s: TextStyle) => {
-			const { font } = fontOf(s);
-			return { ascent: (font.ascent / font.unitsPerEm) * s.size, descent: (-font.descent / font.unitsPerEm) * s.size };
-		};
 
 		const lh = node.lineHeight;
 		const lines = breakLines(node, fonts.widthOf, node.width.kind === 'HUG' && node.maxLines === undefined ? undefined : node.w);
@@ -119,12 +115,8 @@ export function deriveTexts(root: FigmaFrame, fonts: Fonts): Uint8Array[] {
 		}
 
 		shown.forEach((line, i) => {
-			const lineStyles = line.pieces.length ? line.pieces.map((p) => p.style) : [node.base];
-			const ascent = Math.max(...lineStyles.map((s) => metrics(s).ascent));
-			const descent = Math.max(...lineStyles.map((s) => metrics(s).descent));
 			const top = i * lh;
-			// The line's content area sits in the middle of its line height.
-			const baseline = top + (lh - ascent - descent) / 2 + ascent;
+			const baseline = top + baselineIn(lh, line.pieces.length ? line.pieces.map((p) => p.style) : [node.base], fonts.metricsOf);
 			const free = node.w - line.width;
 			const left = node.textAlign === 'CENTER' ? free / 2 : node.textAlign === 'RIGHT' ? free : 0;
 			// Cut: an input value too wide for its one line, or the last line shown of more.
