@@ -97,7 +97,8 @@ export function deriveTexts(root: FigmaFrame, fonts: Fonts): Uint8Array[] {
 		};
 
 		const lh = node.lineHeight;
-		const lines = breakLines(node, fonts.widthOf, node.width.kind === 'HUG' ? undefined : node.w);
+		const lines = breakLines(node, fonts.widthOf, node.width.kind === 'HUG' && node.maxLines === undefined ? undefined : node.w);
+		const shown = lines.slice(0, node.truncate ? 1 : node.maxLines);
 		const length = node.runs.reduce((n, r) => n + r.text.length, 0);
 		const derived: DerivedText = {
 			glyphs: [],
@@ -117,7 +118,7 @@ export function deriveTexts(root: FigmaFrame, fonts: Fonts): Uint8Array[] {
 			derived.fonts.push({ style: s, lineHeight: (font.ascent - font.descent + font.lineGap) / font.unitsPerEm });
 		}
 
-		lines.slice(0, node.truncate ? 1 : undefined).forEach((line, i) => {
+		shown.forEach((line, i) => {
 			const lineStyles = line.pieces.length ? line.pieces.map((p) => p.style) : [node.base];
 			const ascent = Math.max(...lineStyles.map((s) => metrics(s).ascent));
 			const descent = Math.max(...lineStyles.map((s) => metrics(s).descent));
@@ -126,15 +127,27 @@ export function deriveTexts(root: FigmaFrame, fonts: Fonts): Uint8Array[] {
 			const baseline = top + (lh - ascent - descent) / 2 + ascent;
 			const free = node.w - line.width;
 			const left = node.textAlign === 'CENTER' ? free / 2 : node.textAlign === 'RIGHT' ? free : 0;
-			const limit = node.truncate && line.width > node.w + 0.01 ? node.w : Infinity;
+			// Cut: an input value too wide for its one line, or the last line shown of more.
+			const cut = (node.truncate && line.width > node.w + 0.01) || (i === shown.length - 1 && shown.length < lines.length);
+			const limit = cut ? node.w : Infinity;
 			let ellipsis = 0;
-			if (limit < Infinity) {
+			if (cut) {
 				const s = line.pieces[0]?.style ?? node.base;
 				ellipsis = fonts.widthOf(s, '…') + s.letterSpacing;
 			}
 			for (let c = line.start; c < line.end; c++) derived.offsets[c] = line.width;
 
 			let truncated = false;
+			/** The ellipsis at `x`, standing for the characters from `char` on. */
+			const placeEllipsis = (s: TextStyle, x: number, char: number) => {
+				truncated = true;
+				derived.truncationStart = char;
+				derived.truncatedHeight = shown.length * lh;
+				const { font, id } = fontOf(s);
+				const dots = font.layout('…');
+				const blob = dots.glyphs[0] ? blobFor(id, dots.glyphs[0], font) : -1;
+				if (blob >= 0) derived.glyphs.push({ blob, x: left + x, y: baseline, size: s.size, firstCharacter: char, advance: dots.positions[0].xAdvance / font.unitsPerEm, style: s });
+			};
 			for (const piece of line.pieces) {
 				const { font, id } = fontOf(piece.style);
 				// Hanging spaces past the line's width are not decorated.
@@ -155,16 +168,7 @@ export function deriveTexts(root: FigmaFrame, fonts: Fonts): Uint8Array[] {
 					const advance = pos.xAdvance * scale + piece.style.letterSpacing * glyph.codePoints.length;
 					const units = glyph.codePoints.reduce((n, cp) => n + (cp > 0xffff ? 2 : 1), 0) || 1;
 					for (let k = 0; k < units && char + k < length; k++) derived.offsets[char + k] = x + (advance * k) / units;
-					if (!truncated && x + advance > limit - ellipsis + 0.01) {
-						truncated = true;
-						derived.truncationStart = char;
-						derived.truncatedHeight = lh;
-						const s = piece.style;
-						const dots = fontOf(s).font.layout('…');
-						const blob = dots.glyphs[0] ? blobFor(fontOf(s).id, dots.glyphs[0], fontOf(s).font) : -1;
-						if (blob >= 0)
-							derived.glyphs.push({ blob, x: left + x, y: baseline, size: s.size, firstCharacter: char, advance: dots.positions[0].xAdvance / font.unitsPerEm, style: s });
-					}
+					if (!truncated && x + advance > limit - ellipsis + 0.01) placeEllipsis(piece.style, x, char);
 					if (!truncated) {
 						const blob = blobFor(id, glyph, font);
 						if (blob >= 0)
@@ -182,10 +186,14 @@ export function deriveTexts(root: FigmaFrame, fonts: Fonts): Uint8Array[] {
 					char += units;
 				});
 			}
+			// A line that fits is still followed by the ellipsis when lines after it are cut,
+			// after its trailing spaces, as browsers place it.
+			const lastPiece = line.pieces[line.pieces.length - 1];
+			if (cut && !truncated) placeEllipsis(lastPiece?.style ?? node.base, lastPiece ? lastPiece.x + lastPiece.width : 0, line.end);
 			derived.baselines.push({
 				x: left,
 				y: baseline,
-				width: Math.min(line.width, limit),
+				width: Math.min(line.width + (cut ? ellipsis : 0), limit),
 				lineY: top,
 				lineHeight: lh,
 				lineAscent: baseline - top,

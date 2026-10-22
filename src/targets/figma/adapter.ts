@@ -84,6 +84,8 @@ export type FigmaText = Layer & {
 	textAlign: 'LEFT' | 'CENTER' | 'RIGHT';
 	/** One line, cut with an ellipsis (input values). */
 	truncate: boolean;
+	/** At most this many lines, wrapped at its width; the last one ends with an ellipsis when text is cut (`textOverflow`). */
+	maxLines?: number;
 	/** At least one line tall even when empty: a textarea's insertion line. */
 	editable?: boolean;
 	/** The laid-out glyphs Figma draws the layer from (glyphs.ts). */
@@ -222,6 +224,7 @@ class Converter {
 		} else if (n.type === 'text') {
 			const content = n.runs.map((r) => r.text).join('');
 			node = this.text(n, layerName(content), n.runs, n.font);
+			if (n.style.textOverflow === 'ellipsis') node.maxLines = n.style.maxLines ?? 1;
 			if (node.width.kind === 'HUG' && node.height.kind !== 'HUG')
 				this.warn(n.id, 'Figma text cannot hug its width at a set height; its width is fixed at the measured width');
 		} else {

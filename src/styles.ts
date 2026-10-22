@@ -7,13 +7,13 @@ import { children, propertyName, unwrap, type Estree } from './ast';
 import type { Bindings } from './bind';
 import type { Span } from './diagnostics';
 import { elements, type Component } from './ir';
-import type { ElementKind } from './schema/style';
+import type { ElementKind, StyleKind } from './schema/style';
 
 export type StyleUse = {
 	/** An ObjectExpression. */
 	object: Estree;
-	/** The kind it is checked for. A `$style(...)` on its own is checked as `frame`, which allows every property. */
-	kind: ElementKind;
+	/** The kind it is checked for. A `$style(...)` on its own is checked for `any` element. */
+	kind: StyleKind;
 	/** Written in place in a style= attribute (`style={{ gap: 4 }}`): compiled as `$style(...)`. */
 	direct: boolean;
 };
@@ -56,7 +56,7 @@ export function collectStyles(component: Component, bindings: Bindings): Styles 
 	//         count as unknown). `$style` values are frozen.
 	//   seen: names and functions on the way here, against cycles.
 	type Path = { inAttribute: boolean; held: boolean; seen: Set<unknown> };
-	const shape = (expr: Estree, kind: ElementKind, path: Path): StyleShape => {
+	const shape = (expr: Estree, kind: StyleKind, path: Path): StyleShape => {
 		const e = unwrap(expr);
 		const object = (object: Estree, direct: boolean, frozen: boolean): StyleShape => {
 			styles.uses.push({ object, kind, direct });
@@ -120,7 +120,7 @@ export function collectStyles(component: Component, bindings: Bindings): Styles 
 	};
 
 	// A `$style({...})` anywhere: checked on its own, for any element.
-	for (const call of bindings.runeCalls) if (call.name === '$style') shape(call.node.arguments[0], 'frame', { inAttribute: false, held: false, seen: new Set() });
+	for (const call of bindings.runeCalls) if (call.name === '$style') shape(call.node.arguments[0], 'any', { inAttribute: false, held: false, seen: new Set() });
 	// A style= attribute: checked for the element it styles.
 	for (const element of elements(component.template)) {
 		const kind = element.type === 'span' ? 'inline' : element.kind;

@@ -22,6 +22,7 @@ html,body{margin:0;padding:0}
 [data-p=input]::placeholder,[data-p=textarea]::placeholder{color:currentColor;opacity:.5}
 [data-p=text]{display:block;white-space:pre}
 [data-p=text][data-w=fixed],[data-p=text][data-w=fill]{white-space:pre-wrap}
+[data-overflow=ellipsis]{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
 [data-p=inline]{display:inline}
 [data-p=text],[data-p=inline],[data-p=input],[data-p=textarea],[data-run]{text-decoration-line:var(--decoration,none)}
 [data-mixed]{text-decoration-line:none}
@@ -40,12 +41,14 @@ const VERBATIM = ['cursor', 'userSelect', 'pointerEvents', 'touchAction', 'overs
 /**
  * A validated style as inline CSS, plus data-* attributes: the authored
  * sizing (`sw`/`sh`, resolved into the `w`/`h` the stylesheet keys on by
- * `resolveSizing`) and the flex direction.
+ * `resolveSizing`), the flex direction and a text's overflow.
  */
 function toCss(kind: ElementKind, st: Style) {
 	const css: Record<string, string> = {};
 	const data: Record<string, string> = { sw: sizingOf(st.width), sh: sizingOf(st.height) };
 	if (kind === 'frame') data.dir = st.flexDirection ?? 'column';
+	if (kind === 'text') data.overflow = st.textOverflow ?? 'clip';
+	if (st.textOverflow === 'ellipsis') css['-webkit-line-clamp'] = String(st.maxLines ?? 1);
 	if (typeof st.width === 'number') css.width = px(st.width);
 	if (typeof st.height === 'number') css.height = px(st.height);
 	for (const k of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'left', 'top', 'gap', 'fontSize', 'lineHeight', 'letterSpacing'])

@@ -163,6 +163,20 @@ test('decoration and case are inherited typography that spans override; characte
 	});
 });
 
+test('truncated text wraps at its width, even one it hugs, and shows at most maxLines lines', async () => {
+	const { nodes } = await snapshot(
+		`<main style={{ fontSize: 10, lineHeight: 12 }}>
+			<p style={{ width: 60, textOverflow: 'ellipsis', maxLines: 2 }}>one two three four five</p>
+			<p style={{ maxWidth: 40, textOverflow: 'ellipsis' }}>one two three</p>
+			<p style={{ width: 60, textOverflow: 'ellipsis', maxLines: 3 }}>one</p>
+		</main>`
+	);
+	const [clamped, hugging, short] = nodes.filter((n) => n.type === 'TEXT');
+	expect(clamped).toMatchObject({ textTruncation: 'ENDING', maxLines: 2, textAutoResize: 'HEIGHT', size: { x: 60, y: 24 } });
+	expect(hugging).toMatchObject({ textTruncation: 'ENDING', maxLines: 1, textAutoResize: 'HEIGHT', size: { x: 40, y: 12 } });
+	expect(short.size).toEqual({ x: 60, y: 12 });
+});
+
 test('inputs become frames holding their value or placeholder', async () => {
 	const { find, children } = await snapshot(
 		`<input style={{ width: 120, padding: [8, 12], borderWidth: 1, borderRadius: 8, fontSize: 10, lineHeight: 20 }} placeholder="Type" />

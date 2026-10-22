@@ -145,7 +145,8 @@ function textFields(n: FigmaText): NodeChange {
 		}
 		for (let i = 0; i < run.text.length; i++) characterStyleIDs.push(id);
 	}
-	const autoResize = n.width.kind === 'HUG' && n.height.kind === 'HUG' ? 'WIDTH_AND_HEIGHT' : n.height.kind === 'HUG' ? 'HEIGHT' : 'NONE';
+	// Figma wraps text at a set width only, so text that may wrap keeps the width it hugs.
+	const autoResize = n.width.kind === 'HUG' && n.height.kind === 'HUG' && !n.maxLines ? 'WIDTH_AND_HEIGHT' : n.height.kind === 'HUG' ? 'HEIGHT' : 'NONE';
 	const styleID = (s: TextStyle) => {
 		const key = JSON.stringify(s);
 		return key === base ? 0 : (ids.get(key) ?? 0);
@@ -207,7 +208,7 @@ function textFields(n: FigmaText): NodeChange {
 		textAlignHorizontal: n.textAlign,
 		textAlignVertical: n.truncate ? 'CENTER' : 'TOP',
 		textAutoResize: autoResize,
-		...(n.truncate ? { textTruncation: 'ENDING', maxLines: 1 } : {}),
+		...(n.truncate || n.maxLines ? { textTruncation: 'ENDING', maxLines: n.maxLines ?? 1 } : {}),
 		fillPaints: [solid(n.base.paint)]
 	};
 }

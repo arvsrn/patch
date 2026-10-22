@@ -9,7 +9,7 @@
 import { propertyName, type Estree } from './ast';
 import { front } from './compile';
 import { Reporter } from './diagnostics';
-import { styleProperties, type ElementKind } from './schema/style';
+import { styleProperties, type StyleKind } from './schema/style';
 
 export type Completion = {
 	label: string;
@@ -40,7 +40,7 @@ export function complete(source: string, offset: number, _options: { filename?: 
 
 	const result = front(patched, new Reporter(patched));
 	if (!result) return [];
-	const kinds = new Set<ElementKind>();
+	const kinds = new Set<StyleKind>();
 	let object: Estree;
 	let property: Estree;
 	for (const use of result.styles.uses) {

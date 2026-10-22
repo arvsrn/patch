@@ -30,7 +30,8 @@ export function layout(root: FigmaFrame, measure: TextMeasure) {
 function resolve(root: FigmaFrame, measure: TextMeasure) {
 	const hugWidths = new Map<FigmaNode, number>();
 	const rows = new Map<FigmaFrame, FigmaNode[][]>();
-	const wraps = (n: FigmaText) => n.width.kind !== 'HUG';
+	/** Text wraps at its width; truncated text also at a width it hugs, which may be limited. */
+	const wraps = (n: FigmaText) => n.width.kind !== 'HUG' || n.maxLines !== undefined;
 
 	/** Width from content, before any fill: unwrapped text, children side by side or stacked. */
 	const hugWidth = (node: FigmaNode): number => {

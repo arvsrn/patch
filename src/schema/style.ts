@@ -9,6 +9,8 @@ export type Style = Record<string, any>;
 
 /** What an element is for styling purposes. `inline` is a <span> nested in text. */
 export type ElementKind = 'frame' | 'text' | 'input' | 'textarea' | 'inline';
+/** What a style is checked for: an element kind, or `any` element (a `$style` on its own). */
+export type StyleKind = ElementKind | 'any';
 
 const isPx = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
 const isNum = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
@@ -97,6 +99,8 @@ const SPEC: Record<string, [(v: any) => boolean, string]> = {
 	textAlign: [oneOf('start', 'center', 'end'), '"start", "center" or "end"'],
 	textDecoration: choice('none', 'underline', 'line-through'),
 	textTransform: choice('none', 'uppercase', 'lowercase', 'capitalize'),
+	textOverflow: choice('clip', 'ellipsis'),
+	maxLines: [(v) => Number.isInteger(v) && v >= 1, 'a whole number of at least 1'],
 	cursor: choice(...CURSORS),
 	userSelect: choice('auto', 'none', 'text', 'all'),
 	pointerEvents: choice('auto', 'none'),
@@ -120,15 +124,16 @@ const BOX = ['width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight'
 export const TYPO = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign', 'textDecoration', 'textTransform'];
 const PAINT = ['background', 'borderWidth', 'borderColor', 'borderRadius', 'boxShadow', ...SHORTHANDS.padding];
 const FLEX = ['display', 'flexDirection', 'justifyContent', 'alignItems', 'flexWrap', 'gap', ...SHORTHANDS.overflow, 'overscrollBehavior'];
-const ALLOWED: Record<ElementKind, string[]> = {
-	// Every property: a standalone `$style` is checked as a frame.
+const KINDS: Record<ElementKind, string[]> = {
 	frame: [...BOX, ...TYPO, ...PAINT, ...FLEX, 'caretColor'],
 	input: [...BOX, ...TYPO, ...PAINT, 'caretColor'],
 	textarea: [...BOX, ...TYPO, ...PAINT, 'caretColor'],
-	text: [...BOX, ...TYPO],
+	text: [...BOX, ...TYPO, 'textOverflow', 'maxLines'],
 	inline: [...TYPO.filter((k) => k !== 'textAlign'), ...INTERACTION]
 };
-const KIND_LABEL: Record<ElementKind, string> = {
+const ALLOWED: Record<StyleKind, string[]> = { ...KINDS, any: [...new Set(Object.values(KINDS).flat())] };
+const KIND_LABEL: Record<StyleKind, string> = {
+	any: 'any element',
 	frame: 'containers (<main>, <div>, <button>)',
 	input: '<input>',
 	textarea: '<textarea>',
@@ -207,7 +212,7 @@ export function resolveStyle(value: unknown): Style {
 }
 
 /** Throws when `key` (a property or shorthand) is unknown or not allowed on `kind`. */
-export function checkKey(kind: ElementKind, key: string) {
+export function checkKey(kind: StyleKind, key: string) {
 	for (const k of SHORTHANDS[key] ?? [key]) {
 		if (!SPEC[k]) throw new Error(`Unsupported style property "${key}"`);
 		if (!ALLOWED[kind].includes(k)) throw new Error(`"${key}" is not supported on ${KIND_LABEL[kind]}`);
@@ -267,6 +272,10 @@ export const STYLE_RULES: StyleRule[] = [
 		}
 	},
 	{
+		keys: ['textOverflow', 'maxLines'],
+		fails: (st) => (st.maxLines !== undefined && st.textOverflow !== 'ellipsis' ? 'maxLines requires textOverflow: "ellipsis"' : null)
+	},
+	{
 		keys: ['position', 'width', 'height'],
 		fails: (st) => (st.position === 'absolute' && (st.width === 'fill' || st.height === 'fill') ? 'absolute elements cannot use "fill" sizing' : null)
 	},
@@ -315,7 +324,7 @@ export function effectiveSizing(own: Sizing, parent: Sizing, mainAxis: boolean, 
 export type StyleProperty = { name: string; hint: string; values: string[] };
 
 /** The keys `checkKey` accepts for one element kind (shorthands included), with hints and accepted string literals. */
-export function styleProperties(kind: ElementKind): StyleProperty[] {
+export function styleProperties(kind: StyleKind): StyleProperty[] {
 	return [...Object.keys(SHORTHANDS), ...Object.keys(SPEC)]
 		.filter((key) => (SHORTHANDS[key] ?? [key]).every((k) => ALLOWED[kind].includes(k)))
 		.map((key) => {

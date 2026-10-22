@@ -535,6 +535,22 @@ A shadow's `x`, `y`, and `spread` are *num*, `blur` is *px*, `color` is *color*,
 
 `textDecoration` is inherited like the rest of typography, so unlike in CSS, a nested span can remove a decoration with `textDecoration: 'none'`. The line takes the color of the text it decorates. `textTransform` changes how text is shown, not the text itself: `bind:value` and the characters of a Figma layer keep their original case. `'capitalize'` uppercases the first letter of each word.
 
+### Truncation (text elements only, not inherited)
+
+| Property | Values | Default |
+| --- | --- | --- |
+| `textOverflow` | `'clip'`, `'ellipsis'` | `'clip'` |
+| `maxLines` | integer ≥ 1 (requires `textOverflow: 'ellipsis'`) | `1` |
+
+With `textOverflow: 'ellipsis'`, a `<p>` or block `<span>` shows at most `maxLines` lines. Its text wraps at its width, even a width it hugs (which then only wraps where `maxWidth` limits it), and when text is cut, the last line shown ends with `…`. The height hugs the lines shown. `'clip'` is the usual behavior: nothing is cut, and the text overflows instead.
+
+```svelte
+<p style={{ width: 'fill', textOverflow: 'ellipsis' }}>{issue.title}</p>
+<p style={{ width: 'fill', textOverflow: 'ellipsis', maxLines: 2 }}>{issue.description}</p>
+```
+
+In a Figma snapshot, the text layer is truncated the same way, with Figma's own truncation and line limit. One whose width hugs keeps the width it was measured at.
+
 ### Interaction
 
 | Property | Values | Default | Allowed on |
@@ -552,12 +568,12 @@ Any property not listed here is an error. That includes `zIndex`, `right`, `bott
 
 ### Allowed properties by element
 
-| Element | Layout | Box | Paint | Typography | Interaction |
-| --- | --- | --- | --- | --- | --- |
-| `<main>`, `<div>`, `<button>` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `<input>`, `<textarea>` | | ✓ | ✓ | ✓ | ✓ except `overscrollBehavior` |
-| `<p>`, `<span>` (block) | | ✓ | | ✓ | `cursor`, `userSelect`, `pointerEvents`, `touchAction` |
-| inline `<span>` inside text | | | | ✓ except `textAlign` | `cursor`, `userSelect`, `pointerEvents` |
+| Element | Layout | Box | Paint | Typography | Truncation | Interaction |
+| --- | --- | --- | --- | --- | --- | --- |
+| `<main>`, `<div>`, `<button>` | ✓ | ✓ | ✓ | ✓ | | ✓ |
+| `<input>`, `<textarea>` | | ✓ | ✓ | ✓ | | ✓ except `overscrollBehavior` |
+| `<p>`, `<span>` (block) | | ✓ | | ✓ | ✓ | `cursor`, `userSelect`, `pointerEvents`, `touchAction` |
+| inline `<span>` inside text | | | | ✓ except `textAlign` | | `cursor`, `userSelect`, `pointerEvents` |
 
 For example, a `<p>` cannot have `padding`, `background`, a border, a radius, or a shadow. Wrap it in a `<div>` for those.
 
@@ -570,6 +586,7 @@ These are checked on the merged style, by the compiler where the outcome is cert
 - `overflowX: 'visible'` cannot be combined with any other `overflowY`, and the other way around.
 - `anchor` requires `position: 'absolute'`, and cannot be combined with `left`, `top` or a non-zero margin. The other anchor properties, `width`/`height: 'anchor'` and `maxWidth`/`maxHeight: 'available'` require `anchor`.
 - An absolute element cannot use `'fill'` for `width` or `height`.
+- `maxLines` requires `textOverflow: 'ellipsis'`.
 - `<input>` needs `width` set to a number or `'fill'`. `<textarea>` needs both `width` and `height` set to a number or `'fill'`. A bare `<input />` is a compile error.
 
 ## Layout
@@ -582,7 +599,7 @@ Each axis of each element is sized one of three ways:
 
 - **Fixed** (a number): exactly that many pixels. Padding is included, so `width: 100, padding: 10` leaves 80 for content.
 - **`hug`** (the default): the size of the content plus padding.
-  - Text that hugs its width stays on one line and never wraps. It breaks only at `\n` characters in expression values. If the parent is too narrow, it overflows.
+  - Text that hugs its width stays on one line and never wraps. It breaks only at `\n` characters in expression values. If the parent is too narrow, it overflows. [Truncated](#truncation-text-elements-only-not-inherited) text is the exception: it wraps where `maxWidth` limits it.
   - An `<input>` or `<textarea>` that ends up hugging (see below: it cannot be authored as `hug`) is the size of what it shows: its value (masked as `•` for passwords), else its placeholder, measured like text, plus padding. A textarea's height is its lines, wrapped at its width, and at least one line: an empty textarea is one line plus padding. The size follows the value as it changes.
 - **`fill`**:
   - On the parent's **main axis**: the element takes an equal share of the space left after fixed and hugging siblings and gaps.

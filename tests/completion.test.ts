@@ -26,7 +26,7 @@ test('a shared $style uses the kind of the element it is applied to', () => {
 });
 
 test('standalone $style keeps the general vocabulary', () => {
-	expect(labels(`<script>const s = $style({ | })</script>`)).toEqual(legal('frame'));
+	expect(labels(`<script>const s = $style({ | })</script>`)).toEqual(legal('any'));
 });
 
 test('inline $style values still complete', () => {
