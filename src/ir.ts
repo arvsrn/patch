@@ -36,7 +36,7 @@ export type Script = {
 	effects: Estree[];
 	/** `const x = $style({...})`: identifiers a style= may refer to. */
 	styles: StyleDecl[];
-	/** The `$state`/`$derived`/`$effect` calls in a position where PAT accepts them. */
+	/** The `$state`/`$derived`/`$effect`/`$props` calls in a position where PAT accepts them, whatever their shape. */
 	runes: Set<Estree>;
 };
 
@@ -116,7 +116,8 @@ export type Each = {
 	span: Span;
 	list: Estree;
 	item: Estree;
-	index: string | null;
+	/** The index name, as an identifier. */
+	index: Estree | null;
 	key: Estree | null;
 	body: TemplateNode[];
 };

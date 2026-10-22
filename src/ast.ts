@@ -19,14 +19,14 @@ export const rootOf = (node: Estree): Estree => {
 	return node;
 };
 
-/** Names a declaration pattern binds. */
-export const patternNames = (p: Estree, out: string[] = []): string[] => {
+/** The identifiers a declaration pattern binds. */
+export const patternIdentifiers = (p: Estree, out: Estree[] = []): Estree[] => {
 	if (!p) return out;
-	if (p.type === 'Identifier') out.push(p.name);
-	else if (p.type === 'ObjectPattern') p.properties.forEach((q: Estree) => patternNames(q.type === 'RestElement' ? q.argument : q.value, out));
-	else if (p.type === 'ArrayPattern') p.elements.forEach((q: Estree) => patternNames(q, out));
-	else if (p.type === 'AssignmentPattern') patternNames(p.left, out);
-	else if (p.type === 'RestElement') patternNames(p.argument, out);
+	if (p.type === 'Identifier') out.push(p);
+	else if (p.type === 'ObjectPattern') p.properties.forEach((q: Estree) => patternIdentifiers(q.type === 'RestElement' ? q.argument : q.value, out));
+	else if (p.type === 'ArrayPattern') p.elements.forEach((q: Estree) => patternIdentifiers(q, out));
+	else if (p.type === 'AssignmentPattern') patternIdentifiers(p.left, out);
+	else if (p.type === 'RestElement') patternIdentifiers(p.argument, out);
 	return out;
 };
 

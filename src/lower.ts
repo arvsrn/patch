@@ -64,7 +64,7 @@ export function lower(ast: SvelteAst, source: string, reporter: Reporter): Compo
 	if (a.options) reporter.report(a.options, '<svelte:options> is not supported');
 	return {
 		script: a.instance ? lowerScript(a.instance, source, reporter) : null,
-		template: new TemplateLowering(reporter).children(a.fragment.nodes)
+		template: new TemplateLowering(source, reporter).children(a.fragment.nodes)
 	};
 }
 
@@ -131,6 +131,7 @@ function lowerScript(instance: Svelte, source: string, reporter: Reporter): Scri
 					lowerProps(d, script, reporter);
 				} else if (rune === '$state' || rune === '$derived' || rune === '$derived.by') {
 					script.runes.add(init);
+					runeArguments(rune, init, reporter);
 					if (rune === '$state' && statement.kind !== 'let') reporter.report(statement, '$state must be declared with let');
 					if (d.id.type !== 'Identifier') {
 						reporter.report(d.id, `${rune} must be assigned to a plain identifier`);
@@ -161,10 +162,19 @@ function lowerScript(instance: Svelte, source: string, reporter: Reporter): Scri
 			if (call.type === 'CallExpression' && calleeName(call.callee) === '$effect') {
 				script.runes.add(call);
 				script.effects.push(call);
+				runeArguments('$effect', call, reporter);
 			}
 		}
 	}
 	return script;
+}
+
+/** `$state` takes at most one initial value; `$derived`, `$derived.by` and `$effect` take exactly one argument. */
+function runeArguments(rune: string, call: Estree, reporter: Reporter) {
+	const count = call.arguments.length;
+	if (rune === '$state') {
+		if (count > 1) reporter.report(call, '$state takes at most one initial value');
+	} else if (count !== 1) reporter.report(call, rune === '$derived' ? '$derived takes exactly one expression' : `${rune} takes exactly one function`);
 }
 
 /** `let { a, b: local, c = fallback }: Props = $props()`. */
@@ -187,7 +197,10 @@ function lowerProps(d: Estree, script: Script, reporter: Reporter) {
 // ---------------------------------------------------------------- template
 
 class TemplateLowering {
-	constructor(private reporter: Reporter) {}
+	constructor(
+		private source: string,
+		private reporter: Reporter
+	) {}
 
 	private unsupported(node: Svelte) {
 		this.reporter.report(nameSpan(node), UNSUPPORTED_NODES[node.type] ?? `<${node.name ?? node.type}> is not supported`);
@@ -243,7 +256,10 @@ class TemplateLowering {
 			this.reporter.report(node, '{#each} needs `as item` with a plain identifier');
 			return [];
 		}
-		return [{ type: 'each', span: spanOf(node), list: node.expression, item: node.context, index: node.index ?? null, key: node.key ?? null, body }];
+		// svelte gives the index as a bare name; it follows the item.
+		const at = node.index ? this.source.indexOf(node.index, node.context.end) : -1;
+		const index = node.index ? { type: 'Identifier', name: node.index, start: at, end: at + node.index.length } : null;
+		return [{ type: 'each', span: spanOf(node), list: node.expression, item: node.context, index, key: node.key ?? null, body }];
 	}
 
 	/** `<Card a={x}>content</Card>`: attributes are props, the content is the `children` snippet. */

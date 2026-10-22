@@ -40,6 +40,7 @@ Standard JS and TS work: functions, classes, closures, `async` functions, `try`/
 | `import x = require(...)` | error |
 | `await` outside a function (in the script or a template expression) | error |
 | undeclared identifiers starting with `$` (`$state.raw`, `$bindable`, `$inspect`, `$store`, …) | error |
+| declaring a name that starts with `$` followed by a letter, `_` or `$` (`$foo`, `$_x`, `$$x`), in the script or the template | error: these names are reserved for runes. A bare `$` is an ordinary name |
 | references to identifiers starting with `$$` | error (reserved) |
 
 **No DOM rendering access.** The template and `style={...}` are the only way to affect what renders. Script and template expressions cannot create, query, measure, or restyle DOM nodes, and code that tries is a compile error. Other browser APIs (`fetch`, `localStorage`, `setTimeout`, `document.title`, `window`) are allowed, and so are the rest of a DOM node's own API, such as `el.focus()` on an element from [`bind:this`](#bindthis).

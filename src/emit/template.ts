@@ -107,7 +107,7 @@ export class TemplateEmitter {
 	}
 
 	private eachBlock(node: Each) {
-		const index = node.index ?? '$$i';
+		const index = node.index?.name ?? '$$i';
 		const params = `(${node.item.name}, ${index})`;
 		// Unkeyed: each position is an item.
 		const key = node.key ? this.expression(node.key) : `${index}.v`;

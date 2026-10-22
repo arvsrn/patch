@@ -5,7 +5,7 @@
 // change through a member (`a.b = c`, `delete a.b`), and every rune call.
 // Checks and code generation read these; none of them tracks scopes itself.
 
-import { children, isTypeNode, patternNames, rootOf, unwrap, type Estree } from './ast';
+import { children, isTypeNode, patternIdentifiers, rootOf, unwrap, type Estree } from './ast';
 import type { AttributeValue, Component, Inline, TemplateNode } from './ir';
 
 /** `prop`: declared by `$props()`. `param`: a snippet parameter. Both are read-only. */
@@ -52,13 +52,22 @@ export type Reference = {
 /** An assignment, update or delete through a member: `a.b = c`, `a[i]++`, `delete a.b`, or `[a.b] = …` (`inPattern`). */
 export type MemberWrite = { node: Estree; target: Estree; root: Reference | null; inPattern: boolean };
 
-/** A call to a `$`-name that resolves to nothing: `$state(…)`, `$derived.by(…)`, `$foo(…)`. */
+/**
+ * Names reserved for runes: `$` followed by an identifier character (`$state`,
+ * `$_x`, `$$x`). A bare `$` is an ordinary name. No declaration may take a
+ * reserved name, so a call through one is a rune call wherever it appears.
+ */
+export const isRuneName = (name: string) => /^\$[\p{ID_Start}$_]/u.test(name);
+
+/** A call to a rune name: `$state(…)`, `$derived.by(…)`, `$foo(…)`. */
 export type RuneCall = { node: Estree; name: string };
 
 export type Bindings = {
 	references: Reference[];
 	memberWrites: MemberWrite[];
 	runeCalls: RuneCall[];
+	/** The identifiers of declarations that take a rune name. */
+	reserved: Estree[];
 	/** The reference an identifier node is, if it is one. */
 	reference(node: Estree): Reference | undefined;
 	runeCall(node: Estree): RuneCall | undefined;
@@ -76,8 +85,11 @@ class Scope {
 		}
 		return null;
 	}
-	declare(name: string, kind: SymbolKind, extra: Partial<Symbol> = {}) {
-		if (!this.vars.has(name)) this.vars.set(name, { name, kind, defs: [], reassigned: false, ...extra });
+	/** Whether `name` was newly declared here. */
+	declare(name: string, kind: SymbolKind, extra: Partial<Symbol> = {}): boolean {
+		if (this.vars.has(name)) return false;
+		this.vars.set(name, { name, kind, defs: [], reassigned: false, ...extra });
+		return true;
 	}
 }
 
@@ -86,10 +98,10 @@ export function bind(component: Component): Bindings {
 	const top = new Scope();
 	const script = component.script;
 	if (script) {
-		for (const d of script.state) top.declare(d.id.name, 'state');
-		for (const d of script.derived) top.declare(d.id.name, 'derived');
-		for (const d of script.props) top.declare(d.local.name, 'prop');
-		for (const d of script.styles) top.declare(d.id.name, 'local', { style: d.object });
+		for (const d of script.state) binder.declare(top, d.id, 'state');
+		for (const d of script.derived) binder.declare(top, d.id, 'derived');
+		for (const d of script.props) binder.declare(top, d.local, 'prop');
+		for (const d of script.styles) binder.declare(top, d.id, 'local', { style: d.object });
 		binder.hoist(script.body, top);
 		for (const statement of script.body) if (statement.type !== 'ImportDeclaration') binder.visit(statement, top);
 	}
@@ -102,6 +114,7 @@ export function bind(component: Component): Bindings {
 		references: binder.references,
 		memberWrites: binder.memberWrites,
 		runeCalls: binder.runeCalls,
+		reserved: binder.reserved,
 		reference: (node) => byNode.get(node),
 		runeCall: (node) => calls.get(node),
 		topLevel: (name) => top.vars.get(name) ?? null
@@ -114,6 +127,7 @@ class Binder {
 	references: Reference[] = [];
 	memberWrites: MemberWrite[] = [];
 	runeCalls: RuneCall[] = [];
+	reserved: Estree[] = [];
 	/** The scope holding each function's parameters. */
 	private paramScopes = new Map<Estree, Scope>();
 	/**
@@ -138,7 +152,7 @@ class Binder {
 			if (!scope) continue;
 			fn.params.forEach((param: Estree, i: number) => {
 				if (!receiver) {
-					if (i === 0) for (const name of patternNames(param)) scope.get(name)!.event = true;
+					if (i === 0) for (const id of patternIdentifiers(param)) scope.get(id.name)!.event = true;
 				} else if (!(reducer && i === 0)) this.define(param, scope, receiver, false);
 			});
 		}
@@ -148,18 +162,23 @@ class Binder {
 		this.references.push({ node, symbol: scope.get(node.name), access, shorthand: false, destructured: null, ...extra });
 	}
 
+	/** Declares `id` in `scope`, unless it already is, and records a reserved name. */
+	declare(scope: Scope, id: Estree, kind: SymbolKind, extra: Partial<Symbol> = {}) {
+		if (scope.declare(id.name, kind, extra) && isRuneName(id.name)) this.reserved.push(id);
+	}
+
 	/** Declares, as locals, the names `statements` introduce in their block. */
 	hoist(statements: Estree[], scope: Scope) {
 		for (const s of statements) {
-			const names =
+			const ids =
 				s.type === 'VariableDeclaration'
-					? s.declarations.flatMap((d: Estree) => patternNames(d.id))
+					? s.declarations.flatMap((d: Estree) => patternIdentifiers(d.id))
 					: (s.type === 'FunctionDeclaration' || s.type === 'ClassDeclaration') && s.id
-						? [s.id.name]
+						? [s.id]
 						: s.type === 'ImportDeclaration'
-							? s.specifiers.map((sp: Estree) => sp.local.name)
+							? s.specifiers.map((sp: Estree) => sp.local)
 							: [];
-			for (const name of names) scope.declare(name, 'local');
+			for (const id of ids) this.declare(scope, id, 'local');
 			if (s.type === 'FunctionDeclaration' && s.id) scope.get(s.id.name)!.defs.push({ value: s, whole: true });
 		}
 	}
@@ -191,9 +210,9 @@ class Binder {
 			case 'ArrowFunctionExpression': {
 				const inner = new Scope(scope);
 				this.paramScopes.set(node, inner);
-				if (node.type === 'FunctionExpression' && node.id) inner.declare(node.id.name, 'local');
+				if (node.type === 'FunctionExpression' && node.id) this.declare(inner, node.id, 'local');
 				for (const param of node.params) {
-					for (const name of patternNames(param)) inner.declare(name, 'local');
+					for (const id of patternIdentifiers(param)) this.declare(inner, id, 'local');
 					this.pattern(param, inner, false);
 					this.define(param, inner, null, true);
 				}
@@ -225,7 +244,7 @@ class Binder {
 			}
 			case 'CatchClause': {
 				const inner = new Scope(scope);
-				for (const name of patternNames(node.param)) inner.declare(name, 'local');
+				for (const id of patternIdentifiers(node.param)) this.declare(inner, id, 'local');
 				this.pattern(node.param, inner, false);
 				return this.visit(node.body, inner);
 			}
@@ -262,9 +281,9 @@ class Binder {
 	private call(node: Estree, scope: Scope) {
 		const callee = node.callee;
 		const name =
-			callee.type === 'Identifier' && callee.name.startsWith('$') && !scope.get(callee.name)
+			callee.type === 'Identifier' && isRuneName(callee.name)
 				? callee.name
-				: callee.type === 'MemberExpression' && !callee.computed && callee.object.type === 'Identifier' && callee.object.name.startsWith('$') && !scope.get(callee.object.name)
+				: callee.type === 'MemberExpression' && !callee.computed && callee.object.type === 'Identifier' && isRuneName(callee.object.name)
 					? `${callee.object.name}.${callee.property.name}`
 					: null;
 		if (name) this.runeCalls.push({ node, name });
@@ -373,7 +392,7 @@ class Binder {
 	/** A node list is a block: the snippets declared in it are visible throughout it, and only there. */
 	template(nodes: TemplateNode[], outer: Scope) {
 		const scope = new Scope(outer);
-		for (const node of nodes) if (node.type === 'snippet') scope.declare(node.name.name, 'local');
+		for (const node of nodes) if (node.type === 'snippet') this.declare(scope, node.name, 'local');
 		for (const node of nodes) {
 			if (node.type === 'text') this.inline(node.content, scope);
 			else if (node.type === 'element') {
@@ -405,8 +424,8 @@ class Binder {
 			} else if (node.type === 'each') {
 				this.visit(node.list, scope);
 				const inner = new Scope(scope);
-				inner.declare(node.item.name, 'item');
-				if (node.index) inner.declare(node.index, 'item');
+				this.declare(inner, node.item, 'item');
+				if (node.index) this.declare(inner, node.index, 'item');
 				this.visit(node.key, inner);
 				this.template(node.body, inner);
 			} else if (node.type === 'component') {
@@ -415,7 +434,7 @@ class Binder {
 				if (node.children) this.template(node.children, scope);
 			} else if (node.type === 'snippet') {
 				const inner = new Scope(scope);
-				for (const param of node.params) inner.declare(param.name, 'param');
+				for (const param of node.params) this.declare(inner, param, 'param');
 				this.template(node.body, inner);
 			} else if (node.type === 'render') {
 				this.visit(node.callee, scope);

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { analyze } from '../src';
+import { analyze, compile } from '../src';
 import { bind } from '../src/bind';
 import { Reporter } from '../src/diagnostics';
 import { lower } from '../src/lower';
@@ -41,6 +41,27 @@ test('the contents of unsupported constructs are still checked', () => {
 		'{#each} needs `as item` with a plain identifier',
 		'class= is not supported; use style={...}'
 	]);
+});
+
+test('a declaration cannot take a rune name, so a rune call is never a user function', () => {
+	const reserved = (name: string) => `"${name}": names beginning with "$" are reserved for Patch runes`;
+	// Shadowing $state used to compile `$state(1)` as a plain call and read `x.v`.
+	expect(messages(`<script>function $state(v) { return v; } let x = $state(1);</script><p>{x}</p>`)).toEqual([reserved('$state')]);
+	expect(messages(`<script>const $state = (v) => v; let x = $state(1);</script><p>{x}</p>`)).toEqual([reserved('$state')]);
+	expect(messages(`<script>import { $state } from './runes.js'; let x = $state(1);</script><p>{x}</p>`)).toEqual([reserved('$state')]);
+	expect(messages(`<script>function f($foo, { a: $_bar }) { try {} catch ($$e) {} }</script><p>x</p>`)).toEqual([reserved('$foo'), reserved('$_bar'), reserved('$$e')]);
+	expect(messages(`{#each [1] as $item, $i ($item)}<p>{$i}</p>{/each}{#snippet $s($p)}<p>{$p}</p>{/snippet}`)).toEqual([
+		reserved('$item'),
+		reserved('$i'),
+		reserved('$s'),
+		reserved('$p')
+	]);
+});
+
+test('a bare $ is an ordinary name', () => {
+	const source = `<script>const $ = (v) => v; let n = $state($(1)); const doubled = $derived(n * 2);</script><p>{$(doubled)}</p>`;
+	expect(messages(source)).toEqual([]);
+	expect(compile(source).module).toContain('$$rt.state("n", () => $(1))');
 });
 
 test('diagnostics are in source order', () => {

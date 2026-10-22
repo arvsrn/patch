@@ -37,6 +37,7 @@ const READ_ONLY: Record<string, (name: string) => string> = {
 };
 
 export function checkScript(component: Component, bindings: Bindings, reporter: Reporter) {
+	for (const id of bindings.reserved) reporter.report(id, `"${id.name}": names beginning with "$" are reserved for Patch runes`);
 	references(bindings, reporter);
 	memberWrites(bindings, reporter);
 	runeCalls(component, bindings, reporter);
@@ -103,22 +104,19 @@ function memberWrites(bindings: Bindings, reporter: Reporter) {
 	}
 }
 
+/**
+ * `$style` may appear anywhere. Every other rune is a top-level declaration
+ * or statement, whose shape and arguments are checked where it is lowered.
+ */
 function runeCalls(component: Component, bindings: Bindings, reporter: Reporter) {
 	const allowed = component.script?.runes ?? new Set();
 	for (const { node, name } of bindings.runeCalls) {
-		const count = node.arguments.length;
 		if (name === '$style') {
-			if (count !== 1) reporter.report(node, '$style takes exactly one object');
+			if (node.arguments.length !== 1) reporter.report(node, '$style takes exactly one object');
 		} else if (!allowed.has(node)) {
 			const where = name === '$effect' ? 'a top-level statement' : name === '$props' ? 'a top-level `let { ... } = $props()` declaration' : 'a top-level `let x = ...` declaration';
 			reporter.report(node, RUNES.includes(name) ? `${name}(...) is only allowed as ${where}` : `${name} is not supported`);
-		} else if (name === '$props') {
-			// Checked where it is lowered.
-		} else if (name === '$state') {
-			if (count > 1) reporter.report(node, '$state takes at most one initial value');
-		} else if (name === '$derived') {
-			if (count !== 1) reporter.report(node, '$derived takes exactly one expression');
-		} else if (count !== 1) reporter.report(node, `${name} takes exactly one function`);
+		}
 	}
 }
 
