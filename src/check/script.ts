@@ -7,6 +7,7 @@ import { isSignal, type Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
 import { fromDom, sharedWith } from '../flow';
 import { expressions, type Component } from '../ir';
+import { RUNES } from '../schema/program';
 
 // Built-in methods that change their receiver, and functions that change their first argument.
 const ARRAY_MUTATORS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin']);
@@ -26,7 +27,6 @@ const VISUAL_ESCAPES = new Set([
 	'getBoundingClientRect', 'adoptedStyleSheets', 'styleSheets'
 ]);
 const DOCUMENT_ESCAPES = new Set(['body', 'documentElement', 'head', 'write', 'writeln']);
-const RUNES = ['$state', '$derived', '$derived.by', '$effect', '$props'];
 
 /** Why a reactive variable that is not `$state` cannot be changed. */
 const READ_ONLY: Record<string, (name: string) => string> = {
@@ -115,7 +115,7 @@ function runeCalls(component: Component, bindings: Bindings, reporter: Reporter)
 			if (node.arguments.length !== 1) reporter.report(node, '$style takes exactly one object');
 		} else if (!allowed.has(node)) {
 			const where = name === '$effect' ? 'a top-level statement' : name === '$props' ? 'a top-level `let { ... } = $props()` declaration' : 'a top-level `let x = ...` declaration';
-			reporter.report(node, RUNES.includes(name) ? `${name}(...) is only allowed as ${where}` : `${name} is not supported`);
+			reporter.report(node, name in RUNES ? `${name}(...) is only allowed as ${where}` : `${name} is not supported`);
 		}
 	}
 }

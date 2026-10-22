@@ -15,16 +15,9 @@
 
 import { isSignal, type Bindings } from '../bind';
 import type { Component } from '../ir';
+import { RUNES, type Rune } from '../schema/program';
 import type { Styles } from '../styles';
 import type { Edits } from './edits';
-
-const CALLEES: Record<string, string> = {
-	$state: '$$rt.state',
-	$derived: '$$rt.derived',
-	'$derived.by': '$$rt.derived',
-	$effect: '$$rt.effect',
-	$style: '$$rt.style'
-};
 
 /** Records every script and template expression edit. Returns the script body and its imports. */
 export function emitScript(component: Component, bindings: Bindings, styles: Styles, source: string, edits: Edits) {
@@ -52,7 +45,8 @@ export function emitScript(component: Component, bindings: Bindings, styles: Sty
 	const stateIds = new Map(script?.state.map((d) => [d.call, d.info.id]));
 	for (const { node, name } of bindings.runeCalls) {
 		if (name === '$props') continue;
-		edits.replace(node.callee.start, node.callee.end, CALLEES[name]);
+		// Only runes reach here: anything else is reported.
+		edits.replace(node.callee.start, node.callee.end, `$$rt.${RUNES[name as Rune]}`);
 		const [first] = node.arguments;
 		if (name === '$state') {
 			const id = JSON.stringify(stateIds.get(node));
@@ -76,7 +70,7 @@ export function emitScript(component: Component, bindings: Bindings, styles: Sty
 	if (declarator) {
 		const props = script.props.map(({ key, local, fallback }) => {
 			const fn = fallback ? `, () => (${edits.render(fallback.start, fallback.end)})` : '';
-			return `${local.name} = $$rt.prop(${JSON.stringify(key)}${fn})`;
+			return `${local.name} = $$rt.${RUNES.$props}(${JSON.stringify(key)}${fn})`;
 		});
 		edits.replace(declarator.start, declarator.end, props.join(', ') || '$$props = null');
 	}

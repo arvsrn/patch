@@ -7,6 +7,7 @@
 
 import type { Estree } from './ast';
 import type { Span } from './diagnostics';
+import type { PatchExport } from './schema/program';
 
 export type Component = {
 	script: Script | null;
@@ -29,7 +30,7 @@ export type Script = {
 	/** The declarator holding `$props()`. */
 	propsDeclarator: Estree | null;
 	/** `import { getContext as get } from 'patch'`: local name → imported name. */
-	patchImports: { local: string; imported: string }[];
+	patchImports: { local: string; imported: PatchExport }[];
 	/** `let x = $derived(...)` / `$derived.by(...)`. */
 	derived: DerivedDecl[];
 	/** Top-level `$effect(...)` statements. */

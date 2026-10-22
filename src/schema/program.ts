@@ -30,6 +30,21 @@ export type RuntimeApi = {
 	getContext: (key: object) => unknown;
 };
 
+/** The runes, and the `$$rt` function each compiles to. */
+export const RUNES = {
+	$state: 'state',
+	$derived: 'derived',
+	'$derived.by': 'derived',
+	$effect: 'effect',
+	$style: 'style',
+	$props: 'prop'
+} as const satisfies Record<string, keyof RuntimeApi>;
+export type Rune = keyof typeof RUNES;
+
+/** What `import { … } from 'patch'` provides in a .pat script: the `$$rt` function of the same name. */
+export const PATCH_EXPORTS = ['createContext', 'setContext', 'getContext'] as const satisfies readonly (keyof RuntimeApi)[];
+export type PatchExport = (typeof PATCH_EXPORTS)[number];
+
 export type Program = (rt: RuntimeApi) => ProgramNode[];
 
 export type ProgramNode = TextNode | ElementNode | IfNode | EachNode | PortalNode | ComponentNode | RenderNode;

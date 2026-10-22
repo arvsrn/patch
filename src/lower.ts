@@ -10,6 +10,7 @@ import { literal, NOT_STATIC, unwrap, type Estree } from './ast';
 import type { Reporter, Span } from './diagnostics';
 import type { Attribute, AttributeValue, Component, ComponentUse, Each, Element, If, Inline, Render, Script, Snippet, Tag, TemplateNode } from './ir';
 import type { SvelteAst } from './parse';
+import { PATCH_EXPORTS } from './schema/program';
 
 type Svelte = any;
 
@@ -49,8 +50,6 @@ const UNSUPPORTED_DIRECTIVES: Record<string, string> = {
 	AttachTag: '{@attach} is not supported'
 };
 const isTag = (name: string): name is Tag => name in KINDS;
-/** What `import { … } from 'patch'` provides. */
-const PATCH_EXPORTS = ['createContext', 'setContext', 'getContext'];
 
 /** A node's name when it has one (elements, attributes), else the node. */
 const nameSpan = (node: Svelte): Span =>
@@ -109,8 +108,9 @@ function lowerScript(instance: Svelte, source: string, reporter: Reporter): Scri
 				if (statement.importKind === 'type') continue;
 				for (const sp of statement.specifiers) {
 					if (sp.importKind === 'type') continue;
-					const imported = sp.type === 'ImportSpecifier' ? (sp.imported.name ?? sp.imported.value) : null;
-					if (imported && PATCH_EXPORTS.includes(imported)) script.patchImports.push({ local: sp.local.name, imported });
+					const name = sp.type === 'ImportSpecifier' ? (sp.imported.name ?? sp.imported.value) : null;
+					const imported = PATCH_EXPORTS.find((e) => e === name);
+					if (imported) script.patchImports.push({ local: sp.local.name, imported });
 					else reporter.report(sp, `"patch" provides ${PATCH_EXPORTS.join(', ')} (and the type Context)`);
 				}
 			}
