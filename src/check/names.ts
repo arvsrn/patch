@@ -1,8 +1,8 @@
-// App-wide names: portal ids. A name links two places in the app that may be
-// far apart, in different components. Within one file these checks find
-// declarations that can be rendered twice at the same time and an element
-// that would render into itself. Whether a used portal exists depends on
-// which components render the file, so that is checked at runtime.
+// Portal ids. An id links two places in the app that may be far apart, in
+// different components. Within one file these checks find portals that can
+// be rendered twice at the same time and an element that would render into
+// itself. Whether a used portal exists depends on which components render
+// the file, so that is checked at runtime.
 
 import { literal, NOT_STATIC } from '../ast';
 import type { Reporter, Span } from '../diagnostics';
@@ -13,9 +13,6 @@ import type { AttributeValue, If, TemplateNode } from '../ir';
  * `{#each}` repeats it in every item (no `{#if}` in between).
  */
 type Site = { branches: [If, number][]; repeated: boolean };
-
-/** A name declared once in the template, by `<portal id>`. */
-type Declaration = { name: string; span: Span; site: Site };
 
 /** `"name"` or `{"name"}`: the string, null when it is computed, or true for a bare attribute. */
 function staticValue(value: AttributeValue): string | null | true {
@@ -30,15 +27,8 @@ function staticValue(value: AttributeValue): string | null | true {
 /** Two sites that are never rendered together: different branches of the same `{#if}`. */
 const exclusive = (a: Site, b: Site) => a.branches.some(([node, i]) => b.branches.some(([other, j]) => node === other && i !== j));
 
-function duplicates(declarations: Declaration[], describe: (name: string) => string, reporter: Reporter) {
-	declarations.forEach((d, i) => {
-		if (declarations.slice(0, i).some((e) => e.name === d.name && !exclusive(d.site, e.site)))
-			reporter.report(d.span, `duplicate ${describe(d.name)}: another one can be rendered at the same time`);
-	});
-}
-
 export function checkNames(template: TemplateNode[], reporter: Reporter) {
-	const portals: Declaration[] = [];
+	const portals: { name: string; span: Span; site: Site }[] = [];
 
 	// `into`: static portal names of the enclosing elements.
 	const walk = (nodes: TemplateNode[], site: Site, into: string[]) => {
@@ -66,5 +56,8 @@ export function checkNames(template: TemplateNode[], reporter: Reporter) {
 	};
 	walk(template, { branches: [], repeated: false }, []);
 
-	duplicates(portals, (name) => `<portal id="${name}">`, reporter);
+	portals.forEach((p, i) => {
+		if (portals.slice(0, i).some((q) => q.name === p.name && !exclusive(p.site, q.site)))
+			reporter.report(p.span, `duplicate <portal id="${p.name}">: another one can be rendered at the same time`);
+	});
 }

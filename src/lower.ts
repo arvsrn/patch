@@ -6,7 +6,7 @@
 // (and, for an unsupported container, its children), so later phases only
 // ever see valid PAT and one pass surfaces as many problems as possible.
 
-import { literal, NOT_STATIC, unwrap, type Estree } from './ast';
+import { unwrap, type Estree } from './ast';
 import type { Reporter, Span } from './diagnostics';
 import type { Attribute, AttributeValue, Component, ComponentUse, Each, Element, If, Inline, Render, Script, Snippet, Tag, TemplateNode } from './ir';
 import type { SvelteAst } from './parse';
@@ -62,7 +62,7 @@ export function lower(ast: SvelteAst, source: string, reporter: Reporter): Compo
 	if (a.module) reporter.report(a.module, '<script module> is not supported in v0');
 	if (a.options) reporter.report(a.options, '<svelte:options> is not supported');
 	return {
-		script: a.instance ? lowerScript(a.instance, source, reporter) : null,
+		script: a.instance ? lowerScript(a.instance, reporter) : null,
 		template: new TemplateLowering(source, reporter).children(a.fragment.nodes)
 	};
 }
@@ -77,7 +77,7 @@ const calleeName = (callee: Estree): string | null => {
 	return null;
 };
 
-function lowerScript(instance: Svelte, source: string, reporter: Reporter): Script {
+function lowerScript(instance: Svelte, reporter: Reporter): Script {
 	const program = instance.content;
 	const lang = instance.attributes.find((a: Svelte) => a.name === 'lang')?.value?.[0]?.data === 'ts' ? 'ts' : 'js';
 	const script: Script = {
@@ -87,8 +87,6 @@ function lowerScript(instance: Svelte, source: string, reporter: Reporter): Scri
 		imports: [],
 		state: [],
 		derived: [],
-		effects: [],
-		styles: [],
 		props: [],
 		propsDeclarator: null,
 		patchImports: [],
@@ -137,31 +135,14 @@ function lowerScript(instance: Svelte, source: string, reporter: Reporter): Scri
 						reporter.report(d.id, `${rune} must be assigned to a plain identifier`);
 						continue;
 					}
-					if (rune !== '$state') script.derived.push({ id: d.id, call: init, by: rune === '$derived.by' });
-					else {
-						const arg = init.arguments[0];
-						const value = arg ? literal(arg) : undefined;
-						script.state.push({
-							id: d.id,
-							call: init,
-							info: {
-								id: d.id.name,
-								name: d.id.name,
-								...reporter.position(d.start),
-								defaultSource: arg ? source.slice(arg.start, arg.end) : 'undefined',
-								...(value === NOT_STATIC ? {} : { defaultValue: value })
-							}
-						});
-					}
-				} else if (rune === '$style' && statement.kind === 'const' && d.id.type === 'Identifier' && unwrap(init.arguments[0])?.type === 'ObjectExpression') {
-					script.styles.push({ id: d.id, object: unwrap(init.arguments[0]) });
+					if (rune !== '$state') script.derived.push(d.id);
+					else script.state.push({ id: d.id, call: init, info: { id: d.id.name } });
 				}
 			}
 		} else if (statement.type === 'ExpressionStatement') {
 			const call = unwrap(statement.expression);
 			if (call.type === 'CallExpression' && calleeName(call.callee) === '$effect') {
 				script.runes.add(call);
-				script.effects.push(call);
 				runeArguments('$effect', call, reporter);
 			}
 		}

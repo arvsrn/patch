@@ -31,19 +31,13 @@ export type Script = {
 	propsDeclarator: Estree | null;
 	/** `import { getContext as get } from 'patch'`: local name → imported name. */
 	patchImports: { local: string; imported: PatchExport }[];
-	/** `let x = $derived(...)` / `$derived.by(...)`. */
-	derived: DerivedDecl[];
-	/** Top-level `$effect(...)` statements. */
-	effects: Estree[];
-	/** `const x = $style({...})`: identifiers a style= may refer to. */
-	styles: StyleDecl[];
+	/** The names `let x = $derived(...)` / `$derived.by(...)` declares. */
+	derived: Estree[];
 	/** The `$state`/`$derived`/`$effect`/`$props` calls in a position where PAT accepts them, whatever their shape. */
 	runes: Set<Estree>;
 };
 
 export type StateDecl = { id: Estree; call: Estree; info: StateInfo };
-export type DerivedDecl = { id: Estree; call: Estree; by: boolean };
-export type StyleDecl = { id: Estree; object: Estree };
 /** `key: local = fallback` in `let { ... } = $props()`. */
 export type PropDecl = { key: string; local: Estree; fallback: Estree | null };
 
@@ -53,12 +47,6 @@ export type StateInfo = {
 	 * In a component instance it is prefixed with the instance's path.
 	 */
 	id: string;
-	name: string;
-	line: number;
-	column: number;
-	defaultSource: string;
-	/** Present when the initializer is a literal. */
-	defaultValue?: unknown;
 };
 
 // ---------------------------------------------------------------- template

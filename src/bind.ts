@@ -18,11 +18,10 @@ export type SymbolKind = 'state' | 'derived' | 'item' | 'prop' | 'param' | 'loca
  */
 export type Def = { value: Estree; whole: boolean };
 
-/** A declared name. `style` is the object of a top-level `const x = $style({...})`. */
+/** A declared name. */
 export type Symbol = {
 	name: string;
 	kind: SymbolKind;
-	style?: Estree;
 	/** Values given to it by its declaration and assignments. */
 	defs: Def[];
 	/** Assigned or updated after its declaration. */
@@ -86,9 +85,9 @@ class Scope {
 		return null;
 	}
 	/** Whether `name` was newly declared here. */
-	declare(name: string, kind: SymbolKind, extra: Partial<Symbol> = {}): boolean {
+	declare(name: string, kind: SymbolKind): boolean {
 		if (this.vars.has(name)) return false;
-		this.vars.set(name, { name, kind, defs: [], reassigned: false, ...extra });
+		this.vars.set(name, { name, kind, defs: [], reassigned: false });
 		return true;
 	}
 }
@@ -99,9 +98,8 @@ export function bind(component: Component): Bindings {
 	const script = component.script;
 	if (script) {
 		for (const d of script.state) binder.declare(top, d.id, 'state');
-		for (const d of script.derived) binder.declare(top, d.id, 'derived');
+		for (const id of script.derived) binder.declare(top, id, 'derived');
 		for (const d of script.props) binder.declare(top, d.local, 'prop');
-		for (const d of script.styles) binder.declare(top, d.id, 'local', { style: d.object });
 		binder.hoist(script.body, top);
 		for (const statement of script.body) if (statement.type !== 'ImportDeclaration') binder.visit(statement, top);
 	}
@@ -163,8 +161,8 @@ class Binder {
 	}
 
 	/** Declares `id` in `scope`, unless it already is, and records a reserved name. */
-	declare(scope: Scope, id: Estree, kind: SymbolKind, extra: Partial<Symbol> = {}) {
-		if (scope.declare(id.name, kind, extra) && isRuneName(id.name)) this.reserved.push(id);
+	declare(scope: Scope, id: Estree, kind: SymbolKind) {
+		if (scope.declare(id.name, kind) && isRuneName(id.name)) this.reserved.push(id);
 	}
 
 	/** Declares, as locals, the names `statements` introduce in their block. */

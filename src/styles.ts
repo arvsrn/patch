@@ -93,7 +93,6 @@ export function collectStyles(component: Component, bindings: Bindings): Styles 
 				return NONE;
 			case 'Identifier': {
 				const symbol = bindings.reference(e)?.symbol;
-				if (symbol?.style) return object(symbol.style, false, true);
 				if (!symbol) return e.name === 'undefined' ? NONE : UNKNOWN;
 				const value = valueOf(e);
 				return value && !path.seen.has(symbol) ? through(value, true, symbol) : UNKNOWN;

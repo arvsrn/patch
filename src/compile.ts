@@ -7,7 +7,7 @@
 // default-exports `program($$rt)` (see schema/program.ts).
 
 import { existsSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { bind, isSignal, type Bindings } from './bind';
 import { checkNames } from './check/names';
 import { checkScript } from './check/script';
@@ -24,7 +24,6 @@ import { collectStyles, type Styles } from './styles';
 import { globalNames, typecheck, type TemplateWrite } from './typecheck';
 
 export type Compiled = {
-	filename: string;
 	/** Absolute path of the .pat file; the script's relative imports resolve from it. */
 	path: string;
 	/** ES module source: the script's imports, then `export default function program($$rt) { ... }`. */
@@ -45,7 +44,7 @@ export type Compiled = {
  */
 export type ComponentSite = { tag: string; id: string; path: string; repeated: boolean };
 
-export type Analysis = { diagnostics: Diagnostic[]; state: StateInfo[] };
+export type Analysis = { diagnostics: Diagnostic[] };
 
 type Front = { component: Component; bindings: Bindings; styles: Styles };
 
@@ -138,8 +137,8 @@ function check(source: string, filename: string, reporter: Reporter): Front | nu
 /** Validation only: every diagnostic, no code generation. */
 export function analyze(source: string, options: { filename?: string } = {}): Analysis {
 	const reporter = new Reporter(source);
-	const result = check(source, options.filename ?? 'app.pat', reporter);
-	return { diagnostics: reporter.diagnostics, state: result?.component.script?.state.map((d) => d.info) ?? [] };
+	check(source, options.filename ?? 'app.pat', reporter);
+	return { diagnostics: reporter.diagnostics };
 }
 
 /**
@@ -169,7 +168,6 @@ export function compile(source: string, filename = 'app.pat'): Compiled {
 	const imports = new Bun.Transpiler({ loader: 'js' }).scanImports(module).map((i) => i.path);
 	const info = component.script;
 	return {
-		filename: basename(filename),
 		path: resolve(filename),
 		module,
 		imports,
