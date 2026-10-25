@@ -24,14 +24,16 @@ const KINDS: Record<Tag, Element['kind']> = {
 	input: 'input',
 	textarea: 'textarea'
 };
-/** Attributes every element accepts (not an inline <span>). */
-const UNIVERSAL_ATTRIBUTES = ['portal'];
+/** Attributes every element accepts (not an inline <span>), besides any `aria-*` and `data-*` (see check/template.ts). */
+const UNIVERSAL_ATTRIBUTES = ['portal', 'id', 'title', 'role', 'tabindex', 'lang', 'dir'];
+const isOpenAttribute = (name: string) => name.startsWith('aria-') || name.startsWith('data-');
+const FORM_ATTRIBUTES = ['name', 'autocomplete', 'readonly', 'required', 'minlength', 'maxlength', 'autofocus', 'spellcheck', 'inputmode', 'enterkeyhint'];
 /** Attributes (other than style= and on*=) each tag accepts. */
 const ATTRIBUTES: Partial<Record<Tag, string[]>> = {
 	button: ['disabled'],
 	a: ['href', 'target', 'rel', 'download'],
-	input: ['value', 'placeholder', 'disabled', 'type'],
-	textarea: ['value', 'placeholder', 'disabled']
+	input: ['value', 'placeholder', 'disabled', 'type', ...FORM_ATTRIBUTES],
+	textarea: ['value', 'placeholder', 'disabled', ...FORM_ATTRIBUTES]
 };
 const UNSUPPORTED_NODES: Record<string, string> = {
 	HtmlTag: '{@html} is not supported',
@@ -430,7 +432,7 @@ class TemplateLowering {
 			} else if (/^on[a-z]+$/.test(a.name) && !inText) {
 				const handler = expressionOf(a);
 				if (handler) attributes.push({ type: 'event', name: a.name.slice(2), span, nameSpan: nameSpan(a), handler });
-			} else if (!inText && (UNIVERSAL_ATTRIBUTES.includes(a.name) || ATTRIBUTES[node.name as Tag]?.includes(a.name))) {
+			} else if (!inText && (UNIVERSAL_ATTRIBUTES.includes(a.name) || isOpenAttribute(a.name) || ATTRIBUTES[node.name as Tag]?.includes(a.name))) {
 				attributes.push({ type: 'attribute', name: a.name, span, nameSpan: nameSpan(a), value: attributeValue(a) });
 			} else {
 				this.reporter.report(nameSpan(a), `attribute "${a.name}" is not supported on ${where}`);

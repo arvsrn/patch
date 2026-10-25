@@ -34,11 +34,14 @@ type Project = {
 	files: Map<string, { text: string; version: number }>;
 	runes: string;
 	globals?: Set<string>;
-	events?: DomEvents;
+	dom?: DomNames;
 };
 
-/** The DOM events of HTML and SVG elements, by name (`click`, not `onclick`). */
-export type DomEvents = { html: Set<string>; svg: Set<string> };
+/**
+ * Names the DOM defines: the events of HTML and SVG elements (`click`, not
+ * `onclick`), and the ARIA attributes (`aria-label`).
+ */
+export type DomNames = { events: { html: Set<string>; svg: Set<string> }; aria: Set<string> };
 const projects = new Map<string, Project>();
 
 function project(file: string): Project {
@@ -86,20 +89,25 @@ export function globalNames(path: string): Set<string> {
 	return p.globals;
 }
 
-/** The events elements have, from the DOM lib: the keys of HTMLElementEventMap and SVGElementEventMap. */
-export function domEvents(path: string): DomEvents {
+/**
+ * From the DOM lib: events are the keys of HTMLElementEventMap and
+ * SVGElementEventMap; ARIA attributes are ARIAMixin's properties
+ * (`ariaLabel` is `aria-label`, `ariaLabelledByElements` is `aria-labelledby`).
+ */
+export function domNames(path: string): DomNames {
 	const p = project(path);
-	if (!p.events) {
+	if (!p.dom) {
 		const program = p.service.getProgram()!;
 		const checker = program.getTypeChecker();
 		const interfaces = checker.getSymbolsInScope(program.getSourceFile(p.runes)!, ts.SymbolFlags.Interface);
 		const keys = (name: string) => {
 			const symbol = interfaces.find((s) => s.name === name);
-			return new Set(symbol ? checker.getDeclaredTypeOfSymbol(symbol).getProperties().map((s) => s.name) : []);
+			return symbol ? checker.getDeclaredTypeOfSymbol(symbol).getProperties().map((s) => s.name) : [];
 		};
-		p.events = { html: keys('HTMLElementEventMap'), svg: keys('SVGElementEventMap') };
+		const aria = keys('ARIAMixin').filter((k) => k.startsWith('aria')).map((k) => `aria-${k.slice(4).replace(/Elements?$/, '').toLowerCase()}`);
+		p.dom = { events: { html: new Set(keys('HTMLElementEventMap')), svg: new Set(keys('SVGElementEventMap')) }, aria: new Set(aria) };
 	}
-	return p.events;
+	return p.dom;
 }
 
 let valueChecks = 0;

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -9,8 +9,9 @@ import { appLink } from '../src/runtime/navigation';
 import { mount } from '../src/runtime/dom';
 import { moduleState } from '../src/runtime/module-state';
 import { realize } from '../src/runtime/realize';
-import type { Pages, Program } from '../src/schema/program';
+import type { Pages } from '../src/schema/program';
 import { matchRoute, routeInfo, parseSegment, type RouteInfo } from '../src/schema/route';
+import { click, fakeWindow, install, program, settle } from './fake-dom';
 
 /** An app directory with these files under src/pages. */
 function pagesDir(files: Record<string, string>) {
@@ -123,138 +124,6 @@ test('a link is the app\'s only for a plain left click on a same-origin URL one 
 
 // ---------------------------------------------------------------- mounting
 
-/** A document just big enough for the DOM renderer. */
-class FakeNode {
-	parentNode: FakeElement | null = null;
-	get nextSibling(): FakeNode | null {
-		const kids = this.parentNode?.childNodes;
-		return kids?.[kids.indexOf(this) + 1] ?? null;
-	}
-	get previousSibling(): FakeNode | null {
-		const kids = this.parentNode?.childNodes;
-		return kids?.[kids.indexOf(this) - 1] ?? null;
-	}
-	remove() {
-		this.parentNode?.removeChild(this);
-	}
-}
-class FakeText extends FakeNode {
-	constructor(public data: string) {
-		super();
-	}
-}
-class FakeElement extends FakeNode {
-	childNodes: FakeNode[] = [];
-	attributes = new Map<string, string>();
-	listeners = new Map<string, Set<(event: any) => void>>();
-	style = { position: '', setProperty() {}, removeProperty() {} };
-	scrollTop = 0;
-	scrollLeft = 0;
-	constructor(public tag: string) {
-		super();
-	}
-	get children() {
-		return this.childNodes.filter((n) => n instanceof FakeElement);
-	}
-	insertBefore(node: FakeNode, before: FakeNode | null) {
-		node.parentNode?.removeChild(node);
-		const at = before ? this.childNodes.indexOf(before) : this.childNodes.length;
-		this.childNodes.splice(at, 0, node);
-		node.parentNode = this;
-		return node;
-	}
-	appendChild(node: FakeNode) {
-		return this.insertBefore(node, null);
-	}
-	removeChild(node: FakeNode) {
-		this.childNodes.splice(this.childNodes.indexOf(node), 1);
-		node.parentNode = null;
-		return node;
-	}
-	setAttribute(name: string, value: string) {
-		this.attributes.set(name, value);
-	}
-	getAttribute(name: string) {
-		return this.attributes.get(name) ?? null;
-	}
-	hasAttribute(name: string) {
-		return this.attributes.has(name);
-	}
-	removeAttribute(name: string) {
-		this.attributes.delete(name);
-	}
-	addEventListener(type: string, fn: (event: any) => void) {
-		if (!this.listeners.has(type)) this.listeners.set(type, new Set());
-		this.listeners.get(type)!.add(fn);
-	}
-	removeEventListener(type: string, fn: (event: any) => void) {
-		this.listeners.get(type)?.delete(fn);
-	}
-	closest(tag: string): FakeElement | null {
-		for (let el: FakeElement | null = this; el; el = el.parentNode) if (el.tag === tag) return el;
-		return null;
-	}
-	contains(node: FakeNode) {
-		for (let n: FakeNode | null = node; n; n = n.parentNode) if (n === this) return true;
-		return false;
-	}
-	get text(): string {
-		return this.childNodes.map((n) => (n instanceof FakeText ? n.data : n instanceof FakeElement ? n.text : '')).join('');
-	}
-	find(test: (el: FakeElement) => boolean): FakeElement | null {
-		for (const kid of this.children) {
-			if (test(kid)) return kid;
-			const found = kid.find(test);
-			if (found) return found;
-		}
-		return null;
-	}
-}
-
-/** A browser window over an in-memory history. */
-function fakeWindow(href: string) {
-	const listeners = new Set<() => void>();
-	const entries = [href];
-	let index = 0;
-	const win = {
-		location: { href },
-		pushes: [] as string[],
-		listeners,
-		history: {
-			pushState(_: unknown, __: string, url: string) {
-				win.pushes.push(url);
-				entries.splice(++index, entries.length, url);
-				win.location.href = url;
-			}
-		},
-		addEventListener: (_: 'popstate', fn: () => void) => listeners.add(fn),
-		removeEventListener: (_: 'popstate', fn: () => void) => listeners.delete(fn),
-		/** Back (-1) or forward (1), as the browser does it: the location moves, then popstate. */
-		go(delta: number) {
-			index += delta;
-			win.location.href = entries[index];
-			for (const fn of [...listeners]) fn();
-		}
-	};
-	return win;
-}
-
-const saved = { document: (globalThis as any).document, window: (globalThis as any).window, log: (globalThis as any).__log };
-afterEach(() => Object.assign(globalThis, { document: saved.document, window: saved.window, __log: saved.log }));
-
-function install(win?: ReturnType<typeof fakeWindow>) {
-	const doc = {
-		head: new FakeElement('head'),
-		createElement: (tag: string) => new FakeElement(tag),
-		createComment: () => new FakeNode(),
-		createTextNode: (data: string) => new FakeText(data)
-	};
-	const log: string[] = [];
-	Object.assign(globalThis, { document: doc, window: win, __log: log });
-	return { target: new FakeElement('div'), log };
-}
-
-const program = (source: string): Program => new Function(`return (${compile(source, 'page.pat').module.replace(/^export default /m, '')})`)();
 
 const LIST = program(`<script>
 	import { page } from 'patch';
@@ -275,14 +144,6 @@ const pages: Pages = {
 		{ ...route('/issues/[id]'), program: ISSUE }
 	],
 	notFound: NOT_FOUND
-};
-
-/** Lets queued effects and sizing run. */
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
-const click = (target: FakeElement, on: FakeElement, event: Record<string, unknown> = {}) => {
-	const e = { target: on, button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, defaultPrevented: false, preventDefault() { e.defaultPrevented = true; }, ...event };
-	for (const fn of target.listeners.get('click') ?? []) fn(e);
-	return e;
 };
 
 test('links and goto navigate through history; another route replaces the page, the same route keeps it', async () => {
@@ -399,4 +260,17 @@ test('module state outlives the pages that change it, and pages read it reactive
 	expect(target.text).toBe('b 1');
 	(globalThis as any).__ws.count = 5;
 	expect(target.text).toBe('b 5');
+});
+
+test('a navigation to a fragment scrolls to the element with that id', async () => {
+	const page = program(`<script>import { page } from 'patch';</script><p>{page.url.hash}</p><div id="notes"></div>`);
+	// A fragment of the current page is the browser's to scroll to; this one is another page's.
+	const from = program(`<a href="/x#notes">notes</a>`);
+	const { target } = install(undefined);
+	mount({ routes: [{ ...route('/x'), program: page }, { ...route('/y'), program: from }], notFound: NOT_FOUND }, target as any, { url: '/y' });
+	await settle();
+	click(target, target.find((el) => el.tag === 'a')!);
+	await settle();
+	expect(target.find((el) => el.getAttribute('id') === 'notes')!.scrolledIntoView).toBe(1);
+	expect(target.text).toContain('#notes');
 });

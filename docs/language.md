@@ -277,9 +277,11 @@ Elements accept only these attributes, plus `style=` and event handlers (`on…`
 | --- | --- |
 | `<button>` | `disabled` |
 | `<a>` | `href`, `target`, `rel`, `download` |
-| `<input>` | `value`, `placeholder`, `disabled`, `type` |
-| `<textarea>` | `value`, `placeholder`, `disabled` |
-| every element except inline spans | [`portal`](#portals) |
+| `<input>` | `value`, `placeholder`, `disabled`, `type`, and the form attributes |
+| `<textarea>` | `value`, `placeholder`, `disabled`, and the form attributes |
+| every element except inline spans | [`portal`](#portals), `id`, `title`, `role`, `tabindex`, `lang`, `dir`, `aria-*`, `data-*` |
+
+The form attributes are `name`, `autocomplete`, `readonly`, `required`, `minlength`, `maxlength`, `autofocus`, `spellcheck`, `inputmode` and `enterkeyhint`.
 | `<portal>` | only a static `id` |
 
 You can write an attribute value in these forms:
@@ -291,10 +293,19 @@ You can write an attribute value in these forms:
 ```
 
 - `disabled` is applied as `!!value`, so `disabled="false"` disables the element.
-- On other attributes, `true` sets the attribute with an empty value, and `false`, `null` and `undefined` remove it: `download={false}` is no `download`.
+- `aria-*`, `data-*` and `spellcheck` values are strings: `aria-expanded={open}` sets `"true"` or `"false"`.
+- On other attributes, `true` sets the attribute with an empty value, and `false` removes it: `download={false}` is no `download`, `required={true}` is `required`.
+- `null` and `undefined` remove any attribute.
+- Where a value is static, it is checked:
+  - `id`: no spaces, and unique among the elements of the file that can be rendered at the same time. A static `id` inside `{#each}` would repeat for every item, so it is an error; include the item: `id="row-{row.id}"`. Ids across components are not checked.
+  - `aria-*`: an ARIA attribute (from the DOM's `ARIAMixin`, so `aria-labelledby` and the rest are known); a misspelling suggests the nearest one.
+  - `role`: one or more WAI-ARIA 1.2 roles.
+  - `tabindex`: an integer. A positive one is a warning, since it moves the element ahead of the whole page in keyboard order.
+  - `dir`: `ltr`, `rtl` or `auto`.
+  - `data-*`: `data-` and lowercase letters, digits, `.`, `_` and `-`. The names the renderer uses itself (`data-p`, `data-w`, `data-h`, `data-sw`, `data-sh`, `data-dir`, `data-overflow`, `data-host`, `data-anchored`, `data-mixed`, `data-run`) are errors.
 - `type` must be a static string: `text`, `password`, `email`, `search`, `url`, or `tel`. The default is `text`.
 - `value` sets the field's current value. It is one-way: typing changes the field but not your state. The field is reset only when the expression's value changes.
-- Not allowed: `class`, `id` (except on `<portal>`), `title`, `aria-*`, any other attribute, spread attributes (`{...props}`), `class:`, `style:`, `on:event`, `use:`, `transition:`, `animate:`, and `{@attach}`.
+- Not allowed: `class`, any other attribute, spread attributes (`{...props}`), `class:`, `style:`, `on:event`, `use:`, `transition:`, `animate:`, and `{@attach}`.
 
 ### `{#if}`
 

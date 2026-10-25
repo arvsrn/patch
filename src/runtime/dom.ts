@@ -37,6 +37,7 @@ a[data-p]{text-decoration:none}
 [data-p]:focus-visible{outline:2px solid #2563eb!important;outline-offset:1px!important}
 [data-host]{width:100vw;height:100vh;overflow:auto;background:#fff}
 `;
+const STRING_BOOLEANS = (name: string) => name.startsWith('aria-') || name.startsWith('data-') || name === 'spellcheck';
 const FLEX_VALUE: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', 'space-between': 'space-between', baseline: 'baseline' };
 const px = (v: unknown) => (v === 'auto' ? 'auto' : `${v}px`);
 const kebab = (key: string) => key.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
@@ -282,7 +283,10 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 			const next = toText(value);
 			if (el.value !== next) el.value = next;
 		} else if (name === 'disabled') el.disabled = !!value;
-		else if (value === false || value === null || value === undefined) el.removeAttribute(name);
+		else if (value === null || value === undefined) el.removeAttribute(name);
+		// Their values are the strings "true" and "false"; elsewhere a boolean is the attribute's presence.
+		else if (STRING_BOOLEANS(name)) el.setAttribute(name, String(value));
+		else if (value === false) el.removeAttribute(name);
 		else el.setAttribute(name, value === true ? '' : toText(value));
 	};
 

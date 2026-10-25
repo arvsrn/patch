@@ -1,8 +1,9 @@
-// Portal ids. An id links two places in the app that may be far apart, in
-// different components. Within one file these checks find portals that can
-// be rendered twice at the same time and an element that would render into
-// itself. Whether a used portal exists depends on which components render
-// the file, so that is checked at runtime.
+// Portal ids and element ids. A portal id links two places in the app that
+// may be far apart, in different components; an element id names one element
+// of the document. Within one file these checks find a static id that can be
+// rendered twice at the same time (also by repeating it in an `{#each}`), and
+// an element that would render into itself. Whether a used portal exists
+// depends on which components render the file, so that is checked at runtime.
 
 import { literal, NOT_STATIC } from '../ast';
 import type { Reporter, Span } from '../diagnostics';
@@ -15,7 +16,7 @@ import type { AttributeValue, If, TemplateNode } from '../ir';
 type Site = { branches: [If, number][]; repeated: boolean };
 
 /** `"name"` or `{"name"}`: the string, null when it is computed, or true for a bare attribute. */
-function staticValue(value: AttributeValue): string | null | true {
+export function staticValue(value: AttributeValue): string | null | true {
 	if (value === true) return true;
 	if ('expression' in value) {
 		const v = literal(value.expression);
@@ -29,6 +30,7 @@ const exclusive = (a: Site, b: Site) => a.branches.some(([node, i]) => b.branche
 
 export function checkNames(template: TemplateNode[], reporter: Reporter) {
 	const portals: { name: string; span: Span; site: Site }[] = [];
+	const ids: { name: string; span: Span; site: Site }[] = [];
 
 	// `into`: static portal names of the enclosing elements.
 	const walk = (nodes: TemplateNode[], site: Site, into: string[]) => {
@@ -40,6 +42,14 @@ export function checkNames(template: TemplateNode[], reporter: Reporter) {
 			} else if (node.type === 'element') {
 				let inner = into;
 				for (const a of node.attributes) {
+					if (a.type === 'attribute' && a.name === 'id') {
+						const name = staticValue(a.value);
+						if (name === true || (typeof name === 'string' && !/^\S+$/.test(name))) reporter.report(a.nameSpan, 'id needs a value without spaces: id="name"');
+						else if (name !== null) {
+							ids.push({ name, span: a.nameSpan, site });
+							if (site.repeated) reporter.report(a.nameSpan, `id="${name}" is repeated by {#each}, once per item; make it unique per item: id="${name}-{item.id}"`);
+						}
+					}
 					if (a.type !== 'attribute' || a.name !== 'portal') continue;
 					const name = staticValue(a.value);
 					if (name === true || name === '') reporter.report(a.nameSpan, 'portal needs a name: portal="name"');
@@ -59,5 +69,9 @@ export function checkNames(template: TemplateNode[], reporter: Reporter) {
 	portals.forEach((p, i) => {
 		if (portals.slice(0, i).some((q) => q.name === p.name && !exclusive(p.site, q.site)))
 			reporter.report(p.span, `duplicate <portal id="${p.name}">: another one can be rendered at the same time`);
+	});
+	ids.forEach((p, i) => {
+		if (ids.slice(0, i).some((q) => q.name === p.name && !exclusive(p.site, q.site)))
+			reporter.report(p.span, `duplicate id="${p.name}": another element with it can be rendered at the same time`);
 	});
 }
