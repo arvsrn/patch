@@ -80,7 +80,13 @@ export type Input = ElementBase & { kind: 'input' | 'textarea' };
 export type Select = ElementBase & { kind: 'select' | 'optgroup'; children: TemplateNode[] };
 /** <option>: its label is its text. */
 export type Option = ElementBase & { kind: 'option'; content: Inline[] };
-export type Element = Frame | TextElement | Input | Select | Option;
+/**
+ * Inline SVG. `svg`: an <svg>, a leaf of the layout styled like other
+ * elements. `graphic`: an SVG element in it (any tag of schema/svg.ts), with
+ * any attributes and no style. Both hold SVG content.
+ */
+export type Svg = Omit<ElementBase, 'tag'> & { tag: string; kind: 'svg' | 'graphic'; children: TemplateNode[] };
+export type Element = Frame | TextElement | Input | Select | Option | Svg;
 
 export type Attribute =
 	| { type: 'attribute'; name: string; span: Span; nameSpan: Span; value: AttributeValue }
@@ -151,7 +157,7 @@ export type Render = { type: 'render'; span: Span; callee: Estree; args: Estree[
 export function fragments(node: TemplateNode): TemplateNode[][] {
 	switch (node.type) {
 		case 'element':
-			return node.kind === 'frame' || node.kind === 'select' || node.kind === 'optgroup' ? [node.children] : [];
+			return 'children' in node ? [node.children] : [];
 		case 'if':
 			return [...node.branches.map((b) => b.body), ...(node.otherwise ? [node.otherwise] : [])];
 		case 'each':

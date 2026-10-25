@@ -13,6 +13,7 @@ import { appLink, browserHistory, type NavigationWindow } from './navigation';
 import { createPortals } from './portals';
 import { reactive, type Cell, type Owner } from './reactive';
 import { createRouter, MEMORY_HISTORY } from './router';
+import { SVG_NS, svgSize } from '../schema/svg';
 
 const BASE_CSS = `
 html,body{margin:0;padding:0}
@@ -23,6 +24,9 @@ html,body{margin:0;padding:0}
 [data-p=input][data-w=hug],[data-p=textarea][data-w=hug]{width:var(--hug-w)}
 [data-p=textarea][data-h=hug]{height:var(--hug-h)}
 [data-p=input]::placeholder,[data-p=textarea]::placeholder{color:currentColor;opacity:.5}
+[data-p=svg]{display:block}
+[data-p=svg][data-w=hug]{width:var(--hug-w)}
+[data-p=svg][data-h=hug]{height:var(--hug-h)}
 [data-p=select]{display:block;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);background-size:4px 4px;background-position:right 10px center,right 6px center;background-repeat:no-repeat}
 [data-p=text]{display:block;white-space:pre}
 [data-p=text][data-w=fixed],[data-p=text][data-w=fill]{white-space:pre-wrap}
@@ -382,11 +386,42 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 	};
 
 	/** What mounted content belongs to: the component instance rendering it, and where it is (for ids). */
-	type Scope = { instance: Instance; place: Place; select?: () => unknown };
+	/** `select`: the value of the <select> being mounted into. `svg`: inside an <svg>. */
+	type Scope = { instance: Instance; place: Place; select?: () => unknown; svg?: boolean };
+
+	/** An <svg>: a leaf of the layout, hugging the size its attributes give (schema/svg.ts). */
+	const svgElement = (d: ElementNode) => {
+		const el = document.createElementNS(SVG_NS, 'svg') as unknown as HTMLElement;
+		el.setAttribute('data-p', 'svg');
+		bindStyle(el, d, 'svg');
+		bindAttributes(el, d, false);
+		const attr = (name: string) => (d.attrs[name] ? toText(withId(d.id, d.attrs[name])) : null);
+		effect(() => {
+			const { width, height } = svgSize({ width: attr('width'), height: attr('height'), viewBox: attr('viewBox') });
+			el.style.setProperty('--hug-w', `${width}px`);
+			el.style.setProperty('--hug-h', `${height}px`);
+			resizeLater();
+		});
+		return el;
+	};
+
+	/** An SVG element: only its attributes. It is SVG wherever its tag is written, so it needs an SVG parent. */
+	const graphic = (d: ElementNode, parent: Node) => {
+		if ((parent as Element).namespaceURI !== SVG_NS) throw new Error(`<${d.tag}> is SVG and must be rendered inside an <svg> (at ${d.id})`);
+		const el = document.createElementNS(SVG_NS, d.tag) as unknown as HTMLElement;
+		bindAttributes(el, d, false);
+		return el;
+	};
 
 	const mountNodes = (nodes: ProgramNode[], parent: Node, before: Node | null, scope: Scope) => {
 		for (const d of nodes) {
-			if (d.t === 'text') {
+			if (d.t === 'text' && scope.svg) {
+				// Text in SVG is the text nodes themselves.
+				for (const part of d.parts) {
+					const node = parent.insertBefore(document.createTextNode(typeof part === 'string' ? part : ''), before);
+					if (typeof part === 'function') effect(() => void (node.data = toText(part())));
+				}
+			} else if (d.t === 'text') {
 				const span = document.createElement('span');
 				span.setAttribute('data-p', 'text');
 				span.setAttribute('data-w', 'hug');
@@ -398,8 +433,9 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 					mountOption(d, parent, before, scope);
 					continue;
 				}
-				const el = element(d, d.tag, d.kind);
+				const el = d.kind === 'svg' ? svgElement(d) : d.kind === 'graphic' ? graphic(d, parent) : element(d, d.tag, d.kind);
 				if (d.kind === 'frame') mountNodes(d.kids, el, null, { ...scope, select: undefined });
+				else if (d.kind === 'svg' || d.kind === 'graphic') mountNodes(d.kids, el, null, { ...scope, select: undefined, svg: true });
 				else if (d.kind === 'text') mountInline(d.kids, el);
 				else if (d.kind === 'select') {
 					const value = d.attrs.value;

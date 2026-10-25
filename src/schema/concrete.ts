@@ -15,10 +15,15 @@ type Styled = { style: Omit<Style, 'anchor'>; anchor?: string | null };
 
 export type Run = { text: string; font: Font };
 
+/** Inline SVG as rendered: elements with their attributes, and text. */
+export type SvgContent = string | { tag: string; attrs: Record<string, string>; children: SvgContent[] };
+
 export type Concrete = Styled &
 	(
 		| { type: 'frame'; id: string; tag: string; font: Font; children: Concrete[] }
 		| { type: 'text'; id: string; tag: string | null; font: Font; runs: Run[] }
+		/** An <svg>: its attributes, the size it hugs to, and its content. */
+		| { type: 'svg'; id: string; tag: 'svg'; font: Font; attrs: Record<string, string>; size: { width: number; height: number }; children: SvgContent[] }
 		| {
 				type: 'input';
 				id: string;

@@ -29,7 +29,10 @@ export class FakeElement extends FakeNode {
 	childNodes: FakeNode[] = [];
 	attributes = new Map<string, string>();
 	listeners = new Map<string, Set<(event: any) => void>>();
-	style = { position: '', setProperty() {}, removeProperty() {} };
+	namespaceURI = 'http://www.w3.org/1999/xhtml';
+	/** Inline style properties set (`setProperty`), and `position` as the renderer reads it. */
+	css = new Map<string, string>();
+	style = { position: '', setProperty: (k: string, v: string) => void this.css.set(k, v), removeProperty: (k: string) => void this.css.delete(k) };
 	scrollTop = 0;
 	scrollLeft = 0;
 	scrolledIntoView = 0;
@@ -134,6 +137,7 @@ export function install(win?: ReturnType<typeof fakeWindow>) {
 		head: new FakeElement('head'),
 		getElementById: (id: string) => target.find((el) => el.getAttribute('id') === id),
 		createElement: (tag: string) => new FakeElement(tag),
+		createElementNS: (ns: string, tag: string) => Object.assign(new FakeElement(tag), { namespaceURI: ns }),
 		createComment: () => new FakeNode(),
 		createTextNode: (data: string) => new FakeText(data)
 	};

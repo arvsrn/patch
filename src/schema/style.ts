@@ -6,7 +6,7 @@
 import { ANCHOR_POSITIONS, isDesignNode, type DesignNode } from './anchor';
 
 /** What an element is for styling purposes. `inline` is an element nested in text. */
-export type ElementKind = 'frame' | 'text' | 'input' | 'textarea' | 'select' | 'inline';
+export type ElementKind = 'frame' | 'text' | 'input' | 'textarea' | 'select' | 'svg' | 'inline';
 /** What a style is checked for: an element kind, or `any` element (a `$style` on its own). */
 export type StyleKind = ElementKind | 'any';
 
@@ -179,6 +179,8 @@ const KINDS: Record<ElementKind, Longhand[]> = {
 	input: [...BOX, ...TYPO, ...PAINT, 'caretColor'],
 	textarea: [...BOX, ...TYPO, ...PAINT, 'caretColor'],
 	select: [...BOX, ...TYPO, ...PAINT],
+	// Typography for its <text>, and `color` for currentColor.
+	svg: [...BOX, ...TYPO, ...PAINT],
 	text: [...BOX, ...TYPO, 'textOverflow', 'maxLines'],
 	inline: [...TYPO.filter((k) => k !== 'textAlign'), ...INTERACTION]
 };
@@ -189,6 +191,7 @@ const KIND_LABEL: Record<StyleKind, string> = {
 	input: '<input>',
 	textarea: '<textarea>',
 	select: '<select>',
+	svg: '<svg>',
 	text: 'text elements (<p>, <span>, <h1>, <strong>, …); wrap the text in a <div> for boxes, padding and backgrounds',
 	inline: 'elements nested in text; only typography, cursor, userSelect and pointerEvents are allowed there'
 };

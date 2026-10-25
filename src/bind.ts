@@ -396,7 +396,7 @@ class Binder {
 			else if (node.type === 'element') {
 				this.visit(node.style, scope);
 				this.attributes(node.attributes, scope);
-				if (node.kind === 'frame' || node.kind === 'select' || node.kind === 'optgroup') this.template(node.children, scope);
+				if ('children' in node) this.template(node.children, scope);
 				if (node.kind === 'text' || node.kind === 'option') this.inline(node.content, scope);
 			} else if (node.type === 'if') {
 				for (const branch of node.branches) {

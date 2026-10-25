@@ -55,7 +55,7 @@ export function checkNames(template: TemplateNode[], reporter: Reporter) {
 					if (name === true || name === '') reporter.report(a.nameSpan, 'portal needs a name: portal="name"');
 					else if (name !== null) inner = [...into, name];
 				}
-				if (node.kind === 'frame' || node.kind === 'select' || node.kind === 'optgroup') walk(node.children, site, inner);
+				if ('children' in node) walk(node.children, site, inner);
 			} else if (node.type === 'if') {
 				node.branches.forEach((b, i) => walk(b.body, { repeated: false, branches: [...site.branches, [node, i]] }, into));
 				if (node.otherwise) walk(node.otherwise, { repeated: false, branches: [...site.branches, [node, node.branches.length]] }, into);

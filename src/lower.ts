@@ -11,13 +11,14 @@ import type { Reporter, Span } from './diagnostics';
 import type { Attribute, AttributeValue, Component, ComponentUse, Each, Element, If, Inline, ModuleStateDecl, Render, Script, Snippet, Tag, TemplateNode } from './ir';
 import type { SvelteAst } from './parse';
 import { PATCH_EXPORTS } from './schema/program';
+import { isSvgOnly, SVG_EXCLUDED, SVG_TAGS, SVG_TEXT } from './schema/svg';
 
 type Svelte = any;
 
 const FRAMES = ['main', 'div', 'button', 'a', 'nav', 'header', 'footer', 'section', 'article', 'aside', 'ul', 'ol', 'li', 'label', 'form'] as const;
 /** Text blocks; inside text, these are inline (as are <a> and <br>). */
 const TEXTS = ['p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'b', 'i', 'code', 'small', 's', 'mark'] as const;
-const KINDS: Record<Tag, Element['kind']> = {
+const KINDS: Record<Tag, Exclude<Element['kind'], 'svg' | 'graphic'>> = {
 	...(Object.fromEntries(FRAMES.map((t) => [t, 'frame'])) as Record<(typeof FRAMES)[number], 'frame'>),
 	...(Object.fromEntries(TEXTS.map((t) => [t, 'text'])) as Record<(typeof TEXTS)[number], 'text'>),
 	input: 'input',
@@ -269,16 +270,23 @@ class TemplateLowering {
 		private reporter: Reporter
 	) {}
 
-	/** Inside a <select>: where <option> and <optgroup> belong. */
-	private inSelect = false;
-	private within<T>(inSelect: boolean, fn: () => T): T {
-		const outer = this.inSelect;
-		this.inSelect = inSelect;
+	/**
+	 * What the nodes being lowered are in: HTML, a <select> (where <option>
+	 * and <optgroup> belong), an <svg>, or an SVG element whose text is
+	 * rendered (`svg-text`).
+	 */
+	private context: 'html' | 'select' | 'svg' | 'svg-text' = 'html';
+	private within<T>(context: TemplateLowering['context'], fn: () => T): T {
+		const outer = this.context;
+		this.context = context;
 		try {
 			return fn();
 		} finally {
-			this.inSelect = outer;
+			this.context = outer;
 		}
+	}
+	private get inSvg() {
+		return this.context === 'svg' || this.context === 'svg-text';
 	}
 
 	private unsupported(node: Svelte) {
@@ -290,8 +298,12 @@ class TemplateLowering {
 		const out: TemplateNode[] = [];
 		let group: Svelte[] = [];
 		const flush = () => {
-			const content = this.inline(group);
-			if (content.length) out.push({ type: 'text', span: { start: group[0].start, end: group[group.length - 1].end }, content });
+			const span = group.length ? { start: group[0].start, end: group[group.length - 1].end } : null;
+			// SVG collapses whitespace but keeps the space between runs (`a <tspan>b</tspan>`).
+			const content = this.inSvg ? this.inlineParts(group, { space: false }) : this.inline(group);
+			const visible = content.some((part) => part.type !== 'static' || part.value.trim());
+			if (this.context === 'svg' && visible) this.reporter.report(span!, 'text in an SVG element is only rendered in <text>, <tspan> or <textPath> (or read in <title> and <desc>)');
+			else if (content.length && span && (this.context !== 'svg' || visible)) out.push({ type: 'text', span, content });
 			group = [];
 		};
 		for (const node of nodes) {
@@ -343,7 +355,8 @@ class TemplateLowering {
 
 	/** `<Card a={x}>content</Card>`: attributes are props, the content is the `children` snippet. */
 	private component(node: Svelte): TemplateNode[] {
-		const children = this.within(false, () => this.children(node.fragment.nodes));
+		// Content passed to a component is in the same place: HTML, or SVG.
+		const children = this.within(this.context === 'select' ? 'html' : this.context, () => this.children(node.fragment.nodes));
 		if (node.name.includes('.')) {
 			this.reporter.report(nameSpan(node), `<${node.name}>: a component tag must be a plain name; assign it first (const Item = ${node.name})`);
 			return children;
@@ -388,18 +401,25 @@ class TemplateLowering {
 	/** One element, or (for an unsupported tag) its lowered children so their problems are reported too. */
 	private element(node: Svelte): TemplateNode[] {
 		const tag = node.name;
+		if (this.inSvg && tag === 'portal') {
+			this.reporter.report(nameSpan(node), '<portal> cannot be inside <svg>');
+			return [];
+		}
 		if (tag === 'portal') return this.portal(node);
+		if (tag === 'svg' && !this.inSvg) return this.svg(node);
+		if (this.inSvg || isSvgOnly(tag) || SVG_EXCLUDED[tag]) return this.graphic(node);
 		if (!isTag(tag)) {
 			this.reporter.report(nameSpan(node), `<${tag}> is not supported (use ${TAG_LIST})`);
 			return this.children(node.fragment.nodes);
 		}
 		const kind = KINDS[tag];
-		if ((kind === 'option' || kind === 'optgroup') !== this.inSelect)
-			this.reporter.report(nameSpan(node), this.inSelect ? `<${tag}> cannot be inside <select>; it holds <option>s and <optgroup>s` : `<${tag}> can only be inside <select>`);
+		const inSelect = this.context === 'select';
+		if ((kind === 'option' || kind === 'optgroup') !== inSelect)
+			this.reporter.report(nameSpan(node), inSelect ? `<${tag}> cannot be inside <select>; it holds <option>s and <optgroup>s` : `<${tag}> can only be inside <select>`);
 		const { style, attributes } = this.attributes(node, kind);
 		const base = { type: 'element' as const, tag, span: spanOf(node), nameSpan: nameSpan(node), style, attributes };
 		const nodes = node.fragment.nodes;
-		if (kind === 'frame') return [{ ...base, kind, children: this.within(false, () => this.children(nodes)) }];
+		if (kind === 'frame') return [{ ...base, kind, children: this.within('html', () => this.children(nodes)) }];
 		if (kind === 'text') return [{ ...base, kind, content: this.inline(nodes) }];
 		if (kind === 'option') {
 			const content = this.inline(nodes);
@@ -408,7 +428,7 @@ class TemplateLowering {
 			return [{ ...base, kind, content }];
 		}
 		if (kind === 'select' || kind === 'optgroup') {
-			const children = this.within(true, () => this.children(nodes));
+			const children = this.within('select', () => this.children(nodes));
 			for (const child of children)
 				if (child.type === 'text' || child.type === 'component' || child.type === 'portal' || child.type === 'render' || child.type === 'snippet')
 					this.reporter.report(child.type === 'component' ? child.nameSpan : child.span, `<${tag}> holds <option>s and <optgroup>s, directly or in {#if} and {#each}`);
@@ -417,6 +437,26 @@ class TemplateLowering {
 		if (nodes.some((n: Svelte) => n.type !== 'Text' || n.data.trim()))
 			this.reporter.report(nameSpan(node), `<${tag}> cannot have children; use value={...}`);
 		return [{ ...base, kind }];
+	}
+
+	/** `<svg>`: a leaf of the layout, holding SVG. */
+	private svg(node: Svelte): TemplateNode[] {
+		const { style, attributes } = this.attributes(node, 'svg');
+		const children = this.within('svg', () => this.children(node.fragment.nodes));
+		return [{ type: 'element', tag: 'svg', kind: 'svg', span: spanOf(node), nameSpan: nameSpan(node), style, attributes, children }];
+	}
+
+	/** An SVG element: in an <svg>, or an SVG-only tag (the root of a component rendered in one). */
+	private graphic(node: Svelte): TemplateNode[] {
+		const tag: string = node.name;
+		const excluded = SVG_EXCLUDED[tag];
+		if (excluded || !SVG_TAGS.has(tag)) {
+			this.reporter.report(nameSpan(node), excluded ? `<${tag}> is not supported in SVG: ${excluded}` : `<${tag}> cannot be inside <svg>; only SVG elements can`);
+			return this.within('svg', () => this.children(node.fragment.nodes));
+		}
+		const { attributes } = this.attributes(node, 'graphic');
+		const children = this.within(SVG_TEXT.has(tag) ? 'svg-text' : 'svg', () => this.children(node.fragment.nodes));
+		return [{ type: 'element', tag, kind: 'graphic', span: spanOf(node), nameSpan: nameSpan(node), style: null, attributes, children }];
 	}
 
 	/** `<portal id="name" />`: only a static, non-empty id. */
@@ -462,6 +502,8 @@ class TemplateLowering {
 				this.reporter.report(nameSpan(a), UNSUPPORTED_DIRECTIVES[a.type] ?? `${a.type} is not supported`);
 			} else if (a.name === 'style' && (kind === 'option' || kind === 'optgroup')) {
 				this.reporter.report(nameSpan(a), `<${node.name}> is drawn by the browser and takes no style=`);
+			} else if (a.name === 'style' && kind === 'graphic') {
+				this.reporter.report(nameSpan(a), 'SVG elements are styled with presentation attributes (fill, stroke, opacity, …), not style=');
 			} else if (a.name === 'style') {
 				if (Array.isArray(a.value) && a.value.some((part: Svelte) => part.type === 'Text'))
 					this.reporter.report(nameSpan(a), 'CSS strings are not supported; use style={$style({...})} or style={{ ... }}');
@@ -471,7 +513,17 @@ class TemplateLowering {
 			} else if (/^on[a-z]+$/.test(a.name)) {
 				const handler = expressionOf(a);
 				if (handler) attributes.push({ type: 'event', name: a.name.slice(2), span, nameSpan: nameSpan(a), handler });
-			} else if ((UNIVERSAL_ATTRIBUTES.includes(a.name) && !(inText && a.name === 'portal')) || isOpenAttribute(a.name) || ATTRIBUTES[node.name as Tag]?.includes(a.name)) {
+			} else if ((kind === 'svg' || kind === 'graphic') && /^(xlink|xml):/.test(a.name)) {
+				this.reporter.report(nameSpan(a), `${a.name} is not supported; SVG 2 uses ${a.name.replace(/^\w+:/, '')}`);
+			} else if (kind === 'graphic' && a.name === 'portal') {
+				this.reporter.report(nameSpan(a), 'portal is not supported on SVG elements; put it on the <svg>');
+			} else if (
+				kind === 'svg' ||
+				kind === 'graphic' ||
+				(UNIVERSAL_ATTRIBUTES.includes(a.name) && !(inText && a.name === 'portal')) ||
+				isOpenAttribute(a.name) ||
+				ATTRIBUTES[node.name as Tag]?.includes(a.name)
+			) {
 				attributes.push({ type: 'attribute', name: a.name, span, nameSpan: nameSpan(a), value: attributeValue(a) });
 			} else {
 				this.reporter.report(nameSpan(a), `attribute "${a.name}" is not supported on ${where}`);

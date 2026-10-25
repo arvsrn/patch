@@ -93,7 +93,9 @@ export type InputElement = ElementBase & { kind: 'input' | 'textarea'; kids: [] 
 export type SelectElement = ElementBase & { kind: 'select' | 'optgroup'; kids: ProgramNode[] };
 /** <option>: its label. */
 export type OptionElement = ElementBase & { kind: 'option'; kids: InlinePart[] };
-export type ElementNode = FrameElement | TextElement | InputElement | SelectElement | OptionElement;
+/** <svg> and the SVG elements in it (see ir.ts `Svg`). */
+export type SvgElement = ElementBase & { kind: 'svg' | 'graphic'; kids: ProgramNode[] };
+export type ElementNode = FrameElement | TextElement | InputElement | SelectElement | OptionElement | SvgElement;
 
 /** `{#if}`: the first branch whose test is truthy, else `e`. */
 export type IfNode = { t: 'if'; id: string; b: [test: Getter, kids: ProgramNode[]][]; e: ProgramNode[] | null };

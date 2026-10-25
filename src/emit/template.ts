@@ -79,7 +79,7 @@ export class TemplateEmitter {
 			} else attrs.push([a.name, `() => (${this.attributeValue(a.value)})`]);
 		}
 		const kids =
-			node.kind === 'frame' || node.kind === 'select' || node.kind === 'optgroup'
+			'children' in node
 				? this.fragment(node.children)
 				: node.kind === 'text' || node.kind === 'option'
 					? `[${this.inline(node.content)}]`

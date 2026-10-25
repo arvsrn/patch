@@ -24,7 +24,7 @@ import { CompileError, Reporter, type Diagnostic } from './diagnostics';
 import { Edits } from './emit/edits';
 import { emitScript } from './emit/script';
 import { TemplateEmitter } from './emit/template';
-import { elements, fragments, type Component, type StateInfo, type Tag, type TemplateNode } from './ir';
+import { elements, fragments, type Component, type Element, type StateInfo, type TemplateNode } from './ir';
 import { lower, lowerModule } from './lower';
 import { parse } from './parse';
 import { location, moduleStateId } from './schema/path';
@@ -65,8 +65,9 @@ export function front(source: string, reporter: Reporter): Front | null {
 	return { component, bindings, styles: collectStyles(component, bindings) };
 }
 
-/** The DOM type of an element: TypeScript's own map of tag names. */
-const elementType = (tag: Tag) => `HTMLElementTagNameMap[${JSON.stringify(tag)}]`;
+/** The DOM type of an element: TypeScript's own maps of tag names. */
+const elementType = (element: Element) =>
+	element.kind === 'svg' || element.kind === 'graphic' ? `SVGElementTagNameMap[${JSON.stringify(element.tag)}]` : `HTMLElementTagNameMap[${JSON.stringify(element.tag)}]`;
 
 /** What each `bind:this` assigns to its variable: the element while mounted, else `undefined`. */
 function boundElements(component: Component, bindings: Bindings): TemplateWrite[] {
@@ -75,7 +76,7 @@ function boundElements(component: Component, bindings: Bindings): TemplateWrite[
 		if (element.type !== 'element') continue;
 		for (const a of element.attributes)
 			if (a.type === 'bind' && a.name === 'this' && bindings.reference(a.expression)?.symbol)
-				writes.push({ name: a.expression.name, type: `${elementType(element.tag)} | undefined`, ...a.span });
+				writes.push({ name: a.expression.name, type: `${elementType(element)} | undefined`, ...a.span });
 	}
 	return writes;
 }

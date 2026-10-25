@@ -220,6 +220,8 @@ class Converter {
 			if (n.style.textOverflow === 'ellipsis') node.maxLines = n.style.maxLines ?? 1;
 			if (node.width.kind === 'HUG' && node.height.kind !== 'HUG')
 				this.warn(n.id, 'Figma text cannot hug its width at a set height; its width is fixed at the measured width');
+		} else if (n.type === 'svg') {
+			node = this.placeholder(n, n.size, 'inline SVG is not converted to Figma vectors yet; an empty frame of its size stands in for it');
 		} else {
 			// <input>/<textarea>: a clipped frame holding the value, or the
 			// placeholder at half opacity as the browser stylesheet draws it.
@@ -234,6 +236,16 @@ class Converter {
 			node = this.frame(n, n.tag, { ...style, flexDirection: multiline ? 'column' : 'row', alignItems: multiline ? 'start' : 'center', overflowX: 'hidden', overflowY: 'hidden' }, [text]);
 		}
 		return this.margins(n, node);
+	}
+
+	/**
+	 * An empty frame standing in for content Figma is not given (with a
+	 * warning): its own size along an axis it hugs, as it renders in the browser.
+	 */
+	private placeholder(n: Concrete, size: { width: number; height: number }, warning: string): FigmaFrame {
+		this.warn(n.id, warning);
+		const hugs = (v: unknown) => v === undefined || v === 'hug';
+		return this.frame(n, n.tag ?? 'element', { ...n.style, width: hugs(n.style.width) ? size.width : n.style.width, height: hugs(n.style.height) ? size.height : n.style.height }, []);
 	}
 
 	/**

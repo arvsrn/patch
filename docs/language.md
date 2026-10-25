@@ -244,6 +244,7 @@ async function later() { await x; n++; n++; }          // effects re-run twice
 | `<p>`, `<span>`, `<h1>`–`<h6>`, `<strong>`, `<em>`, `<b>`, `<i>`, `<code>`, `<small>`, `<s>`, `<mark>` | text | text, `{expressions}`, elements nested in text |
 | `<input>`, `<textarea>` | input | none |
 | `<select>` | input | `<option>`, `<optgroup>`, `{#if}`, `{#each}` |
+| `<svg>` | [SVG](#inline-svg) | SVG elements |
 | `<portal>` | [portal](#portals) | none |
 
 A tag starting with an uppercase letter is a [component](#components). Any other tag (`<img>`, `<table>`, …) is an error.
@@ -261,6 +262,24 @@ A `<span>` whose parent is a container is a text **block**, not inline:
 <div>Count: <span>{n}</span></div>  <!-- two stacked blocks: "Count:" and "{n}" -->
 <p>Count: <span style={{ fontWeight: 700 }}>{n}</span></p>  <!-- one line -->
 ```
+
+### Inline SVG
+
+```svelte
+<svg viewBox="0 0 24 24" width="20" style={{ color: '#2563eb' }} aria-label="Done">
+	<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" />
+	{#if done}<path d="M7 12l3 3 7-7" stroke="currentColor" fill="none" />{/if}
+</svg>
+```
+
+- **`<svg>`** is an element of the layout like any other: it takes `style` (box, paint and typography properties; `color` is what `currentColor` is), `portal`, the global attributes, events and `bind:this`, and any SVG attribute (`viewBox`, `fill`, `preserveAspectRatio`, …). It holds no layout of its own: its content is SVG.
+- **Size.** Sized `hug` (the default), an `<svg>` is its `width` and `height` attributes in user units (`24`, `24px`). When one is missing it follows from the other and the `viewBox`'s proportions; with neither, it is the `viewBox`'s size; without that, 300 × 150. A percentage or other unit counts as missing. `width`/`height` in `style` (a number or `"fill"`) override the attributes, as CSS does.
+- **Inside it**, every SVG 2 element is allowed (`g`, `path`, `rect`, `circle`, `line`, `polyline`, `polygon`, `text`, `tspan`, `defs`, `linearGradient`, `radialGradient`, `clipPath`, `mask`, `pattern`, `filter` and its `fe*` primitives, `use`, `symbol`, `marker`, `image`, `animate`, …), with any attributes, event handlers (SVG's events, checked as for HTML) and `bind:this` (typed as the element, `SVGCircleElement`), and with `{#if}`, `{#each}`, components and snippets. Attributes are reactive like any other.
+- SVG elements are styled with presentation attributes (`fill`, `stroke`, `opacity`, `transform`, …), not `style=`. `class` is not supported, `xlink:` attributes are replaced by their SVG 2 names (`href`), and `portal` belongs on the `<svg>`.
+- **Text** is rendered in `<text>`, `<tspan>` and `<textPath>`, and read in `<title>` and `<desc>`. Whitespace collapses but is kept between runs (`Hello <tspan>world</tspan>`). Text anywhere else is an error.
+- **Not allowed**: `<script>`, `<style>` and `<foreignObject>` (HTML inside SVG); HTML elements inside an `<svg>`.
+- **Components.** A tag that only exists in SVG (`path`, `g`, `circle`, …) is SVG wherever it is written, so a component can render SVG at its top level (`Bar.pat` holding `<rect … />`) and be used inside an `<svg>`: `<svg><Bar x={4} /></svg>`. Rendered outside an `<svg>`, it is a runtime error. `<a>` is an SVG link only inside an `<svg>`.
+- In a Figma snapshot, an `<svg>` is an empty frame of its size, with a warning; its vectors are not converted yet.
 
 ### Text and whitespace
 
@@ -1155,6 +1174,7 @@ The Figma target approximates what Figma cannot express, and prints a warning ea
 - auto margins on absolute elements are dropped
 - a hugging-width text with a set height is given a fixed width
 - a `<select>` shows its selected option's label, without its arrow
+- an `<svg>` is an empty frame of its size
 
 Without a warning, a snapshot also keeps a character whose uppercase or lowercase form is longer as it is: `textTransform: 'uppercase'` shows `ß` as `SS` in the browser but as `ß` in Figma until the layer is edited.
 

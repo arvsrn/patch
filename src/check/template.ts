@@ -56,8 +56,7 @@ function editDistance(a: string, b: string): number {
 /** `on…=` names an event the element has: a misspelled one would never fire. */
 export function checkEvents(component: Component, { events }: DomNames, reporter: Reporter) {
 	for (const element of elements(component.template)) {
-		if (element.type !== 'element') continue;
-		const known = events.html;
+		const known = element.type === 'element' && (element.kind === 'svg' || element.kind === 'graphic') ? events.svg : events.html;
 		for (const a of element.attributes) {
 			if (a.type !== 'event' || known.has(a.name)) continue;
 			const near = closest(a.name, known);
@@ -82,7 +81,6 @@ export const RESERVED_DATA = ['data-p', 'data-w', 'data-h', 'data-sw', 'data-sh'
 /** The values of global and ARIA attributes, where they are static. (Element ids are checked with portal ids, in check/names.ts.) */
 export function checkAttributes(component: Component, dom: DomNames, reporter: Reporter) {
 	for (const element of elements(component.template)) {
-		if (element.type !== 'element') continue;
 		for (const a of element.attributes) {
 			if (a.type !== 'attribute') continue;
 			const value = staticValue(a.value);
