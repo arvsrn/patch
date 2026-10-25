@@ -1,6 +1,12 @@
 // PAT language server: publishes compiler diagnostics and serves style
-// completions for open .pat documents. It knows nothing about PAT semantics;
-// every rule lives in the compiler.
+// completions for open .pat documents, and publishes Patch's diagnostics for
+// open .pat.ts / .pat.js modules. It knows nothing about PAT semantics; every
+// rule lives in the compiler.
+//
+// A module's TypeScript diagnostics come from the editor's own TypeScript,
+// which understands Patch through its plugin (editors/vscode/ts-plugin), so
+// they are not published here twice. Files read each other from disk, so
+// saving one checks every open document again.
 
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,9 +22,10 @@ import {
 	type Diagnostic as LspDiagnostic
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { analyze } from '../compile';
+import { analyze, analyzeModule } from '../compile';
 import { complete } from '../complete';
 import type { Diagnostic } from '../diagnostics';
+import { isPatModule } from '../schema/path';
 
 export function startLanguageServer() {
 	// stdout carries the protocol; anything else goes to stderr.
@@ -47,7 +54,9 @@ export function startLanguageServer() {
 		const { uri, version } = document;
 		let diagnostics: LspDiagnostic[];
 		try {
-			diagnostics = analyze(document.getText(), { filename: filename(uri) }).diagnostics.map((d) => toLsp(document, d));
+			const file = filename(uri);
+			const analysis = isPatModule(file) ? analyzeModule(document.getText(), { filename: file, typescript: false }) : analyze(document.getText(), { filename: file });
+			diagnostics = analysis.diagnostics.map((d) => toLsp(document, d));
 		} catch (error: any) {
 			// A compiler bug must not take the server down.
 			console.error(error);
@@ -65,13 +74,13 @@ export function startLanguageServer() {
 
 	connection.onInitialize(() => ({
 		capabilities: {
-			textDocumentSync: TextDocumentSyncKind.Incremental,
+			textDocumentSync: { openClose: true, change: TextDocumentSyncKind.Incremental, save: true },
 			completionProvider: { triggerCharacters: ['{', ',', ':', "'", '"'] }
 		}
 	}));
 	connection.onCompletion(({ textDocument, position }): CompletionItem[] => {
 		const document = documents.get(textDocument.uri);
-		if (!document) return [];
+		if (!document || isPatModule(filename(document.uri))) return [];
 		try {
 			return complete(document.getText(), document.offsetAt(position), { filename: filename(document.uri) }).map((c) => ({
 				label: c.label,
@@ -85,6 +94,7 @@ export function startLanguageServer() {
 		}
 	});
 	documents.onDidChangeContent(({ document }) => validate(document));
+	documents.onDidSave(() => documents.all().forEach(validate));
 	documents.onDidClose(({ document }) => connection.sendDiagnostics({ uri: document.uri, diagnostics: [] }));
 
 	documents.listen(connection);

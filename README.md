@@ -91,6 +91,16 @@ Agents can use HTML snapshots to visually verify the code they write: snapshot t
 
 Since state can be set from outside, an agent can jump straight to the screen it wants to look at instead of clicking through the app, mocking network requests, or seeding a database to get there. The same mechanism is what fixtures are built on.
 
+### Editor
+
+`editors/vscode` is the VS Code extension. Build it with `bun install && bun run package` there (`package.ts`), and install `pat.vsix`. It:
+
+- highlights `.pat` files and shows every compiler diagnostic, type errors included;
+- shows Patch's diagnostics for `.pat.ts` / `.pat.js` modules;
+- adds a plugin to VS Code's TypeScript, so in a Patch project (one with `.pat` files) the editor's TypeScript sees the runes, `.pat` imports, the `'patch'` module and module state exactly as Patch's checker does, and reports runes used in plain `.ts` files. Outside Patch projects it does nothing.
+
+It runs the language server with the `patch` that `bun link` installed, or with the repository it is in. When developing it (the "PAT extension" launch configuration), run `bun install` there again after changing `ts-plugin/`: VS Code's TypeScript loads the plugin from `node_modules`, where it is installed as a copy.
+
 ### Scope
 
 Patch currently supports apps made of `.pat` components with:

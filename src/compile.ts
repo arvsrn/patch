@@ -201,14 +201,10 @@ export type CompiledModule = {
 
 const MODULE_STATE = resolve(import.meta.dir, 'runtime/module-state.ts');
 
-/**
- * Validation, type checking and code generation for a .pat.ts / .pat.js
- * module. `root` is the app's root directory, which module state ids are
- * relative to. Throws a CompileError listing every diagnostic.
- */
-export function compileModule(source: string, filename: string, root = dirname(resolve(filename))): CompiledModule {
+/** A module through the front end and every check: its diagnostics, and what code generation needs. */
+function checkModule(source: string, filename: string, typescript: boolean) {
 	const path = resolve(filename);
-	const lang = path.endsWith('.ts') ? 'ts' : 'js';
+	const lang: 'ts' | 'js' = path.endsWith('.ts') ? 'ts' : 'js';
 	// The source is parsed as the script of a component.
 	const open = `<script lang="${lang}">`;
 	const wrapped = `${open}${source}</script>`;
@@ -232,12 +228,31 @@ export function compileModule(source: string, filename: string, root = dirname(r
 		const start = d.start - open.length;
 		return { ...d, start, end: d.end - open.length, ...own.position(start) };
 	});
-	if (lang === 'ts' && lowered) {
+	if (typescript && lang === 'ts' && lowered) {
 		const pat = diagnostics.filter((d) => d.severity === 'error');
 		for (const d of typecheck(source, path, 0, source.length))
 			if (!pat.some((p) => p.start <= d.start && d.start < p.end)) diagnostics.push({ ...d, source: 'typescript', ...own.position(d.start) });
 	}
 	diagnostics.sort((a, b) => a.start - b.start);
+	return { path, lang, open, wrapped, lowered, diagnostics };
+}
+
+/**
+ * Validation only, for a .pat.ts / .pat.js module. Without `typescript`,
+ * only Patch's own diagnostics: an editor whose TypeScript already checks the
+ * module (with the Patch plugin) needs no second copy of its type errors.
+ */
+export function analyzeModule(source: string, { filename = 'module.pat.ts', typescript = true }: { filename?: string; typescript?: boolean } = {}): Analysis {
+	return { diagnostics: checkModule(source, filename, typescript).diagnostics };
+}
+
+/**
+ * Validation, type checking and code generation for a .pat.ts / .pat.js
+ * module. `root` is the app's root directory, which module state ids are
+ * relative to. Throws a CompileError listing every diagnostic.
+ */
+export function compileModule(source: string, filename: string, root = dirname(resolve(filename))): CompiledModule {
+	const { path, lang, open, wrapped, lowered, diagnostics } = checkModule(source, filename, true);
 	if (!lowered || diagnostics.some((d) => d.severity === 'error')) throw new CompileError(diagnostics, source, filename);
 
 	const edits = new Edits(wrapped);

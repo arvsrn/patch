@@ -7,79 +7,22 @@
 // reactive rewrite; rune declarations describe what the author sees. One
 // LanguageService per tsconfig is kept for the life of the process.
 //
-// A .pat.ts module is seen by TypeScript, wherever it is read (checking it, or
-// a file importing it), with MODULE_RUNES appended: a module-scoped `$state`
-// whose result is assignable at the first level and read-only below it.
+// The declarations and compiler options are in types/, shared with the
+// editor's TypeScript plugin: runes.d.ts is in every project, and a
+// .pat.ts module is seen by TypeScript, wherever it is read (checking it, or a
+// file importing it), with types/module-runes.d.ts appended.
 
-import { dirname } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import ts from 'typescript-api';
 
 export type TypeDiagnostic = { message: string; severity: 'error' | 'warning'; start: number; end: number; code: number };
 
-const RUNES = `
-declare function $state<T>(initial: T): T;
-declare function $state<T>(): T | undefined;
-declare function $derived<T>(value: T): T;
-declare namespace $derived {
-	function by<T>(fn: () => T): T;
-}
-declare function $effect(fn: () => void | (() => void)): void;
-/** A validated style. Which properties are legal where is checked by the PAT compiler. */
-interface PatStyle {
-	readonly [property: string]: unknown;
-}
-declare function $style(style: { readonly [property: string]: unknown }): PatStyle;
-/** A value of module state: read-only all the way down, so it is replaced rather than changed in place. */
-type PatReadonly<T> = T extends (...args: any[]) => unknown
-	? T
-	: T extends ReadonlyMap<infer K, infer V>
-		? ReadonlyMap<PatReadonly<K>, PatReadonly<V>>
-		: T extends ReadonlySet<infer V>
-			? ReadonlySet<PatReadonly<V>>
-			: T extends object
-				? { readonly [K in keyof T]: PatReadonly<T[K]> }
-				: T;
-/** Module state: its properties are assigned; their values are read-only. */
-type PatModuleState<T> = { -readonly [K in keyof T]: PatReadonly<T[K]> };
-/** The component's props: destructure them, with types: let { a, b = 1 }: Props = $props(). */
-declare function $props(): any;
-/** A .pat file: a component. */
-interface PatComponent {
-	readonly __patComponent: true;
-}
-declare module '*.pat' {
-	const component: PatComponent;
-	export default component;
-}
-declare module 'patch' {
-	/** An opaque context key, made by createContext. */
-	export interface Context<T> {
-		readonly __patContext: T;
-	}
-	export function createContext<T>(): Context<T>;
-	/** Provides value to this component instance and everything it renders. Top-level statements only. */
-	export function setContext<T>(context: Context<T>, value: T): void;
-	/** The value of the nearest ancestor (or this instance) that set this context. Throws when none did. */
-	export function getContext<T>(context: Context<T>): T;
-	/** The current location of an app with pages. Read-only and reactive. */
-	export interface Page {
-		/** The current URL, query and hash included. */
-		readonly url: URL;
-		/** The decoded [param] segments of the current route. */
-		readonly params: Readonly<Record<string, string>>;
-		/** The route: its id, as the directories under src/pages (/issues/[id]), or null on the not-found page. */
-		readonly route: { readonly id: string | null };
-	}
-	export const page: Page;
-	/** Navigates to a URL of this app without reloading, adding a history entry. */
-	export function goto(url: string | URL): void;
-}
-`;
-
-/** Appended to a .pat.ts module: module state, shadowing the component rune. Function declarations hoist, so it applies to the whole file. */
-const MODULE_RUNES = `
-declare function $state<T extends object>(initial: T): PatModuleState<T>;
-`;
+const declarations = (name: string) => readFileSync(resolve(import.meta.dir, 'types', name), 'utf8');
+const patchCompilerOptions: (api: typeof ts, base: ts.CompilerOptions) => ts.CompilerOptions = require('./types/compiler-options.cjs');
+const RUNES = declarations('runes.d.ts');
+/** Appended to a .pat.ts module (see the file). */
+const MODULE_RUNES = '\n' + declarations('module-runes.d.ts');
 const isPatTs = (file: string) => file.endsWith('.pat.ts');
 const read = (file: string) => {
 	const text = ts.sys.readFile(file);
@@ -98,21 +41,7 @@ function project(file: string): Project {
 	const base = config
 		? ts.parseJsonConfigFileContent(ts.readConfigFile(config, ts.sys.readFile).config, ts.sys, root).options
 		: { strict: true };
-	// What a .pat script is regardless of the tsconfig: a browser ES module whose
-	// imports Vite resolves, and whose bindings the template may use.
-	const options: ts.CompilerOptions = {
-		...base,
-		noEmit: true,
-		allowJs: true,
-		allowImportingTsExtensions: true,
-		moduleDetection: ts.ModuleDetectionKind.Force,
-		module: ts.ModuleKind.ESNext,
-		moduleResolution: ts.ModuleResolutionKind.Bundler,
-		target: base.target ?? ts.ScriptTarget.ESNext,
-		lib: [...new Set([...(base.lib ?? ['lib.esnext.d.ts']), 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'])],
-		noUnusedLocals: false,
-		noUnusedParameters: false
-	};
+	const options: ts.CompilerOptions = patchCompilerOptions(ts, base);
 	const runes = `${root}/__pat_runes__.d.ts`;
 	const files = new Map([[runes, { text: RUNES, version: 0 }]]);
 	const host: ts.LanguageServiceHost = {

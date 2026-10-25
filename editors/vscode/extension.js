@@ -1,4 +1,7 @@
-// Starts the PAT language server (`patch lsp`) for .pat documents.
+// Starts the PAT language server (`patch lsp`) for .pat documents and
+// .pat.ts / .pat.js modules, and points the TypeScript plugin
+// (ts-plugin/, which VS Code loads into its own TypeScript server) at the
+// declarations of the same Patch install (src/types).
 //
 // Run from the repository, it uses ../../src/cli.ts. Installed from a .vsix, it
 // uses the `patch` command that `bun link` puts in ~/.bun/bin. Both are run
@@ -7,7 +10,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { window, workspace } = require('vscode');
+const { extensions, window, workspace } = require('vscode');
 const { LanguageClient, TransportKind } = require('vscode-languageclient/node');
 
 let client;
@@ -35,9 +38,20 @@ exports.activate = () => {
 	const bun = config.get('bun') || (exists(path.join(bunBin, 'bun')) ? path.join(bunBin, 'bun') : 'bun');
 	const server = { command: bun, args: [entry, 'lsp'], transport: TransportKind.stdio };
 	client = new LanguageClient('pat', 'PAT', { run: server, debug: server }, {
-		documentSelector: [{ language: 'pat' }]
+		documentSelector: [{ language: 'pat' }, { scheme: 'file', pattern: '**/*.pat.{ts,js}' }]
 	});
+	configureTypeScript(path.join(path.dirname(entry), 'types'));
 	return client.start();
 };
+
+async function configureTypeScript(types) {
+	try {
+		const extension = extensions.getExtension('vscode.typescript-language-features');
+		const api = (await extension?.activate())?.getAPI?.(0);
+		api?.configurePlugin('patch-typescript-plugin', { types });
+	} catch (error) {
+		console.error('PAT: could not configure the TypeScript plugin', error);
+	}
+}
 
 exports.deactivate = () => client?.stop();

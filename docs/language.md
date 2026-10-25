@@ -180,6 +180,7 @@ export function addIssue(title: string) {
 - **Lifetime.** Module state lives as long as the app: it is created when the module is first imported and is shared by every page and component. Pages are destroyed on navigation; module state is not. Snapshots and other design-time evaluations each get [a fresh copy](#module-state-in-snapshots).
 - **Only `$state`.** `$derived`, `$effect`, `$props` and `$style` are not available in modules yet; derive values in the components that read the state. `import { … } from 'patch'` in a module is the plain `'patch'` module, where only `createContext` works.
 - **File names.** `foo.pat.ts` cannot sit next to a component `foo.pat` (TypeScript would resolve the component's import to the module). A module cannot contain the text `</script`.
+- **Editors.** With the VS Code extension, the editor's TypeScript checks `.pat.ts` modules and the files importing them as `patch build` does (the same declarations and compiler options), and Patch's language server adds the module rules above. A rune in a plain `.ts` file is reported there, since Patch does not compile it.
 
 ### `$derived`
 
