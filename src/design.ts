@@ -17,13 +17,23 @@
 // In an app with pages, the root is the page the URL selects (see
 // `pageAt` in routes.ts), evaluated at that location: its `page` reads it,
 // and its state is named like the state of a single-file app.
+//
+// State of a .pat.ts module is named by the module's file relative to the
+// app root and the variable: `src/workspace.pat.ts#workspace`, checked against
+// that module. Every evaluation loads its own copy of the app's modules, so
+// module state starts fresh, from its initializer or its override, and one
+// evaluation never sees another's (see `importProgram`). Evaluations run one
+// at a time.
 
-import { readFileSync } from 'node:fs';
-import { compile, type Compiled } from './compile';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, extname, resolve, sep } from 'node:path';
+import { compile, compileModule, type Compiled } from './compile';
+import { appRootOf } from './routes';
 import * as patchModule from './runtime/context';
+import { setModuleOverrides } from './runtime/module-state';
 import { realize } from './runtime/realize';
 import type { Concrete } from './schema/concrete';
-import { outsideKeys, parseStateId, sitePattern, stateId } from './schema/path';
+import { isPatModule, outsideKeys, parseModuleStateId, parseStateId, sitePattern, stateId } from './schema/path';
 import type { Program } from './schema/program';
 import type { Location } from './schema/route';
 import { checkValues } from './typecheck';
@@ -39,8 +49,30 @@ function appFiles(root: Compiled): Map<string, Compiled> {
 	return files;
 }
 
+/** A file whose declarations an override is checked against. */
+type Declaring = Pick<Compiled, 'path' | 'script'>;
+
+const modules = new Map<string, Declaring & { states: string[] }>();
+
+/** The module state `id` names, in the app at `appRoot`; null if it names none. Throws when the module does not compile. */
+function resolveModuleState(appRoot: string, id: string): { file: Declaring; name: string } | null {
+	const parsed = parseModuleStateId(id);
+	if (!parsed) return null;
+	const path = resolve(appRoot, parsed.file);
+	if (!existsSync(path)) return null;
+	const source = readFileSync(path, 'utf8');
+	let file = modules.get(path);
+	if (file?.script?.source !== source) {
+		const compiled = compileModule(source, path, appRoot);
+		file = { path, script: { lang: compiled.lang, source, start: 0, end: source.length }, states: compiled.states.map((s) => s.name) };
+		modules.set(path, file);
+	}
+	return file.states.includes(parsed.name) ? { file, name: parsed.name } : null;
+}
+
 /** The file declaring the state `id` names, and its variable; null if no component in the app declares it there. */
-function resolveState(files: Map<string, Compiled>, root: Compiled, id: string): { file: Compiled; name: string } | null {
+function resolveState(files: Map<string, Compiled>, root: Compiled, id: string, appRoot: string): { file: Declaring; name: string } | null {
+	if (parseModuleStateId(id)) return resolveModuleState(appRoot, id);
 	const parsed = parseStateId(id);
 	if (!parsed) return null;
 	const { steps, name } = parsed;
@@ -64,19 +96,33 @@ function available(files: Map<string, Compiled>, root: Compiled): string[] {
 	return out;
 }
 
-const unknown = (id: string, files: Map<string, Compiled>, root: Compiled) =>
-	new Error(`Unknown state "${id}". Available: ${available(files, root).join(', ') || '(none)'}`);
+function unknown(id: string, files: Map<string, Compiled>, root: Compiled) {
+	const module = parseModuleStateId(id);
+	if (module) return new Error(`Unknown state "${id}": no module state "${module.name}" is declared in ${module.file} (as const ${module.name} = $state({ … }))`);
+	return new Error(`Unknown state "${id}". Available: ${available(files, root).join(', ') || '(none)'}, and module state as <file>#<name>`);
+}
 
-/** Parses `name=value` pairs against the app's `$state` declarations. Throws on unknown names and ill-typed values. */
-export function parseStateOverrides(compiled: Compiled, pairs: string[]): StateOverrides {
+/** Where a `--state` pair splits: after a module state id's file (opaque), else at the first `=` outside each keys. */
+function splitAt(pair: string) {
+	const hash = pair.indexOf('#');
+	const first = pair.indexOf('=');
+	if (hash >= 0 && first > hash) return first;
+	if (hash >= 0 && first >= 0 && isPatModule(pair.slice(0, hash))) return pair.indexOf('=', hash);
+	return outsideKeys(pair, '=').at[0] ?? -1;
+}
+
+/**
+ * Parses `name=value` pairs against the app's `$state` declarations, and the
+ * module state of the app at `appRoot`. Throws on unknown names and ill-typed values.
+ */
+export function parseStateOverrides(compiled: Compiled, pairs: string[], appRoot = appRootOf(compiled.path)): StateOverrides {
 	const files = appFiles(compiled);
 	const parsed = pairs.map((pair) => {
-		// The first `=` that is not inside an each key.
-		const eq = outsideKeys(pair, '=').at[0] ?? -1;
+		const eq = splitAt(pair);
 		if (eq <= 0) throw new Error(`--state expects name=value, got "${pair}"`);
 		const id = pair.slice(0, eq);
 		const raw = pair.slice(eq + 1);
-		const declared = resolveState(files, compiled, id);
+		const declared = resolveState(files, compiled, id, appRoot);
 		if (!declared) throw unknown(id, files, compiled);
 		const candidates: unknown[] = [];
 		try {
@@ -108,35 +154,97 @@ export function parseStateOverrides(compiled: Compiled, pairs: string[]): StateO
 	return Object.fromEntries(parsed.map((p) => [p.id, out[p.id]]));
 }
 
+export type EvaluateOptions = {
+	/** A page is evaluated at this location (see `pageAt`). */
+	location?: Location;
+	/** The app's root directory, which module state ids are relative to; by default found from the entry (`appRootOf`). */
+	root?: string;
+};
+
+let queue: Promise<unknown> = Promise.resolve();
+
 /** Evaluates the app (or a page at `location`) once at its initial state with `overrides` applied. */
-export async function evaluate(compiled: Compiled, overrides: StateOverrides = {}, location?: Location): Promise<Concrete[]> {
+export function evaluate(compiled: Compiled, overrides: StateOverrides = {}, options: EvaluateOptions = {}): Promise<Concrete[]> {
+	const run = queue.then(() => evaluateNow(compiled, overrides, options));
+	queue = run.catch(() => {});
+	return run;
+}
+
+async function evaluateNow(compiled: Compiled, overrides: StateOverrides, { location, root = appRootOf(compiled.path) }: EvaluateOptions) {
 	const ids = Object.keys(overrides);
 	if (ids.length) {
 		const files = appFiles(compiled);
-		for (const id of ids) if (!resolveState(files, compiled, id)) throw unknown(id, files, compiled);
+		for (const id of ids) if (!resolveState(files, compiled, id, root)) throw unknown(id, files, compiled);
 	}
+	const moduleValues = Object.fromEntries(Object.entries(overrides).filter(([id]) => parseModuleStateId(id)));
 	const program: Program = compiled.imports.length
-		? await importProgram(compiled)
+		? await importProgram(compiled, root, moduleValues)
 		: new Function(`return (${compiled.module.replace(/^export default /m, '')})`)();
 	return realize(program, overrides, location);
 }
 
-// Compiled modules served to Bun's loader by path: the entry as compiled,
-// the components it imports compiled as they load.
-const loaded = new Map<string, string>();
-async function importProgram(compiled: Compiled): Promise<Program> {
-	if (!loaded.size)
+// Each evaluation imports the app as a module graph of its own: its files
+// are loaded under `/__patch_eval_<n>__/<path>`, so a relative import from
+// one of them resolves to another file of the same graph. Packages and
+// Patch's runtime stay shared (one reactive core). .pat files and .pat.ts
+// modules are compiled as they load, the entry as already compiled.
+
+const GRAPH = /^\/__patch_eval_\d+__/;
+const RUNTIME = resolve(import.meta.dir);
+let graphs = 0;
+let current: { root: string; entry: Compiled } | null = null;
+const cache = new Map<string, { source: string; root: string; module: string }>();
+
+/** Whether `path` is the app's own (loaded in each graph) rather than a package's or Patch's. */
+const ownFile = (path: string) => path.startsWith(sep) && !path.includes(`${sep}node_modules${sep}`) && !path.startsWith(RUNTIME + sep);
+
+const LOADERS: Record<string, 'ts' | 'tsx' | 'js' | 'jsx' | 'json'> = { '.ts': 'ts', '.mts': 'ts', '.tsx': 'tsx', '.js': 'js', '.mjs': 'js', '.jsx': 'jsx', '.json': 'json' };
+
+function load(path: string): { contents: string; loader: 'ts' | 'tsx' | 'js' | 'jsx' | 'json' } {
+	const { root, entry } = current!;
+	if (path === entry.path) return { contents: entry.module, loader: 'js' };
+	const source = readFileSync(path, 'utf8');
+	const patch = path.endsWith('.pat') || isPatModule(path);
+	if (!patch) {
+		const loader = LOADERS[extname(path)];
+		if (!loader) throw new Error(`Cannot import ${path} at design time`);
+		return { contents: source, loader };
+	}
+	let hit = cache.get(path);
+	if (hit?.source !== source || hit.root !== root) {
+		const module = path.endsWith('.pat') ? compile(source, path).module : compileModule(source, path, root).module;
+		cache.set(path, (hit = { source, root, module }));
+	}
+	return { contents: hit.module, loader: 'js' };
+}
+
+let registered = false;
+async function importProgram(compiled: Compiled, root: string, moduleValues: StateOverrides): Promise<Program> {
+	if (!registered) {
+		registered = true;
 		Bun.plugin({
 			name: 'pat',
 			setup(build) {
 				// Bun resolves bare specifiers before runtime plugins see them, so `patch` is a virtual module.
 				build.module('patch', () => ({ exports: patchModule, loader: 'object' }));
-				build.onLoad({ filter: /\.pat$/ }, async ({ path }) => ({
-					contents: loaded.get(path) ?? compile(await Bun.file(path).text(), path).module,
-					loader: 'js'
-				}));
+				build.onResolve({ filter: /.*/ }, (args) => {
+					if (GRAPH.test(args.path)) return { path: args.path };
+					const graph = GRAPH.exec(args.importer)?.[0];
+					if (!graph || args.path === 'patch') return undefined;
+					const path = Bun.resolveSync(args.path, dirname(args.importer.slice(graph.length)));
+					if (!path.startsWith(sep)) return undefined;
+					return { path: ownFile(path) ? graph + path : path };
+				});
+				build.onLoad({ filter: GRAPH }, ({ path }) => load(path.replace(GRAPH, '')));
 			}
 		});
-	loaded.set(compiled.path, compiled.module);
-	return (await import(compiled.path)).default;
+	}
+	current = { root, entry: compiled };
+	setModuleOverrides(moduleValues);
+	try {
+		return (await import(`/__patch_eval_${++graphs}__${compiled.path}`)).default;
+	} finally {
+		setModuleOverrides({});
+		current = null;
+	}
 }

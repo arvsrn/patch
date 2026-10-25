@@ -38,6 +38,8 @@ export type Script = {
 };
 
 export type StateDecl = { id: Estree; call: Estree; info: StateInfo };
+/** `const name = $state({ … })` in a .pat.ts module: the object's own keys, in order. */
+export type ModuleStateDecl = { id: Estree; call: Estree; initial: Estree; keys: string[] };
 /** `key: local = fallback` in `let { ... } = $props()`. */
 export type PropDecl = { key: string; local: Estree; fallback: Estree | null };
 

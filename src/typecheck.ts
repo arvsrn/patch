@@ -6,6 +6,10 @@
 // are .pat offsets. The author's code is checked as written, before the
 // reactive rewrite; rune declarations describe what the author sees. One
 // LanguageService per tsconfig is kept for the life of the process.
+//
+// A .pat.ts module is seen by TypeScript, wherever it is read (checking it, or
+// a file importing it), with MODULE_RUNES appended: a module-scoped `$state`
+// whose result is assignable at the first level and read-only below it.
 
 import { dirname } from 'node:path';
 import ts from 'typescript-api';
@@ -25,6 +29,18 @@ interface PatStyle {
 	readonly [property: string]: unknown;
 }
 declare function $style(style: { readonly [property: string]: unknown }): PatStyle;
+/** A value of module state: read-only all the way down, so it is replaced rather than changed in place. */
+type PatReadonly<T> = T extends (...args: any[]) => unknown
+	? T
+	: T extends ReadonlyMap<infer K, infer V>
+		? ReadonlyMap<PatReadonly<K>, PatReadonly<V>>
+		: T extends ReadonlySet<infer V>
+			? ReadonlySet<PatReadonly<V>>
+			: T extends object
+				? { readonly [K in keyof T]: PatReadonly<T[K]> }
+				: T;
+/** Module state: its properties are assigned; their values are read-only. */
+type PatModuleState<T> = { -readonly [K in keyof T]: PatReadonly<T[K]> };
 /** The component's props: destructure them, with types: let { a, b = 1 }: Props = $props(). */
 declare function $props(): any;
 /** A .pat file: a component. */
@@ -60,6 +76,16 @@ declare module 'patch' {
 }
 `;
 
+/** Appended to a .pat.ts module: module state, shadowing the component rune. Function declarations hoist, so it applies to the whole file. */
+const MODULE_RUNES = `
+declare function $state<T extends object>(initial: T): PatModuleState<T>;
+`;
+const isPatTs = (file: string) => file.endsWith('.pat.ts');
+const read = (file: string) => {
+	const text = ts.sys.readFile(file);
+	return text !== undefined && isPatTs(file) ? text + MODULE_RUNES : text;
+};
+
 type Project = { service: ts.LanguageService; files: Map<string, { text: string; version: number }>; runes: string; globals?: Set<string> };
 const projects = new Map<string, Project>();
 
@@ -93,14 +119,14 @@ function project(file: string): Project {
 		getScriptFileNames: () => [...files.keys()],
 		getScriptVersion: (f) => String(files.get(f)?.version ?? ts.sys.getModifiedTime?.(f)?.getTime() ?? 0),
 		getScriptSnapshot: (f) => {
-			const text = files.get(f)?.text ?? ts.sys.readFile(f);
+			const text = files.get(f)?.text ?? read(f);
 			return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text);
 		},
 		getCurrentDirectory: () => root,
 		getCompilationSettings: () => options,
 		getDefaultLibFileName: ts.getDefaultLibFilePath,
 		fileExists: (f) => files.has(f) || ts.sys.fileExists(f),
-		readFile: (f) => files.get(f)?.text ?? ts.sys.readFile(f),
+		readFile: (f) => files.get(f)?.text ?? read(f),
 		readDirectory: ts.sys.readDirectory,
 		directoryExists: ts.sys.directoryExists,
 		getDirectories: ts.sys.getDirectories,
@@ -143,7 +169,7 @@ export function checkValues(
 	lines.push('}\n');
 	const offsets = lines.map((_, i) => prefix.length + lines.slice(0, i).join('').length);
 	const virtual = `${path}.values.ts`;
-	files.set(virtual, { text: prefix + lines.join(''), version: ++valueChecks });
+	files.set(virtual, { text: prefix + lines.join('') + (isPatTs(path) ? MODULE_RUNES : ''), version: ++valueChecks });
 	try {
 		const diagnostics = service.getSemanticDiagnostics(virtual).filter((d) => d.start !== undefined && d.start >= prefix.length);
 		return checks.map((_, i) => {
@@ -173,7 +199,7 @@ export function typecheck(source: string, path: string, start: number, end: numb
 	// also knows the variables change outside the script.
 	const lines = writes.map((w) => `${w.name} = undefined as unknown as ${w.type};\n`);
 	const tail = lines.length ? '\n;function __pat_template_writes() {\n' : '';
-	const text = blank(source.slice(0, start)) + source.slice(start, end) + blank(source.slice(end)) + tail + lines.join('') + (tail && '}\n');
+	const text = blank(source.slice(0, start)) + source.slice(start, end) + blank(source.slice(end)) + tail + lines.join('') + (tail && '}\n') + (isPatTs(path) ? MODULE_RUNES : '');
 	const offsets = lines.map((_, i) => source.length + tail.length + lines.slice(0, i).join('').length);
 	const virtual = `${path}.script.ts`;
 	const previous = files.get(virtual);

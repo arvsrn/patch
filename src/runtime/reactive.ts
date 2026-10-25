@@ -3,6 +3,11 @@
 // Effects and derived values are "owners": they track the cells they read and
 // re-run when one changes. Owners form a tree; disposing one disposes its
 // children and runs their cleanups.
+//
+// There is one core per realm (`reactive`): every mounted app, design-time
+// evaluation and module's `$state` uses it, so an effect of a page tracks a
+// cell a module created. What belongs to one app (its owner tree, portals,
+// held effects) lives with the app, not here.
 
 export type Owner = {
 	children: Set<Owner>;
@@ -192,3 +197,6 @@ export function createReactive() {
 
 	return { newOwner, dispose, within, batch, untrack, onCleanup, currentOwner, cell, derived, effect, deferredEffect };
 }
+
+/** The realm's reactive core. */
+export const reactive = createReactive();

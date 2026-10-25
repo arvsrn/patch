@@ -1,21 +1,20 @@
 <script lang="ts">
 	import { goto, page } from 'patch';
 	import { members, priorities, statuses } from '../../../data.ts';
-	import { issueKey, workspace } from '../../../workspace.ts';
+	import { issueKey, workspace } from '../../../workspace.pat.ts';
 
 	// Moving to another issue keeps this page and changes `page.params`.
 	let id = $derived(Number(page.params.id));
-	let issues = $state(workspace.issues);
+	let issues = $derived(workspace.issues);
 	let index = $derived(issues.findIndex((i) => i.id === id));
 	let issue = $derived(index >= 0 ? issues[index] : null);
 	let previous = $derived(index > 0 ? issues[index - 1] : null);
 	let next = $derived(index >= 0 && index < issues.length - 1 ? issues[index + 1] : null);
 
-	const labelById = Object.fromEntries(workspace.labels.map((l) => [l.id, l]));
+	let labelById = $derived(Object.fromEntries(workspace.labels.map((l) => [l.id, l])));
 
 	function remove() {
-		issues = issues.filter((i) => i.id !== id);
-		workspace.issues = issues;
+		workspace.issues = issues.filter((i) => i.id !== id);
 		goto('/issues');
 	}
 

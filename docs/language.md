@@ -70,6 +70,7 @@ import { load, type Task } from './api.ts'; // local ES module (.ts, .js, .mjs)
 - Imports must be static ES imports. They are resolved relative to the `.pat` file.
 - Type-only imports are removed from the output.
 - A `.pat` file is imported as one component, with a default import: `import Card from './Card.pat'`. A missing file is a compile error. See [Components](#components).
+- A `.pat.ts` or `.pat.js` file is a [module with state](#module-state), imported like any module, with its full extension: `import { workspace } from './workspace.pat.ts'`.
 - `'patch'` provides the [context](#context) functions (`createContext`, `setContext`, `getContext`), the [routing](#page-state) values `page` and `goto`, and the types `Context` and `Page`. It can be imported from `.pat` files and from `.ts`/`.js` modules, but only `createContext` works outside a `.pat` script; the others throw there.
 - You cannot import local CommonJS files (`.cjs`, `.cts`). CommonJS npm packages work.
 - You cannot import stylesheets (`.css`, `.scss`, `.sass`, `.less`, `.styl`, `.pcss`, …).
@@ -143,6 +144,42 @@ const t = tasks.find(byId); t.done = true; // error: write through `tasks` itsel
 A fresh container holding the same elements is not the variable: `const copy = tasks.slice(); copy.push(t); tasks = copy` is fine, but `copy[0].done = true` changes an element of `tasks` and is an error. Copies are recognized from `[...x]`, `{ ...x }`, and `filter`, `slice`, `concat`, `toSorted`, `toReversed`, `toSpliced`, `with`, `flat`, `values`. Values passed into a function through a parameter are not followed, and neither are methods of your own classes.
 
 Prefer assigning new values: `tasks = [...tasks, t]`.
+
+### Module state
+
+State that belongs to the app rather than to one component instance, such as data every page shows, is declared in a **`.pat.ts`** (or `.pat.js`) module. Patch compiles these modules; any other `.ts`/`.js` file is left as it is.
+
+```ts
+// src/workspace.pat.ts
+import { initialIssues, type Issue } from './data.ts';
+
+export const workspace = $state<{ issues: Issue[]; nextId: number }>({
+	issues: initialIssues,
+	nextId: 1
+});
+
+export function addIssue(title: string) {
+	workspace.issues = [...workspace.issues, { id: workspace.nextId, title }];
+	workspace.nextId += 1;
+}
+```
+
+```svelte
+<script lang="ts">
+	import { workspace, addIssue } from '../workspace.pat.ts';
+	let open = $derived(workspace.issues.filter((i) => !i.done).length);
+</script>
+<p>{open} open</p>
+<button onclick={() => addIssue('New')}>Add</button>
+```
+
+- **Declaration.** `const name = $state({ key: value, … })`, at the top level, exported or not. It is `const`: the binding is never reassigned. The value is an object literal listing each property as `key: value`; spreads, computed keys, methods and accessors are errors, and so is any other value (`$state(0)`). Give the type as a type argument when the initial values are narrower than the state: `$state<{ selected: number | null }>({ selected: null })`.
+- **One state.** As with a component's `$state({ … })`, the object is one state: reading any of its properties depends on the whole value, so whatever reads `workspace.issues` also updates when `workspace.nextId` is assigned.
+- **Reading and assigning.** Every importer reads and assigns the properties directly, in a `.pat` script, a template, a `.pat.ts` module or a plain `.ts` module, including from `setTimeout` and `fetch` callbacks. Assigning a property (`=`, `+=`, `++`) replaces the value with a copy holding the new property. Properties are only the listed ones; adding one throws.
+- **Never changed in place.** Values are replaced, not mutated: `workspace.issues = [...workspace.issues, issue]`, not `workspace.issues.push(issue)`. A change in place would not update anything reading the state. In TypeScript the properties' values are read-only all the way down, so `.push()`, `workspace.issues[0].done = true` and the same through an alias are type errors, in the module and in every importer. In the module itself, the direct forms are errors in JavaScript too. To change one item, assign a new array: `workspace.issues = workspace.issues.map((i) => (i.id === id ? { ...i, done: true } : i))`.
+- **Lifetime.** Module state lives as long as the app: it is created when the module is first imported and is shared by every page and component. Pages are destroyed on navigation; module state is not. Snapshots and other design-time evaluations each get [a fresh copy](#module-state-in-snapshots).
+- **Only `$state`.** `$derived`, `$effect`, `$props` and `$style` are not available in modules yet; derive values in the components that read the state. `import { … } from 'patch'` in a module is the plain `'patch'` module, where only `createContext` works.
+- **File names.** `foo.pat.ts` cannot sit next to a component `foo.pat` (TypeScript would resolve the component's import to the module). A module cannot contain the text `</script`.
 
 ### `$derived`
 
@@ -651,7 +688,7 @@ A navigation, by link or `goto`:
 3. updates `page`,
 4. shows the page for the route.
 
-When the route changes, the previous page is **destroyed** as a branch of an `{#if}` is: its effects' cleanups run, its state is dropped, its DOM and event handlers are removed. The new page is created fresh. When only the params, query or hash change (`/issues/1` → `/issues/2?tab=activity`), the page stays, keeps its state, and everything reading `page` updates. To start fresh per param, reset the state in an `$effect` reading `page.params`. State that should outlive a page belongs in a `.ts` module.
+When the route changes, the previous page is **destroyed** as a branch of an `{#if}` is: its effects' cleanups run, its state is dropped, its DOM and event handlers are removed. The new page is created fresh. When only the params, query or hash change (`/issues/1` → `/issues/2?tab=activity`), the page stays, keeps its state, and everything reading `page` updates. To start fresh per param, reset the state in an `$effect` reading `page.params`. State that should outlive a page belongs in [module state](#module-state).
 
 Back and forward (`popstate`) update `page` and show the matching page without adding a history entry. Loading or reloading the document at any URL shows the page for that URL. `patch dev` serves the app at every path; a built app must be served the same way (every path answered with the built HTML file), since a server that only answers `/` cannot load `/issues/1` directly. Opening a built app from disk (`file://`) shows the not-found page, because its path is the file's.
 
@@ -1052,6 +1089,20 @@ In an app with pages, a snapshot renders the page at `--url` (a path, optionally
 - In a JS script, the value is used as JSON if it parses, and as a string otherwise, without any checking.
 - The initializer expression of an overridden state does not run.
 
+### Module state in snapshots
+
+[Module state](#module-state) is named by its module's file, relative to the app root (the directory above `src/pages`, or the directory of a single-file app), `#`, and the variable:
+
+```sh
+--state 'src/workspace.pat.ts#workspace={"issues":[],"nextId":1}'
+--state 'src/pages/issues/[id]/form.pat.ts#form={"title":"Draft"}'
+```
+
+- The value replaces the whole state, and is checked against its declared type like any override. Brackets in the file part are directory names, not `{#each}` keys.
+- An id naming no module state in that file is an error.
+- Every evaluation loads its own copy of the app's modules (packages and Patch itself are shared), so module state starts from its initializer or its override, never from what another snapshot or test left in it. Evaluations in one process run one at a time.
+- In an HTML snapshot, the override is the initial value of the module state; the app changes it from there.
+
 ### State of component instances
 
 State declared in a component is overridden per instance. Its id is the instance's **path** followed by the variable name:
@@ -1106,7 +1157,7 @@ Without a warning, a snapshot also keeps a character whose uppercase or lowercas
 | `on:click` / `onClick` | `onclick` |
 | transitions, animations, actions (`use:`) | none |
 | spread attributes, arbitrary HTML attributes | none |
-| `$state.raw`, `$inspect`, stores (`$x`) | none |
+| `$state.raw`, `$inspect`, stores (`$x`) | [module state](#module-state) for state shared across components and pages |
 | DOM manipulation and measurement | template and `style` |
 | CSS grid, `z-index`, `right`/`bottom`, percentages, units, named colors, gradients, images, per-side borders, transforms | none |
 

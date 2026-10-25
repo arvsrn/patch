@@ -8,7 +8,7 @@
 
 import { unwrap, type Estree } from './ast';
 import type { Reporter, Span } from './diagnostics';
-import type { Attribute, AttributeValue, Component, ComponentUse, Each, Element, If, Inline, Render, Script, Snippet, Tag, TemplateNode } from './ir';
+import type { Attribute, AttributeValue, Component, ComponentUse, Each, Element, If, Inline, ModuleStateDecl, Render, Script, Snippet, Tag, TemplateNode } from './ir';
 import type { SvelteAst } from './parse';
 import { PATCH_EXPORTS } from './schema/program';
 
@@ -98,13 +98,7 @@ function lowerScript(instance: Svelte, reporter: Reporter): Script {
 	for (const statement of program.body) {
 		if (statement.type === 'ImportDeclaration') {
 			const from = statement.source.value;
-			if (/\.(css|scss|sass|less|styl|stylus|pcss|postcss|sss)($|\?)/.test(from))
-				reporter.report(statement.source, 'stylesheets are not supported; use style={...} with $style({...}) values');
-			else if (/\.pat($|\?)/.test(from)) {
-				const [first, ...rest] = statement.specifiers;
-				if (statement.importKind === 'type' || first?.type !== 'ImportDefaultSpecifier' || rest.length)
-					reporter.report(statement, 'a .pat file is imported as one component: import Card from "./Card.pat"');
-			} else if (from === 'patch') {
+			if (!importProblem(statement, reporter) && from === 'patch') {
 				if (statement.importKind === 'type') continue;
 				for (const sp of statement.specifiers) {
 					if (sp.importKind === 'type') continue;
@@ -114,9 +108,6 @@ function lowerScript(instance: Svelte, reporter: Reporter): Script {
 					else reporter.report(sp, `"patch" provides ${PATCH_EXPORTS.join(', ')} (and the types Context and Page)`);
 				}
 			}
-			// Vite only converts CommonJS for npm dependencies, not local files.
-			else if (/^\.{0,2}\/.*\.c[jt]s$/.test(from))
-				reporter.report(statement.source, 'local CommonJS modules are not supported; use an ES module (.ts, .js, .mjs). CommonJS npm packages are fine');
 			script.imports.push(statement);
 		} else if (statement.type === 'TSImportEqualsDeclaration') {
 			reporter.report(statement, '`import x = require(...)` is not supported; use an ES import');
@@ -150,6 +141,87 @@ function lowerScript(instance: Svelte, reporter: Reporter): Script {
 		}
 	}
 	return script;
+}
+
+/** Reports what is wrong with an import a .pat file or module cannot have. Returns whether there was a problem. */
+function importProblem(statement: Estree, reporter: Reporter): boolean {
+	const from: string = statement.source.value;
+	const count = reporter.diagnostics.length;
+	if (/\.(css|scss|sass|less|styl|stylus|pcss|postcss|sss)($|\?)/.test(from))
+		reporter.report(statement.source, 'stylesheets are not supported; use style={...} with $style({...}) values');
+	else if (/\.pat($|\?)/.test(from)) {
+		const [first, ...rest] = statement.specifiers;
+		if (statement.importKind === 'type' || first?.type !== 'ImportDefaultSpecifier' || rest.length)
+			reporter.report(statement, 'a .pat file is imported as one component: import Card from "./Card.pat"');
+	}
+	// Vite only converts CommonJS for npm dependencies, not local files.
+	else if (/^\.{0,2}\/.*\.c[jt]s$/.test(from))
+		reporter.report(statement.source, 'local CommonJS modules are not supported; use an ES module (.ts, .js, .mjs). CommonJS npm packages are fine');
+	return reporter.diagnostics.length > count;
+}
+
+// ------------------------------------------------------------------ module
+
+/**
+ * A .pat.ts / .pat.js module: its script as a component without a template
+ * (exports unwrapped to their declarations, for binding), and its module
+ * `$state` declarations: `const name = $state({ key: value, … })`.
+ */
+export function lowerModule(ast: SvelteAst, reporter: Reporter): { component: Component; states: ModuleStateDecl[] } {
+	const instance = (ast as Svelte).instance;
+	const program = instance.content;
+	const lang = instance.attributes.find((a: Svelte) => a.name === 'lang')?.value?.[0]?.data === 'ts' ? 'ts' : 'js';
+	const script: Script = {
+		lang,
+		span: { start: program.start, end: program.end },
+		body: [],
+		imports: [],
+		state: [],
+		derived: [],
+		props: [],
+		propsDeclarator: null,
+		patchImports: [],
+		runes: new Set()
+	};
+	const states: ModuleStateDecl[] = [];
+	const shape = 'module state is declared as `const name = $state({ key: value, … })` at the top level';
+	for (const outer of program.body) {
+		if (outer.type === 'ImportDeclaration') {
+			importProblem(outer, reporter);
+			script.imports.push(outer);
+			script.body.push(outer);
+			continue;
+		}
+		if (outer.type === 'TSImportEqualsDeclaration') {
+			reporter.report(outer, '`import x = require(...)` is not supported; use an ES import');
+			continue;
+		}
+		const statement = outer.type === 'ExportNamedDeclaration' || outer.type === 'ExportDefaultDeclaration' ? outer.declaration : outer.type === 'ExportAllDeclaration' ? null : outer;
+		if (!statement) continue;
+		script.body.push(statement);
+		if (statement.type !== 'VariableDeclaration') continue;
+		for (const d of statement.declarations) {
+			const init = unwrap(d.init);
+			if (init?.type !== 'CallExpression' || calleeName(init.callee) !== '$state') continue;
+			// Reported here, not again as a misplaced rune.
+			script.runes.add(init);
+			const arg = unwrap(init.arguments[0]);
+			if (statement.kind !== 'const') reporter.report(statement, `${shape}; it is const, since the binding never changes (assign its properties)`);
+			else if (d.id.type !== 'Identifier') reporter.report(d.id, shape);
+			else if (init.arguments.length !== 1 || arg?.type !== 'ObjectExpression')
+				reporter.report(init, `${shape}: module $state holds an object, whose properties are assigned`);
+			else {
+				const keys: string[] = [];
+				for (const p of arg.properties) {
+					const key = p.type === 'Property' && !p.computed && p.kind === 'init' && !p.method ? (p.key.name ?? (typeof p.key.value === 'string' ? p.key.value : null)) : null;
+					if (key === null) reporter.report(p, 'list each property of module state as `key: value`; spreads, computed keys, methods and accessors are not supported');
+					else keys.push(key);
+				}
+				states.push({ id: d.id, call: init, initial: arg, keys });
+			}
+		}
+	}
+	return { component: { script, template: [] }, states };
 }
 
 /** `$state` takes at most one initial value; `$derived`, `$derived.by` and `$effect` take exactly one argument. */

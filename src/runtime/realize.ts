@@ -23,7 +23,7 @@ import { createApi, type Instance } from './api';
 import { eachPlace, instancePlace, nodeId, renderPlace, ROOT_PLACE, type Place } from '../schema/path';
 import type { Location } from '../schema/route';
 import { componentOf, eachList, elementStyle, portalName, renderable, toText, withId } from './evaluate';
-import { createReactive } from './reactive';
+import { reactive } from './reactive';
 import { pageOf } from './router';
 
 function inlineRuns(parts: InlinePart[], font: Font, runs: Run[], scope: string): Run[] {
@@ -188,7 +188,7 @@ const designGoto = (url: string | URL) => {
  */
 export function realize(program: Program, overrides: Record<string, unknown> = {}, location?: Location): Concrete[] {
 	const routing = location && { page: pageOf(() => location), goto: designGoto };
-	const { root: makeRoot, instance } = createApi(createReactive(), { overrides, design: true }, routing);
+	const { root: makeRoot, instance } = createApi(reactive, { overrides, design: true }, routing);
 	const root = makeRoot();
 	const nodes = program(root.api);
 	const handles = new Map<string, DesignNode>();

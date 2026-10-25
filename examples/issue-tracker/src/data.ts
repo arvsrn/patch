@@ -8,7 +8,7 @@ export type Issue = {
 	title: string;
 	status: Status;
 	priority: Priority;
-	labels: string[];
+	labels: readonly string[];
 	assignee: string | null;
 };
 

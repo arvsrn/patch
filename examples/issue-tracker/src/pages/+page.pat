@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { workspace } from '../workspace.ts';
+	import { workspace } from '../workspace.pat.ts';
 
-	const open = workspace.issues.filter((i) => i.status !== 'done').length;
+	let open = $derived(workspace.issues.filter((i) => i.status !== 'done').length);
 </script>
 
 <main style={{ width: 'fill', height: 'fill', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#1b1b1f', fontSize: 13 }}>

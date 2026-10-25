@@ -7,6 +7,7 @@ import { evaluate } from '../src/design';
 import { BUILTIN_NOT_FOUND, discoverRoutes, pageAt } from '../src/routes';
 import { appLink } from '../src/runtime/navigation';
 import { mount } from '../src/runtime/dom';
+import { moduleState } from '../src/runtime/module-state';
 import { realize } from '../src/runtime/realize';
 import type { Pages, Program } from '../src/schema/program';
 import { matchRoute, routeInfo, parseSegment, type RouteInfo } from '../src/schema/route';
@@ -362,11 +363,28 @@ test('design time evaluates the page a URL selects, at that location', async () 
 	const manifest = discoverRoutes(dir);
 	const runs = async (url: string, overrides = {}) => {
 		const { file, location } = pageAt(manifest, url);
-		const tree = (await evaluate(compile(await Bun.file(file).text(), file), overrides, location)) as any[];
+		const tree = (await evaluate(compile(await Bun.file(file).text(), file), overrides, { location })) as any[];
 		return JSON.stringify(tree).match(/"text":"([^"]*)"/g)!.map((t) => t.slice(8, -1)).join('');
 	};
 	expect(await runs('/issues/a%20b?tab=activity', { open: true })).toBe('/issues/[id] a b activity true');
 	expect(await runs('/')).toBe('home');
 	expect(await runs('/missing')).toContain('No page at /missing');
 	expect(() => realize(program(`<script>import { page } from 'patch';</script><p>{page.url}</p>`))).toThrow('page is only available in an app with pages');
+});
+
+test('module state outlives the pages that change it, and pages read it reactively', async () => {
+	(globalThis as any).__ws = moduleState('src/ws.pat.ts#ws', ['count'], () => ({ count: 0 }));
+	const counter = program(`<script>const ws = globalThis.__ws;</script><p>a {ws.count}</p><button onclick={() => (ws.count += 1)}>+</button><a href="/b">b</a>`);
+	const reader = program(`<script>const ws = globalThis.__ws;</script><p>b {ws.count}</p>`);
+	const { target } = install(undefined);
+	mount({ routes: [{ ...route('/a'), program: counter }, { ...route('/b'), program: reader }], notFound: NOT_FOUND }, target as any, { url: '/a' });
+	await settle();
+	(target.find((el) => el.tag === 'button')!.listeners.get('click')!.values().next().value as any)({});
+	await settle();
+	expect(target.text).toBe('a 1+b');
+	click(target, target.find((el) => el.tag === 'a')!);
+	await settle();
+	expect(target.text).toBe('b 1');
+	(globalThis as any).__ws.count = 5;
+	expect(target.text).toBe('b 5');
 });

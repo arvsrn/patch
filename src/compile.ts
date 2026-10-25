@@ -5,12 +5,19 @@
 //
 // The compiled module keeps the script's imports at the top and
 // default-exports `program($$rt)` (see schema/program.ts).
+//
+// A .pat.ts / .pat.js module goes through the same front end as the script
+// of a component without a template (`compileModule`). It stays an ordinary
+// ES module; its `const x = $state({...})` declarations become module state
+// (runtime/module-state.ts), named by the module's file relative to the app
+// root (schema/path.ts).
 
 import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
+import { forEachNode, rootOf, unwrap, type Estree } from './ast';
 import { bind, isSignal, type Bindings } from './bind';
 import { checkNames } from './check/names';
-import { checkScript } from './check/script';
+import { checkScript, MUTATORS } from './check/script';
 import { checkAnchorReferences, checkStyles } from './check/styles';
 import { checkTemplate, checkTemplateNames } from './check/template';
 import { CompileError, Reporter, type Diagnostic } from './diagnostics';
@@ -18,9 +25,9 @@ import { Edits } from './emit/edits';
 import { emitScript } from './emit/script';
 import { TemplateEmitter } from './emit/template';
 import { elements, fragments, type Component, type StateInfo, type Tag, type TemplateNode } from './ir';
-import { lower } from './lower';
+import { lower, lowerModule } from './lower';
 import { parse } from './parse';
-import { location } from './schema/path';
+import { location, moduleStateId } from './schema/path';
 import { collectStyles, type Styles } from './styles';
 import { globalNames, typecheck, type TemplateWrite } from './typecheck';
 
@@ -177,4 +184,101 @@ export function compile(source: string, filename = 'app.pat'): Compiled {
 		components: componentSites(component, bindings, filename, position),
 		script: info ? { lang: info.lang, source, start: info.span.start, end: info.span.end } : null
 	};
+}
+
+export type CompiledModule = {
+	/** Absolute path of the .pat.ts / .pat.js file. */
+	path: string;
+	/** The module as JavaScript. */
+	module: string;
+	imports: string[];
+	/** Its module state: the variable, its id, and its properties. */
+	states: { name: string; id: string; keys: string[] }[];
+	/** The source, for checking design-time values against its types. */
+	source: string;
+	lang: 'ts' | 'js';
+};
+
+const MODULE_STATE = resolve(import.meta.dir, 'runtime/module-state.ts');
+
+/**
+ * Validation, type checking and code generation for a .pat.ts / .pat.js
+ * module. `root` is the app's root directory, which module state ids are
+ * relative to. Throws a CompileError listing every diagnostic.
+ */
+export function compileModule(source: string, filename: string, root = dirname(resolve(filename))): CompiledModule {
+	const path = resolve(filename);
+	const lang = path.endsWith('.ts') ? 'ts' : 'js';
+	// The source is parsed as the script of a component.
+	const open = `<script lang="${lang}">`;
+	const wrapped = `${open}${source}</script>`;
+	const reporter = new Reporter(wrapped);
+	const at = (offset: number) => ({ start: open.length + offset, end: open.length + offset + 1 });
+	const closing = source.search(/<\/script/i);
+	const component = path.slice(0, -3);
+	if (closing >= 0) reporter.report(at(closing), 'a module cannot contain "</script"; write it as "<\\/script"');
+	else if (existsSync(component)) reporter.report(at(0), `${component.split(sep).pop()} is a component next to this module; rename one (TypeScript would resolve the component's import to this file)`);
+	const ast = closing >= 0 ? null : parse(wrapped, reporter);
+	const lowered = ast && lowerModule(ast, reporter);
+	const bindings = lowered && bind(lowered.component);
+	if (lowered && bindings) {
+		checkScript(lowered.component, bindings, reporter, { module: true });
+		checkModuleState(lowered.states, lowered.component.script!.body, bindings, reporter);
+	}
+
+	// PAT diagnostics in the module's own offsets, then TypeScript's.
+	const own = new Reporter(source);
+	const diagnostics: Diagnostic[] = reporter.diagnostics.map((d) => {
+		const start = d.start - open.length;
+		return { ...d, start, end: d.end - open.length, ...own.position(start) };
+	});
+	if (lang === 'ts' && lowered) {
+		const pat = diagnostics.filter((d) => d.severity === 'error');
+		for (const d of typecheck(source, path, 0, source.length))
+			if (!pat.some((p) => p.start <= d.start && d.start < p.end)) diagnostics.push({ ...d, source: 'typescript', ...own.position(d.start) });
+	}
+	diagnostics.sort((a, b) => a.start - b.start);
+	if (!lowered || diagnostics.some((d) => d.severity === 'error')) throw new CompileError(diagnostics, source, filename);
+
+	const edits = new Edits(wrapped);
+	const file = relative(resolve(root), path).split(sep).join('/');
+	const states = lowered.states.map(({ id, call, initial, keys }) => {
+		const stateId = moduleStateId(file, id.name);
+		edits.replace(call.callee.start, call.callee.end, '$$moduleState');
+		edits.before(initial.start, `${JSON.stringify(stateId)}, ${JSON.stringify(keys)}, () => (`);
+		edits.after(initial.end, ')');
+		return { name: id.name, id: stateId, keys };
+	});
+	const header = states.length ? `import { moduleState as $$moduleState } from ${JSON.stringify(MODULE_STATE)};\n` : '';
+	const module = new Bun.Transpiler({ loader: lang, target: 'browser' }).transformSync(header + edits.render(open.length, open.length + source.length));
+	const imports = new Bun.Transpiler({ loader: 'js' }).scanImports(module).map((i) => i.path);
+	return { path, module, imports, states, source, lang };
+}
+
+/**
+ * Module state is replaced, never changed in place: the binding is not
+ * reassigned, and only its own properties are assigned. (In a .pat.ts the
+ * types say so too, through aliases; this catches the direct forms, also in JS.)
+ */
+function checkModuleState(states: { id: Estree }[], body: Estree[], bindings: Bindings, reporter: Reporter) {
+	const symbols = new Set(states.map((s) => bindings.topLevel(s.id.name)));
+	for (const ref of bindings.references)
+		if (ref.access === 'write' && symbols.has(ref.symbol))
+			reporter.report(ref.node, `"${ref.node.name}" is module state and is never reassigned; assign its properties: ${ref.node.name}.key = value`);
+	const inPlace = (target: Estree) => {
+		const object = unwrap(target.object);
+		const root = rootOf(object);
+		return object.type !== 'Identifier' && root?.type === 'Identifier' && symbols.has(bindings.reference(root)?.symbol ?? null) ? root.name : null;
+	};
+	for (const write of bindings.memberWrites) {
+		const name = inPlace(write.target);
+		if (name) reporter.report(write.node, `this changes module state "${name}" in place, which is not tracked; assign a new value to its property instead`);
+	}
+	for (const statement of body)
+		forEachNode(statement, (node) => {
+			const callee = node.type === 'CallExpression' ? unwrap(node.callee) : null;
+			if (callee?.type !== 'MemberExpression' || callee.computed || !MUTATORS.has(callee.property.name)) return;
+			const name = inPlace({ object: callee.object });
+			if (name) reporter.report(callee.property, `.${callee.property.name}() changes module state "${name}" in place, which is not tracked; assign a new value to its property instead`);
+		});
 }

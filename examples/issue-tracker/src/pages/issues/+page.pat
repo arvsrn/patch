@@ -10,7 +10,7 @@
 		type Priority,
 		type Status
 	} from '../../data.ts';
-	import { issueKey as key, workspace } from '../../workspace.ts';
+	import { issueKey as key, workspace } from '../../workspace.pat.ts';
 
 	type MenuKind = 'status' | 'priority' | 'assignee' | 'labels';
 	type Menu = { kind: MenuKind; issueId: number; key: string; trigger?: HTMLElement };
@@ -26,9 +26,9 @@
 		create?: boolean;
 	};
 
-	let issues: Issue[] = $state(workspace.issues);
-	let labels: Label[] = $state(workspace.labels);
-	let nextId = $state(workspace.nextId);
+	// Issues and labels are the workspace's, shared with the other pages.
+	let issues = $derived(workspace.issues);
+	let labels = $derived(workspace.labels);
 
 	// /issues?q=… opens the board searching for it.
 	let query = $state(page.url.searchParams.get('q') ?? '');
@@ -123,7 +123,7 @@
 	});
 
 	function update(id: number, patch: Partial<Issue>) {
-		issues = issues.map((i) => (i.id === id ? { ...i, ...patch } : i));
+		workspace.issues = issues.map((i) => (i.id === id ? { ...i, ...patch } : i));
 	}
 
 	function toggleLabel(issue: Issue, labelId: string) {
@@ -145,16 +145,16 @@
 	function createIssue() {
 		const title = draftTitle.trim();
 		if (!title || !composerStatus) return;
-		const issue: Issue = { id: nextId, title, status: composerStatus, priority: 0, labels: [], assignee: null };
-		issues = [issue, ...issues];
-		nextId += 1;
+		const issue: Issue = { id: workspace.nextId, title, status: composerStatus, priority: 0, labels: [], assignee: null };
+		workspace.issues = [issue, ...issues];
+		workspace.nextId += 1;
 		composerStatus = null;
 		draftTitle = '';
 		selectedId = issue.id;
 	}
 
 	function deleteIssue(id: number) {
-		issues = issues.filter((i) => i.id !== id);
+		workspace.issues = issues.filter((i) => i.id !== id);
 		selectedId = null;
 		menu = null;
 	}
@@ -180,7 +180,7 @@
 		const name = menuQuery.trim();
 		if (!name) return;
 		const label: Label = { id: `label-${labels.length + 1}`, name, color: newLabelColor };
-		labels = [...labels, label];
+		workspace.labels = [...labels, label];
 		update(issue.id, { labels: [...issue.labels, label.id] });
 		menuQuery = '';
 		menuIndex = 0;
@@ -230,13 +230,6 @@
 		};
 		window.addEventListener('pointerdown', onPointerDown);
 		return () => window.removeEventListener('pointerdown', onPointerDown);
-	});
-
-	// Kept for the other pages, and for this one when it is shown again.
-	$effect(() => {
-		workspace.issues = issues;
-		workspace.labels = labels;
-		workspace.nextId = nextId;
 	});
 
 	$effect(() => composerInput?.focus());

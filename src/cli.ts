@@ -87,7 +87,7 @@ async function snapshot(args: string[]) {
 	const { file, location }: { file: string; location?: Location } = app.kind === 'pages' ? pageAt(discoverRoutes(app.pages), url!) : { file: app.file };
 	const { evaluate, parseStateOverrides } = await import('./design');
 	const compiled = compile(readFileSync(file, 'utf8'), file);
-	const overrides = parseStateOverrides(compiled, state);
+	const overrides = parseStateOverrides(compiled, state, app.root);
 
 	if (target === 'html') {
 		const out = output ?? `${stemOf(app)}.snapshot.html`;
@@ -98,7 +98,7 @@ async function snapshot(args: string[]) {
 	}
 
 	const { copyFigmaClipboard, snapshotToFigma } = await import('./targets/figma');
-	const { html, warnings } = await snapshotToFigma(await evaluate(compiled, overrides, location), app.name);
+	const { html, warnings } = await snapshotToFigma(await evaluate(compiled, overrides, { location, root: app.root }), app.name);
 	for (const warning of warnings) console.error(`warning: ${warning}`);
 	await copyFigmaClipboard(html);
 	console.error('Copied snapshot to clipboard');

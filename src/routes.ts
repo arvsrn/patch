@@ -11,7 +11,7 @@
 // has a not-found page: the app's +404.pat, else Patch's built-in one.
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { compareRoutes, locate, parseSegment, routeInfo, shapeOf, toUrl, type Location, type RouteInfo, type Segment } from './schema/route';
 
 export const PAGE_FILE = '+page.pat';
@@ -39,6 +39,18 @@ export function resolveApp(input: string): App {
 	const pages = join(path, 'src', 'pages');
 	if (!existsSync(pages) || !statSync(pages).isDirectory()) throw new Error(`${input} is a directory without src/pages; pass a .pat file, or an app directory with src/pages/+page.pat`);
 	return { kind: 'pages', name: basename(path), root: path, pages };
+}
+
+/**
+ * The root of the app `entry` (a .pat file it runs) belongs to: above
+ * src/pages for a page, else the file's directory. Module state ids are
+ * relative to it.
+ */
+export function appRootOf(entry: string): string {
+	const path = resolve(entry);
+	const pages = `${sep}src${sep}pages${sep}`;
+	const at = path.lastIndexOf(pages);
+	return at >= 0 ? path.slice(0, at) : dirname(path);
 }
 
 /** The routes under `dir` (an app's src/pages). Throws on anything that is not a valid, unambiguous route. */

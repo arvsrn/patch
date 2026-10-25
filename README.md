@@ -97,7 +97,7 @@ Patch currently supports apps made of `.pat` components with:
 
 - TS/JS in `<script>`, with type checking
 - Imports from npm packages and local TS/JS modules
-- `$state`, `$derived`, and `$effect`
+- `$state`, `$derived`, and `$effect`, and module state shared by the whole app in `.pat.ts` modules (`export const workspace = $state({ … })`)
 - Components: `import Card from './Card.pat'`, read-only reactive props from `$props()`, callback props instead of two-way binding, `children` and snippets (`{#snippet}`, `{@render}`), and context (`createContext`, `setContext`, `getContext` from `'patch'`)
 - `{#if}`, `{:else if}`, `{:else}`, and `{#each}`, keyed (`{#each list as item (item.id)}`) or by position
 - `<main>`, `<div>`, `<button>`, `<a>`, `<p>`, `<span>`, `<input>`, and `<textarea>`

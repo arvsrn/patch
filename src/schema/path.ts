@@ -7,6 +7,12 @@
 //             `{@render}`, `location[keys]/`, from the app down
 //   node id   path, the node's location, then its keys: `Row@12:3["a"]/4:5[0]`
 //   state id  path, then the variable: `Row@12:3["a"]/expanded`
+//
+// State has two kinds of owner. Component state belongs to an instance and
+// is named by the instance's path, as above. Module state belongs to a .pat.ts
+// (or .pat.js) module, and is named by the module's file, relative to the app
+// root with `/` separators, `#`, and the variable: `src/workspace.pat.ts#workspace`.
+// The file part is opaque: a route directory such as `[id]` in it is not a key.
 
 export const location = (line: number, column: number) => `${line}:${column}`;
 
@@ -24,6 +30,20 @@ export const renderPlace = (place: Place, at: string): Place => ({ path: `${plac
 
 export const nodeId = (place: Place, at: string) => place.path + at + place.keys;
 export const stateId = (path: string, name: string) => path + name;
+
+/** A .pat.ts or .pat.js module: TypeScript or JavaScript that Patch compiles. */
+export const isPatModule = (file: string) => /\.pat\.[jt]s$/.test(file);
+
+export const moduleStateId = (file: string, name: string) => `${file}#${name}`;
+
+/** The module file and variable a module state id names, or null when it is not one. */
+export function parseModuleStateId(id: string): { file: string; name: string } | null {
+	const hash = id.lastIndexOf('#');
+	if (hash < 0) return null;
+	const file = id.slice(0, hash);
+	const name = id.slice(hash + 1);
+	return isPatModule(file) && /^[A-Za-z_$][\w$]*$/.test(name) ? { file, name } : null;
+}
 
 /** How the instances of `<Tag>` at `at` are named in messages: `Tag@at[<key>]/` when an `{#each}` repeats it. */
 export const sitePattern = (tag: string, at: string, repeated: boolean) => `${tag}@${at}${repeated ? '[<key>]' : ''}/`;

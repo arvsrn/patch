@@ -11,7 +11,7 @@ import { eachPlace, instancePlace, renderPlace, ROOT_PLACE, type Place } from '.
 import { componentOf, eachList, elementStyle, portalName, renderable, toText, withId } from './evaluate';
 import { appLink, browserHistory, type NavigationWindow } from './navigation';
 import { createPortals } from './portals';
-import { createReactive, type Cell, type Owner } from './reactive';
+import { reactive, type Cell, type Owner } from './reactive';
 import { createRouter, MEMORY_HISTORY } from './router';
 
 const BASE_CSS = `
@@ -198,7 +198,7 @@ export type MountOptions = ApiOptions & {
  * from then on.
  */
 export function mount(app: Program | Pages, target: HTMLElement, options: MountOptions = {}): () => void {
-	const r = createReactive();
+	const r = reactive;
 	const { effect, newOwner, dispose, within, untrack, onCleanup, batch, cell, derived } = r;
 	const root = newOwner();
 	const pages = typeof app === 'function' ? null : app;

@@ -9,19 +9,27 @@
 // An app with pages mounts the route manifest, the virtual module
 // `/@pat/routes.js`: generated from src/pages (routes.ts) when it loads, and
 // again when a page is added or removed in dev.
+//
+// .pat.ts / .pat.js modules are compiled before Vite's own TypeScript
+// transform sees them. Overrides of their module state are set by the first
+// module the entry imports, before any of the app's modules is evaluated.
 
 import { basename, resolve, sep } from 'node:path';
 import { build, createServer, type Plugin } from 'vite';
-import { compile } from '../../compile';
+import { compile, compileModule } from '../../compile';
 import { CompileError } from '../../diagnostics';
 import { discoverRoutes, resolveApp, type App, type RouteManifest } from '../../routes';
 import type { MountOptions } from '../../runtime/dom';
+import { isPatModule, parseModuleStateId } from '../../schema/path';
 import { htmlPage, overlayError } from './html';
 
 const ENTRY = '/@pat/entry.js';
 const RESOLVED = '\0pat:entry';
 const ROUTES = '/@pat/routes.js';
 const RESOLVED_ROUTES = '\0pat:routes';
+const MODULE_OVERRIDES = '/@pat/module-overrides.js';
+const RESOLVED_MODULE_OVERRIDES = '\0pat:module-overrides';
+const MODULE_STATE = resolve(import.meta.dir, '../../runtime/module-state.ts');
 const DOM = resolve(import.meta.dir, '../../runtime/dom.ts');
 export const PATCH_MODULE = resolve(import.meta.dir, '../../runtime/context.ts');
 const REPO = resolve(import.meta.dir, '../../..');
@@ -39,13 +47,24 @@ export function routesModule(manifest: RouteManifest): string {
 }
 
 export function patPlugin(app: App, mount: MountOptions = {}): Plugin {
+	const moduleOverrides = Object.fromEntries(Object.entries(mount.overrides ?? {}).filter(([id]) => parseModuleStateId(id)));
+	const virtual = new Map([
+		[ENTRY, RESOLVED],
+		[ROUTES, RESOLVED_ROUTES],
+		[MODULE_OVERRIDES, RESOLVED_MODULE_OVERRIDES],
+		['patch', PATCH_MODULE]
+	]);
 	return {
 		name: 'pat',
-		resolveId: (id) => (id === ENTRY ? RESOLVED : id === ROUTES ? RESOLVED_ROUTES : id === 'patch' ? PATCH_MODULE : undefined),
+		enforce: 'pre',
+		resolveId: (id) => virtual.get(id),
 		load(id) {
 			if (id === RESOLVED_ROUTES && app.kind === 'pages') return routesModule(discoverRoutes(app.pages));
+			if (id === RESOLVED_MODULE_OVERRIDES)
+				return `import { setModuleOverrides } from ${JSON.stringify(MODULE_STATE)};\nsetModuleOverrides(${JSON.stringify(moduleOverrides)});`;
 			if (id !== RESOLVED) return;
 			return [
+				...(Object.keys(moduleOverrides).length ? [`import ${JSON.stringify(MODULE_OVERRIDES)};`] : []),
 				app.kind === 'file' ? `import app from ${JSON.stringify(app.file)};` : `import * as app from ${JSON.stringify(ROUTES)};`,
 				`import { mount } from ${JSON.stringify(DOM)};`,
 				`mount(app, document.getElementById("app"), ${JSON.stringify(mount)});`
@@ -53,9 +72,9 @@ export function patPlugin(app: App, mount: MountOptions = {}): Plugin {
 		},
 		transform(source, id) {
 			const path = id.split('?')[0];
-			if (!path.endsWith('.pat')) return;
+			if (!path.endsWith('.pat') && !isPatModule(path)) return;
 			try {
-				return { code: compile(source, path).module, map: null };
+				return { code: path.endsWith('.pat') ? compile(source, path).module : compileModule(source, path, app.root).module, map: null };
 			} catch (error) {
 				throw error instanceof CompileError ? overlayError(error, path) : error;
 			}

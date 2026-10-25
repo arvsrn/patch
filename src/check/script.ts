@@ -11,7 +11,7 @@ import { RUNES } from '../schema/program';
 
 // Built-in methods that change their receiver, and functions that change their first argument.
 const ARRAY_MUTATORS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin']);
-const MUTATORS = new Set([...ARRAY_MUTATORS, 'set', 'add', 'delete', 'clear']);
+export const MUTATORS = new Set([...ARRAY_MUTATORS, 'set', 'add', 'delete', 'clear']);
 const STATIC_MUTATORS: Record<string, string[]> = {
 	Object: ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf'],
 	Reflect: ['set', 'deleteProperty', 'defineProperty', 'setPrototypeOf']
@@ -36,11 +36,12 @@ const READ_ONLY: Record<string, (name: string) => string> = {
 	param: (name) => `"${name}" is a snippet parameter and read-only`
 };
 
-export function checkScript(component: Component, bindings: Bindings, reporter: Reporter) {
+/** `module`: the script of a .pat.ts / .pat.js module, where only module `$state` is a rune. */
+export function checkScript(component: Component, bindings: Bindings, reporter: Reporter, { module = false } = {}) {
 	for (const id of bindings.reserved) reporter.report(id, `"${id.name}": names beginning with "$" are reserved for Patch runes`);
 	references(bindings, reporter);
 	memberWrites(bindings, reporter);
-	runeCalls(component, bindings, reporter);
+	runeCalls(component, bindings, reporter, module);
 	contextCalls(component, bindings, reporter);
 	const script = component.script?.body ?? [];
 	const template = [...expressions(component.template)];
@@ -108,10 +109,14 @@ function memberWrites(bindings: Bindings, reporter: Reporter) {
  * `$style` may appear anywhere. Every other rune is a top-level declaration
  * or statement, whose shape and arguments are checked where it is lowered.
  */
-function runeCalls(component: Component, bindings: Bindings, reporter: Reporter) {
+function runeCalls(component: Component, bindings: Bindings, reporter: Reporter, module: boolean) {
 	const allowed = component.script?.runes ?? new Set();
 	for (const { node, name } of bindings.runeCalls) {
-		if (name === '$style') {
+		if (module) {
+			if (allowed.has(node)) continue;
+			if (name === '$state') reporter.report(node, '$state(...) in a module is only allowed as `const name = $state({ … })` at the top level');
+			else reporter.report(node, name in RUNES ? `${name} is not supported in .pat.ts modules; only $state is` : `${name} is not supported`);
+		} else if (name === '$style') {
 			if (node.arguments.length !== 1) reporter.report(node, '$style takes exactly one object');
 		} else if (!allowed.has(node)) {
 			const where = name === '$effect' ? 'a top-level statement' : name === '$props' ? 'a top-level `let { ... } = $props()` declaration' : 'a top-level `let x = ...` declaration';
