@@ -19,7 +19,7 @@ import { bind, isSignal, type Bindings } from './bind';
 import { checkNames } from './check/names';
 import { checkScript, MUTATORS } from './check/script';
 import { checkAnchorReferences, checkStyles } from './check/styles';
-import { checkTemplate, checkTemplateNames } from './check/template';
+import { checkEvents, checkTemplate, checkTemplateNames } from './check/template';
 import { CompileError, Reporter, type Diagnostic } from './diagnostics';
 import { Edits } from './emit/edits';
 import { emitScript } from './emit/script';
@@ -29,7 +29,7 @@ import { lower, lowerModule } from './lower';
 import { parse } from './parse';
 import { location, moduleStateId } from './schema/path';
 import { collectStyles, type Styles } from './styles';
-import { globalNames, typecheck, type TemplateWrite } from './typecheck';
+import { domEvents, globalNames, typecheck, type TemplateWrite } from './typecheck';
 
 export type Compiled = {
 	/** Absolute path of the .pat file; the script's relative imports resolve from it. */
@@ -123,6 +123,7 @@ function check(source: string, filename: string, reporter: Reporter): Front | nu
 	checkScript(component, bindings, reporter);
 	checkTemplate(component, bindings, reporter);
 	checkTemplateNames(component, bindings, globalNames(resolve(filename)), reporter);
+	checkEvents(component, domEvents(resolve(filename)), reporter);
 	checkNames(component.template, reporter);
 	checkAnchorReferences(styles, bindings, reporter);
 	checkStyles(styles, reporter);

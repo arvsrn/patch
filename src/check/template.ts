@@ -3,6 +3,7 @@
 import { forEachNode } from '../ast';
 import type { Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
+import type { DomEvents } from '../typecheck';
 import { elements, expressions, fragments, type Component, type TemplateNode } from '../ir';
 
 const INPUT_TYPES = ['text', 'password', 'email', 'search', 'url', 'tel'];
@@ -26,6 +27,40 @@ export function checkTemplate(component: Component, bindings: Bindings, reporter
 		}
 	}
 	snippetNames(component.template, reporter);
+}
+
+/** The closest of `names` to `name`, if it is a likely misspelling. */
+export function closest(name: string, names: Iterable<string>): string | null {
+	let best: string | null = null;
+	let distance = Math.max(2, Math.floor(name.length / 4)) + 1;
+	for (const candidate of names) {
+		const d = editDistance(name, candidate);
+		if (d < distance) [best, distance] = [candidate, d];
+	}
+	return best;
+}
+
+function editDistance(a: string, b: string): number {
+	let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+	for (let i = 1; i <= a.length; i++) {
+		const next = [i];
+		for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+		row = next;
+	}
+	return row[b.length];
+}
+
+/** `on…=` names an event the element has: a misspelled one would never fire. */
+export function checkEvents(component: Component, events: DomEvents, reporter: Reporter) {
+	for (const element of elements(component.template)) {
+		if (element.type !== 'element') continue;
+		const known = events.html;
+		for (const a of element.attributes) {
+			if (a.type !== 'event' || known.has(a.name)) continue;
+			const near = closest(a.name, known);
+			reporter.report(a.nameSpan, `"on${a.name}" is not an event of <${element.tag}>${near ? `; did you mean "on${near}"?` : ''}`);
+		}
+	}
 }
 
 /** Template expressions may only name script bindings, `{#each}` names and real globals. */

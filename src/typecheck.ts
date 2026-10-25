@@ -29,7 +29,16 @@ const read = (file: string) => {
 	return text !== undefined && isPatTs(file) ? text + MODULE_RUNES : text;
 };
 
-type Project = { service: ts.LanguageService; files: Map<string, { text: string; version: number }>; runes: string; globals?: Set<string> };
+type Project = {
+	service: ts.LanguageService;
+	files: Map<string, { text: string; version: number }>;
+	runes: string;
+	globals?: Set<string>;
+	events?: DomEvents;
+};
+
+/** The DOM events of HTML and SVG elements, by name (`click`, not `onclick`). */
+export type DomEvents = { html: Set<string>; svg: Set<string> };
 const projects = new Map<string, Project>();
 
 function project(file: string): Project {
@@ -75,6 +84,22 @@ export function globalNames(path: string): Set<string> {
 		p.globals = new Set(symbols.map((s) => s.name));
 	}
 	return p.globals;
+}
+
+/** The events elements have, from the DOM lib: the keys of HTMLElementEventMap and SVGElementEventMap. */
+export function domEvents(path: string): DomEvents {
+	const p = project(path);
+	if (!p.events) {
+		const program = p.service.getProgram()!;
+		const checker = program.getTypeChecker();
+		const interfaces = checker.getSymbolsInScope(program.getSourceFile(p.runes)!, ts.SymbolFlags.Interface);
+		const keys = (name: string) => {
+			const symbol = interfaces.find((s) => s.name === name);
+			return new Set(symbol ? checker.getDeclaredTypeOfSymbol(symbol).getProperties().map((s) => s.name) : []);
+		};
+		p.events = { html: keys('HTMLElementEventMap'), svg: keys('SVGElementEventMap') };
+	}
+	return p.events;
 }
 
 let valueChecks = 0;

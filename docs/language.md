@@ -375,7 +375,7 @@ These are not supported: `{#await}`, `{#key}`, `{@html}`, `{@const}`, `{@debug}`
 />
 ```
 
-- Use `on<name>={handler}` on any element except an inline span. `<name>` must be lowercase (`onclick`, not `onClick`). It is used directly as a DOM event name, so any DOM event works: `onclick`, `oninput`, `onkeydown`, `onfocus`, `onpointerenter`, and so on.
+- Use `on<name>={handler}` on any element except an inline span. `<name>` must be lowercase (`onclick`, not `onClick`). It is used directly as a DOM event name, so any DOM event of the element works: `onclick`, `oninput`, `onkeydown`, `onfocus`, `onpointerenter`, and so on. A name that is not an event of the element (in the DOM's own list, `HTMLElementEventMap`) is a compile error, with the nearest event suggested: `onclik` would never fire.
 - The handler expression is evaluated **each time the event fires**. It must produce a function, which receives the DOM `Event`, or `null`/`undefined`, which is ignored. Any other value is a runtime error. This means `onclick={enabled ? save : null}` works.
 - State writes in the synchronous part of a handler are [batched](#batching).
 
@@ -691,11 +691,11 @@ A navigation, by link or `goto`:
 
 When the route changes, the previous page is **destroyed** as a branch of an `{#if}` is: its effects' cleanups run, its state is dropped, its DOM and event handlers are removed. The new page is created fresh. When only the params, query or hash change (`/issues/1` → `/issues/2?tab=activity`), the page stays, keeps its state, and everything reading `page` updates. To start fresh per param, reset the state in an `$effect` reading `page.params`. State that should outlive a page belongs in [module state](#module-state).
 
-Back and forward (`popstate`) update `page` and show the matching page without adding a history entry. Loading or reloading the document at any URL shows the page for that URL. `patch dev` serves the app at every path; a built app must be served the same way (every path answered with the built HTML file), since a server that only answers `/` cannot load `/issues/1` directly. Opening a built app from disk (`file://`) shows the not-found page, because its path is the file's.
+A navigation shows its page scrolled to the top (the app's root scroll container), or, when its URL has a fragment, scrolled to the element whose `id` it names. So does loading a URL with a fragment. Back and forward (`popstate`) update `page` and show the matching page without adding a history entry, and leave the scroll position as it is. Loading or reloading the document at any URL shows the page for that URL. `patch dev` serves the app at every path; a built app must be served the same way (every path answered with the built HTML file), since a server that only answers `/` cannot load `/issues/1` directly. Opening a built app from disk (`file://`) shows the not-found page, because its path is the file's.
 
 ### Not supported yet
 
-Layouts and nested layouts, loaders and server actions, route guards, redirects, middleware, catch-all and optional segments, route groups, per-route code splitting (every page is in the one bundle), server-side rendering, scroll restoration (the scroll position is not changed by a navigation), and navigation transitions. There is no `replaceState` navigation and no typed params per route.
+Layouts and nested layouts, loaders and server actions, route guards, redirects, middleware, catch-all and optional segments, route groups, per-route code splitting (every page is in the one bundle), server-side rendering, scroll restoration on back and forward, and navigation transitions. There is no `replaceState` navigation and no typed params per route.
 
 ## Styles
 
@@ -951,6 +951,7 @@ A child sized by its content this way is a hugging parent to its own children, s
 - `flexWrap: 'wrap'` wraps children onto new lines, which are separated by the same `gap`.
 - Margins act like flex-item margins. An `'auto'` margin absorbs free space, so `margin: [0, 'auto']` centers an element on a row's main axis. Negative margins are allowed.
 - **Borders do not affect layout.** A border is drawn inside the element's box, on top of the padding area, on all four sides, as a solid line. Setting `borderColor` without `borderWidth` draws nothing.
+- **Focus.** An element focused from the keyboard (CSS `:focus-visible`) shows a 2px `#2563eb` ring just outside it, in place of its border while it has focus. A mouse click on a button or link shows none; a text field shows it whenever it has focus, as browsers do. The ring is browser-only; snapshots draw elements unfocused.
 - `borderRadius` rounds the corners of the background, border, and shadow. `overflow: 'hidden'` clips children to the box, including its radius. Inputs always clip.
 
 ### Scrolling

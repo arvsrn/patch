@@ -148,6 +148,8 @@ class FakeElement extends FakeNode {
 	attributes = new Map<string, string>();
 	listeners = new Map<string, Set<(event: any) => void>>();
 	style = { position: '', setProperty() {}, removeProperty() {} };
+	scrollTop = 0;
+	scrollLeft = 0;
 	constructor(public tag: string) {
 		super();
 	}
@@ -319,6 +321,16 @@ test('links and goto navigate through history; another route replaces the page, 
 	for (const fn of win.listeners) fn();
 	await settle();
 	expect(target.text).toBe('/issues/[id] id=a b q=x #3back');
+
+	// A new navigation starts at the top; going back keeps the scroll position.
+	Object.assign(target, { scrollTop: 300, scrollLeft: 20 });
+	(target.find((el) => el.tag === 'button')!.listeners.get('click')!.values().next().value as any)({});
+	await settle();
+	expect([target.text, target.scrollTop, target.scrollLeft]).toEqual(['listoneout', 0, 0]);
+	target.scrollTop = 120;
+	win.go(-1);
+	await settle();
+	expect(target.scrollTop).toBe(120);
 
 	// Clicks the app leaves alone.
 	win.go(-1);

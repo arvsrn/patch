@@ -72,3 +72,10 @@ test('diagnostics are in source order', () => {
 	expect(diagnostics.map((d) => d.start)).toEqual([...diagnostics.map((d) => d.start)].sort((a, b) => a - b));
 	expect(diagnostics).toHaveLength(3);
 });
+
+test('an event handler must name an event the element has', () => {
+	expect(messages(`<button onclik={() => 1} onpointerenter={() => 1}>x</button><div onkeydown={() => 1} oninput={() => 1}></div>`)).toEqual([
+		'"onclik" is not an event of <button>; did you mean "onclick"?'
+	]);
+	expect(messages(`<div onfrobnicate={() => 1}></div>`)).toEqual(['"onfrobnicate" is not an event of <div>']);
+});

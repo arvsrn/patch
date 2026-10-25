@@ -34,6 +34,7 @@ html,body{margin:0;padding:0}
 [data-dir=row]>[data-h=fill],[data-dir=column]>[data-w=fill]{align-self:stretch!important}
 button[data-p]{cursor:pointer}
 a[data-p]{text-decoration:none}
+[data-p]:focus-visible{outline:2px solid #2563eb!important;outline-offset:1px!important}
 [data-host]{width:100vw;height:100vh;overflow:auto;background:#fff}
 `;
 const FLEX_VALUE: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', 'space-between': 'space-between', baseline: 'baseline' };
@@ -76,7 +77,8 @@ function toCss(kind: ElementKind, st: Style) {
 	if (st.color) css.color = st.color;
 	if (st.opacity !== undefined) css.opacity = String(st.opacity);
 	if (st.borderWidth) {
-		// Borders are drawn inside the box and never affect layout.
+		// Borders are drawn inside the box and never affect layout. While the
+		// element has keyboard focus, the focus ring (BASE_CSS) replaces it.
 		css.outline = `${st.borderWidth}px solid ${st.borderColor ?? '#000000'}`;
 		css['outline-offset'] = `-${st.borderWidth}px`;
 	}
@@ -203,7 +205,18 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 	const root = newOwner();
 	const pages = typeof app === 'function' ? null : app;
 	const win = pages && options.url === undefined ? (window as NavigationWindow) : null;
-	const router = pages && createRouter(r, pages.routes, options.url ?? win!.location.href, win ? browserHistory(win) : MEMORY_HISTORY);
+	// A new navigation (a link, `goto`) starts at the top of its page, or at the
+	// element its fragment names, once the page is laid out. Back and forward
+	// keep the scroll position.
+	let scrollPending: URL | null = null;
+	const entries = win ? browserHistory(win) : MEMORY_HISTORY;
+	const recorded = {
+		push: (url: URL) => {
+			entries.push(url);
+			scrollPending = url;
+		}
+	};
+	const router = pages && createRouter(r, pages.routes, options.url ?? win!.location.href, recorded);
 	const { root: makeRoot, instance, startEffects } = createApi(r, options, router ?? undefined);
 	const portals = createPortals();
 	const anchoring = createAnchoring(target);
@@ -231,7 +244,19 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 			sizingQueued = false;
 			resolveSizing(target, 'fixed', 'fixed');
 			placeLater();
+			if (scrollPending) scrollTo(scrollPending);
 		});
+	};
+
+	const scrollTo = (url: URL) => {
+		scrollPending = null;
+		const id = url.hash ? decodeURIComponent(url.hash.slice(1)) : '';
+		const el = id ? document.getElementById(id) : null;
+		if (el && target.contains(el)) el.scrollIntoView();
+		else {
+			target.scrollTop = 0;
+			target.scrollLeft = 0;
+		}
 	};
 
 	const bindStyle = (el: HTMLElement, d: ElementNode | SpanNode, kind: ElementKind) => {
@@ -545,6 +570,7 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 		};
 		target.addEventListener('click', onClick);
 		win?.addEventListener('popstate', onPopState);
+		if (router.peek().url.hash) scrollPending = router.peek().url;
 		within(root, null, () =>
 			onCleanup(() => {
 				target.removeEventListener('click', onClick);
