@@ -198,11 +198,14 @@ const cache = new Map<string, { source: string; root: string; module: string }>(
 /** Whether `path` is the app's own (loaded in each graph) rather than a package's or Patch's. */
 const ownFile = (path: string) => path.startsWith(sep) && !path.includes(`${sep}node_modules${sep}`) && !path.startsWith(RUNTIME + sep);
 
+const IMAGES = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', '.ico'];
 const LOADERS: Record<string, 'ts' | 'tsx' | 'js' | 'jsx' | 'json'> = { '.ts': 'ts', '.mts': 'ts', '.tsx': 'tsx', '.js': 'js', '.mjs': 'js', '.jsx': 'jsx', '.json': 'json' };
 
 function load(path: string): { contents: string; loader: 'ts' | 'tsx' | 'js' | 'jsx' | 'json' } {
 	const { root, entry } = current!;
 	if (path === entry.path) return { contents: entry.module, loader: 'js' };
+	// An image is its path (it is not drawn at design time).
+	if (IMAGES.includes(extname(path).toLowerCase())) return { contents: `export default ${JSON.stringify(path)};`, loader: 'js' };
 	const source = readFileSync(path, 'utf8');
 	const patch = path.endsWith('.pat') || isPatModule(path);
 	if (!patch) {

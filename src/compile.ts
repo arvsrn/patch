@@ -16,15 +16,15 @@ import { existsSync, realpathSync } from 'node:fs';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { forEachNode, rootOf, unwrap, type Estree } from './ast';
 import { bind, isSignal, type Bindings } from './bind';
-import { checkNames } from './check/names';
+import { checkNames, staticValue } from './check/names';
 import { checkScript, MUTATORS } from './check/script';
 import { checkAnchorReferences, checkStyles } from './check/styles';
 import { checkAttributes, checkEvents, checkTemplate, checkTemplateNames } from './check/template';
-import { CompileError, Reporter, type Diagnostic } from './diagnostics';
+import { CompileError, Reporter, type Diagnostic, type Span } from './diagnostics';
 import { Edits } from './emit/edits';
 import { emitScript } from './emit/script';
 import { TemplateEmitter } from './emit/template';
-import { elements, fragments, type Component, type Element, type StateInfo, type TemplateNode } from './ir';
+import { elements, fragments, type AttributeValue, type Component, type Element, type StateInfo, type TemplateNode } from './ir';
 import { lower, lowerModule } from './lower';
 import { parse } from './parse';
 import { location, moduleStateId } from './schema/path';
@@ -107,12 +107,32 @@ function componentSites(component: Component, bindings: Bindings, filename: stri
 	return sites;
 }
 
+/**
+ * A relative `src` written on an <img> (`./logo.png`): an asset of the app,
+ * imported so the bundler resolves it (from the .pat file), serves it, and
+ * inlines it into a standalone build.
+ */
+type Asset = { value: AttributeValue; specifier: string; path: string; span: Span };
+
+function assets(component: Component, filename: string): Asset[] {
+	const out: Asset[] = [];
+	for (const element of elements(component.template))
+		if (element.type === 'element' && element.kind === 'image')
+			for (const a of element.attributes) {
+				const value = a.type === 'attribute' && a.name === 'src' ? staticValue(a.value) : null;
+				if (typeof value === 'string' && /^\.\.?\//.test(value))
+					out.push({ value: (a as { value: AttributeValue }).value, specifier: value, path: resolve(dirname(resolve(filename)), value), span: a.span });
+			}
+	return out;
+}
+
 function check(source: string, filename: string, reporter: Reporter): Front | null {
 	const result = front(source, reporter);
 	if (!result) return null;
 	const { component, bindings, styles } = result;
 	for (const { path, statement } of componentImports(component, filename).values())
 		if (!existsSync(path)) reporter.report(statement.source, `cannot find component ${statement.source.value}`);
+	for (const asset of assets(component, filename)) if (!existsSync(asset.path)) reporter.report(asset.span, `cannot find ${asset.specifier}`);
 	checkScript(component, bindings, reporter);
 	checkTemplate(component, bindings, reporter);
 	checkTemplateNames(component, bindings, globalNames(resolve(filename)), reporter);
@@ -163,12 +183,15 @@ export function compile(source: string, filename = 'app.pat'): Compiled {
 		const { line, column } = reporter.position(offset);
 		return location(line, column);
 	};
+	const imported = new Map(assets(component, filename).map((asset, i) => [asset.value, { name: `$$asset${i}`, specifier: asset.specifier }]));
 	const template = new TemplateEmitter(
 		edits,
 		position,
-		(node) => (isSignal(bindings.reference(node)?.symbol) ? `${node.name}.v` : node.name)
+		(node) => (isSignal(bindings.reference(node)?.symbol) ? `${node.name}.v` : node.name),
+		new Map([...imported].map(([value, { name }]) => [value, name]))
 	).fragment(component.template);
-	const ts = `${script.imports.join('\n')}\nexport default function program($$rt) {\n${script.code}\nreturn ${template};\n}\n`;
+	const assetImports = [...imported.values()].map(({ name, specifier }) => `import ${name} from ${JSON.stringify(specifier)};`);
+	const ts = `${[...script.imports, ...assetImports].join('\n')}\nexport default function program($$rt) {\n${script.code}\nreturn ${template};\n}\n`;
 	const module = new Bun.Transpiler({ loader: 'ts', target: 'browser' }).transformSync(ts);
 	const imports = new Bun.Transpiler({ loader: 'js' }).scanImports(module).map((i) => i.path);
 	const info = component.script;

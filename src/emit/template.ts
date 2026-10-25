@@ -15,7 +15,9 @@ export class TemplateEmitter {
 		/** `line:column` of an offset: node ids. */
 		private id: (offset: number) => string,
 		/** How a top-level variable is read and written: `name.v` for state, else `name`. */
-		private variable: (node: Estree) => string
+		private variable: (node: Estree) => string,
+		/** Attribute values that are imported assets, and the names they are imported as. */
+		private assets: Map<AttributeValue, string> = new Map()
 	) {}
 
 	private expression(node: Estree) {
@@ -90,6 +92,8 @@ export class TemplateEmitter {
 
 	private attributeValue(value: AttributeValue) {
 		if (value === true) return 'true';
+		const asset = this.assets.get(value);
+		if (asset) return asset;
 		if ('expression' in value) return this.expression(value.expression);
 		return value.parts.map((part) => (typeof part === 'string' ? str(part) : `String((${this.expression(part)}) ?? "")`)).join(' + ') || '""';
 	}

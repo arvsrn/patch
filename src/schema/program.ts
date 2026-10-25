@@ -95,7 +95,9 @@ export type SelectElement = ElementBase & { kind: 'select' | 'optgroup'; kids: P
 export type OptionElement = ElementBase & { kind: 'option'; kids: InlinePart[] };
 /** <svg> and the SVG elements in it (see ir.ts `Svg`). */
 export type SvgElement = ElementBase & { kind: 'svg' | 'graphic'; kids: ProgramNode[] };
-export type ElementNode = FrameElement | TextElement | InputElement | SelectElement | OptionElement | SvgElement;
+/** <img>. */
+export type ImageElement = ElementBase & { kind: 'image'; kids: [] };
+export type ElementNode = FrameElement | TextElement | InputElement | ImageElement | SelectElement | OptionElement | SvgElement;
 
 /** `{#if}`: the first branch whose test is truthy, else `e`. */
 export type IfNode = { t: 'if'; id: string; b: [test: Getter, kids: ProgramNode[]][]; e: ProgramNode[] | null };

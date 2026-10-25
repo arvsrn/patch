@@ -245,9 +245,10 @@ async function later() { await x; n++; n++; }          // effects re-run twice
 | `<input>`, `<textarea>` | input | none |
 | `<select>` | input | `<option>`, `<optgroup>`, `{#if}`, `{#each}` |
 | `<svg>` | [SVG](#inline-svg) | SVG elements |
+| `<img>` | [image](#images) | none |
 | `<portal>` | [portal](#portals) | none |
 
-A tag starting with an uppercase letter is a [component](#components). Any other tag (`<img>`, `<table>`, …) is an error.
+A tag starting with an uppercase letter is a [component](#components). Any other tag (`<table>`, `<video>`, …) is an error.
 
 - **Containers** are flex boxes, laid out in a column by default, and all lay out identically: the tag gives the element its meaning (for assistive technology, and in the DOM), not its look. `<button>` additionally shows a pointer cursor and accepts `disabled` and `type` (`submit`, the default as in HTML, `button` or `reset`). `<a>` is a link: it shows a pointer cursor, is not underlined or colored by default, and accepts `href`, `target`, `rel` and `download` (see [Links](#links)). `<label>` accepts `for`, naming the `id` of the control it labels. Lists have no markers.
 - **Text elements** contain only inline content. Headings and `<strong>`, `<code>`, … are plain text like `<p>`: their typography is their `style`, so `<strong>` is not bold and `<code>` not monospace unless styled.
@@ -262,6 +263,19 @@ A `<span>` whose parent is a container is a text **block**, not inline:
 <div>Count: <span>{n}</span></div>  <!-- two stacked blocks: "Count:" and "{n}" -->
 <p>Count: <span style={{ fontWeight: 700 }}>{n}</span></p>  <!-- one line -->
 ```
+
+### Images
+
+```svelte
+<img src="./logo.png" alt="Northwind" />
+<img src={user.avatarUrl} alt={user.name} style={{ width: 32, height: 32, borderRadius: 16, objectFit: 'cover' }} />
+```
+
+- `<img>` takes `src`, `alt`, `srcset`, `sizes`, `loading`, `decoding`, the global attributes, events and `bind:this`, and box and paint styles plus `objectFit`. It has no children.
+- `src` is required. `alt` is a warning when missing: describe what the image shows, or write `alt=""` for a decorative image, which assistive technology then skips.
+- **Assets.** A static `src` starting with `./` or `../` is a file of the app, resolved from the `.pat` file like an import; a missing file is a compile error. `patch dev` serves it and a build inlines it into the HTML file. Any other `src` (`/static/a.png`, `https://…`, or an expression) is used as written: to pick among local images in code, import them (`import logo from './logo.png'`, typed as `string`) and use the variable.
+- **Size.** Sized `hug`, an image is its natural size; with one side set and the other `hug`, the other keeps the image's proportions. With both set, `objectFit` (`'fill'`, the default, `'contain'`, `'cover'`, `'none'` or `'scale-down'`) places the image in the box.
+- In a Figma snapshot an image is an empty frame of its set size (a hugging side is 0, since its natural size is not known), with a warning.
 
 ### Inline SVG
 
@@ -898,6 +912,14 @@ With `textOverflow: 'ellipsis'`, a `<p>` or block `<span>` shows at most `maxLin
 
 In a Figma snapshot, the text layer is truncated the same way, with Figma's own truncation and line limit. One whose width hugs keeps the width it was measured at.
 
+### Images (`<img>` only)
+
+| Property | Values | Default |
+| --- | --- | --- |
+| `objectFit` | `'fill'`, `'contain'`, `'cover'`, `'none'`, `'scale-down'` | `'fill'` |
+
+How the image fills its box when both sides are set (see [Images](#images)).
+
 ### Interaction
 
 | Property | Values | Default | Allowed on |
@@ -917,10 +939,14 @@ Any property not listed here is an error. That includes `zIndex`, `right`, `bott
 
 | Element | Layout | Box | Paint | Typography | Truncation | Interaction |
 | --- | --- | --- | --- | --- | --- | --- |
-| `<main>`, `<div>`, `<button>` | ✓ | ✓ | ✓ | ✓ | | ✓ |
+| containers (`<main>`, `<div>`, `<button>`, `<a>`, `<nav>`, …) | ✓ | ✓ | ✓ | ✓ | | ✓ |
 | `<input>`, `<textarea>` | | ✓ | ✓ | ✓ | | ✓ except `overscrollBehavior` |
-| `<p>`, `<span>` (block) | | ✓ | | ✓ | ✓ | `cursor`, `userSelect`, `pointerEvents`, `touchAction` |
-| inline `<span>` inside text | | | | ✓ except `textAlign` | | `cursor`, `userSelect`, `pointerEvents` |
+| `<select>` | | ✓ | ✓ | ✓ | | ✓ except `overscrollBehavior` and `caretColor` |
+| `<svg>` | | ✓ | ✓ | ✓ | | ✓ except `overscrollBehavior` and `caretColor` |
+| `<img>` | | ✓ | ✓ | | | ✓ except `overscrollBehavior` and `caretColor`, plus `objectFit` |
+| text blocks (`<p>`, `<span>`, `<h1>`, …) | | ✓ | | ✓ | ✓ | `cursor`, `userSelect`, `pointerEvents`, `touchAction` |
+| elements nested in text | | | | ✓ except `textAlign` | | `cursor`, `userSelect`, `pointerEvents` |
+| `<option>`, `<optgroup>`, SVG elements inside `<svg>` | no `style` | | | | | |
 
 For example, a `<p>` cannot have `padding`, `background`, a border, a radius, or a shadow. Wrap it in a `<div>` for those.
 
@@ -1175,6 +1201,7 @@ The Figma target approximates what Figma cannot express, and prints a warning ea
 - a hugging-width text with a set height is given a fixed width
 - a `<select>` shows its selected option's label, without its arrow
 - an `<svg>` is an empty frame of its size
+- an `<img>` is an empty frame of its set size
 
 Without a warning, a snapshot also keeps a character whose uppercase or lowercase form is longer as it is: `textTransform: 'uppercase'` shows `ß` as `SS` in the browser but as `ß` in Figma until the layer is edited.
 

@@ -24,7 +24,7 @@ html,body{margin:0;padding:0}
 [data-p=input][data-w=hug],[data-p=textarea][data-w=hug]{width:var(--hug-w)}
 [data-p=textarea][data-h=hug]{height:var(--hug-h)}
 [data-p=input]::placeholder,[data-p=textarea]::placeholder{color:currentColor;opacity:.5}
-[data-p=svg]{display:block}
+[data-p=svg],[data-p=image]{display:block}
 [data-p=svg][data-w=hug]{width:var(--hug-w)}
 [data-p=svg][data-h=hug]{height:var(--hug-h)}
 [data-p=select]{display:block;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);background-size:4px 4px;background-position:right 10px center,right 6px center;background-repeat:no-repeat}
@@ -47,7 +47,7 @@ const FLEX_VALUE: Record<string, string> = { start: 'flex-start', center: 'cente
 const px = (v: unknown) => (v === 'auto' ? 'auto' : `${v}px`);
 const kebab = (key: string) => key.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
 /** Properties whose value is already the CSS value. */
-const VERBATIM = ['cursor', 'userSelect', 'pointerEvents', 'touchAction', 'overscrollBehavior', 'caretColor'] as const;
+const VERBATIM = ['cursor', 'userSelect', 'pointerEvents', 'touchAction', 'overscrollBehavior', 'caretColor', 'objectFit'] as const;
 
 /**
  * A validated style as inline CSS, plus data-* attributes: the authored
@@ -325,6 +325,8 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 		el.setAttribute('data-p', kind);
 		if (d.style || kind !== 'inline') bindStyle(el, d, kind);
 		bindAttributes(el, d, kind === 'input' || kind === 'textarea');
+		// A loaded image has its size: what is laid out around it, or anchored to it, may move.
+		if (kind === 'image') el.addEventListener('load', resizeLater);
 		return el;
 	};
 

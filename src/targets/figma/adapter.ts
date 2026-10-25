@@ -220,6 +220,9 @@ class Converter {
 			if (n.style.textOverflow === 'ellipsis') node.maxLines = n.style.maxLines ?? 1;
 			if (node.width.kind === 'HUG' && node.height.kind !== 'HUG')
 				this.warn(n.id, 'Figma text cannot hug its width at a set height; its width is fixed at the measured width');
+		} else if (n.type === 'image') {
+			const hugs = [n.style.width, n.style.height].some((v) => v === undefined || v === 'hug');
+			node = this.placeholder(n, { width: 0, height: 0 }, `images are not drawn in Figma yet; an empty frame${hugs ? ' (its natural size is not known, so a hugging side is 0)' : ''} stands in for ${n.alt ? `"${n.alt}"` : 'it'}`);
 		} else if (n.type === 'svg') {
 			node = this.placeholder(n, n.size, 'inline SVG is not converted to Figma vectors yet; an empty frame of its size stands in for it');
 		} else {

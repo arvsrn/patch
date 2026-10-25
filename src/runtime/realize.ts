@@ -162,6 +162,7 @@ class Realizer {
 			const attrs = this.attrs(d);
 			return { type: 'svg', id, tag: 'svg', ...styled, font: own, attrs, size: svgSize(attrs), children: this.graphics(d.kids, scope) };
 		}
+		if (d.kind === 'image') return { type: 'image', id, tag: 'img', ...styled, font: own, src: attr('src'), alt: attr('alt') };
 		if (d.kind === 'select') {
 			// It shows the label of the option whose value is its value, else the first, as the browser does.
 			const options = this.options(d.kids, scope, []);

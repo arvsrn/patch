@@ -59,7 +59,7 @@ export type TemplateNode = Element | Text | If | Each | Portal | ComponentUse | 
 export type Tag =
 	| 'main' | 'div' | 'button' | 'a' | 'nav' | 'header' | 'footer' | 'section' | 'article' | 'aside' | 'ul' | 'ol' | 'li' | 'label' | 'form'
 	| 'p' | 'span' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' | 'strong' | 'em' | 'b' | 'i' | 'code' | 'small' | 's' | 'mark'
-	| 'input' | 'textarea' | 'select' | 'option' | 'optgroup';
+	| 'input' | 'textarea' | 'select' | 'option' | 'optgroup' | 'img';
 
 type ElementBase = {
 	type: 'element';
@@ -76,6 +76,8 @@ export type Frame = ElementBase & { kind: 'frame'; children: TemplateNode[] };
 /** <p>, <span>, <h1>, <strong>, …: a block of text. */
 export type TextElement = ElementBase & { kind: 'text'; content: Inline[] };
 export type Input = ElementBase & { kind: 'input' | 'textarea' };
+/** <img>: a leaf the size of its image. */
+export type Image = ElementBase & { kind: 'image' };
 /** <select> and the <optgroup>s in it: hold options (directly, or through `{#if}`/`{#each}`). */
 export type Select = ElementBase & { kind: 'select' | 'optgroup'; children: TemplateNode[] };
 /** <option>: its label is its text. */
@@ -86,7 +88,7 @@ export type Option = ElementBase & { kind: 'option'; content: Inline[] };
  * any attributes and no style. Both hold SVG content.
  */
 export type Svg = Omit<ElementBase, 'tag'> & { tag: string; kind: 'svg' | 'graphic'; children: TemplateNode[] };
-export type Element = Frame | TextElement | Input | Select | Option | Svg;
+export type Element = Frame | TextElement | Input | Image | Select | Option | Svg;
 
 export type Attribute =
 	| { type: 'attribute'; name: string; span: Span; nameSpan: Span; value: AttributeValue }

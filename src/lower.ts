@@ -25,11 +25,12 @@ const KINDS: Record<Tag, Exclude<Element['kind'], 'svg' | 'graphic'>> = {
 	textarea: 'textarea',
 	select: 'select',
 	option: 'option',
-	optgroup: 'optgroup'
+	optgroup: 'optgroup',
+	img: 'image'
 };
 /** What may be nested in text. */
 const INLINE_TAGS: string[] = [...TEXTS.filter((t) => t !== 'p' && !/^h\d$/.test(t)), 'a'];
-const TAG_LIST = 'main, div, button, a, nav, header, footer, section, article, aside, ul, ol, li, label, form, p, span, h1–h6, strong, em, b, i, code, small, s, mark, input, textarea, select';
+const TAG_LIST = 'main, div, button, a, nav, header, footer, section, article, aside, ul, ol, li, label, form, p, span, h1–h6, strong, em, b, i, code, small, s, mark, input, textarea, select, img, svg';
 /** Attributes every element accepts (not an inline <span>), besides any `aria-*` and `data-*` (see check/template.ts). */
 const UNIVERSAL_ATTRIBUTES = ['portal', 'id', 'title', 'role', 'tabindex', 'lang', 'dir'];
 const isOpenAttribute = (name: string) => name.startsWith('aria-') || name.startsWith('data-');
@@ -44,7 +45,8 @@ const ATTRIBUTES: Partial<Record<Tag, string[]>> = {
 	textarea: ['value', 'placeholder', 'disabled', ...FORM_ATTRIBUTES],
 	select: ['value', 'disabled', 'name', 'required', 'autofocus'],
 	option: ['value', 'disabled'],
-	optgroup: ['label', 'disabled']
+	optgroup: ['label', 'disabled'],
+	img: ['src', 'alt', 'srcset', 'sizes', 'loading', 'decoding']
 };
 const UNSUPPORTED_NODES: Record<string, string> = {
 	HtmlTag: '{@html} is not supported',
@@ -435,7 +437,13 @@ class TemplateLowering {
 			return [{ ...base, kind, children }];
 		}
 		if (nodes.some((n: Svelte) => n.type !== 'Text' || n.data.trim()))
-			this.reporter.report(nameSpan(node), `<${tag}> cannot have children; use value={...}`);
+			this.reporter.report(nameSpan(node), kind === 'image' ? '<img> cannot have children' : `<${tag}> cannot have children; use value={...}`);
+		if (kind === 'image') {
+			if (!attributes.some((a) => a.type === 'attribute' && a.name === 'src')) this.reporter.report(nameSpan(node), '<img> needs src');
+			if (!attributes.some((a) => a.type === 'attribute' && a.name === 'alt'))
+				this.reporter.report(nameSpan(node), '<img> needs alt: what the image shows, or alt="" when it is decorative', 'warning');
+			return [{ ...base, kind }];
+		}
 		return [{ ...base, kind }];
 	}
 

@@ -6,7 +6,7 @@
 import { ANCHOR_POSITIONS, isDesignNode, type DesignNode } from './anchor';
 
 /** What an element is for styling purposes. `inline` is an element nested in text. */
-export type ElementKind = 'frame' | 'text' | 'input' | 'textarea' | 'select' | 'svg' | 'inline';
+export type ElementKind = 'frame' | 'text' | 'input' | 'textarea' | 'select' | 'image' | 'svg' | 'inline';
 /** What a style is checked for: an element kind, or `any` element (a `$style` on its own). */
 export type StyleKind = ElementKind | 'any';
 
@@ -101,6 +101,7 @@ const SPEC = {
 	textDecoration: choice('none', 'underline', 'line-through'),
 	textTransform: choice('none', 'uppercase', 'lowercase', 'capitalize'),
 	textOverflow: choice('clip', 'ellipsis'),
+	objectFit: choice('fill', 'contain', 'cover', 'none', 'scale-down'),
 	maxLines: [(v: unknown): v is number => Number.isInteger(v) && (v as number) >= 1, 'a whole number of at least 1'],
 	cursor: choice(...CURSORS),
 	userSelect: choice('auto', 'none', 'text', 'all'),
@@ -179,6 +180,7 @@ const KINDS: Record<ElementKind, Longhand[]> = {
 	input: [...BOX, ...TYPO, ...PAINT, 'caretColor'],
 	textarea: [...BOX, ...TYPO, ...PAINT, 'caretColor'],
 	select: [...BOX, ...TYPO, ...PAINT],
+	image: [...BOX, ...PAINT, 'objectFit'],
 	// Typography for its <text>, and `color` for currentColor.
 	svg: [...BOX, ...TYPO, ...PAINT],
 	text: [...BOX, ...TYPO, 'textOverflow', 'maxLines'],
@@ -191,6 +193,7 @@ const KIND_LABEL: Record<StyleKind, string> = {
 	input: '<input>',
 	textarea: '<textarea>',
 	select: '<select>',
+	image: '<img>',
 	svg: '<svg>',
 	text: 'text elements (<p>, <span>, <h1>, <strong>, …); wrap the text in a <div> for boxes, padding and backgrounds',
 	inline: 'elements nested in text; only typography, cursor, userSelect and pointerEvents are allowed there'

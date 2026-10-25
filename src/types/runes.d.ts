@@ -33,6 +33,15 @@ declare function $props(): any;
 interface PatComponent {
 	readonly __patComponent: true;
 }
+/** An image imported from a script, as Vite serves it: its URL. */
+declare module '*.png' { const src: string; export default src; }
+declare module '*.jpg' { const src: string; export default src; }
+declare module '*.jpeg' { const src: string; export default src; }
+declare module '*.gif' { const src: string; export default src; }
+declare module '*.webp' { const src: string; export default src; }
+declare module '*.avif' { const src: string; export default src; }
+declare module '*.svg' { const src: string; export default src; }
+declare module '*.ico' { const src: string; export default src; }
 declare module '*.pat' {
 	const component: PatComponent;
 	export default component;

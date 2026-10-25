@@ -22,6 +22,8 @@ export type Concrete = Styled &
 	(
 		| { type: 'frame'; id: string; tag: string; font: Font; children: Concrete[] }
 		| { type: 'text'; id: string; tag: string | null; font: Font; runs: Run[] }
+		/** An <img>: its source as given (an asset's URL or path) and its alt text. */
+		| { type: 'image'; id: string; tag: 'img'; font: Font; src: string; alt: string }
 		/** An <svg>: its attributes, the size it hugs to, and its content. */
 		| { type: 'svg'; id: string; tag: 'svg'; font: Font; attrs: Record<string, string>; size: { width: number; height: number }; children: SvgContent[] }
 		| {
