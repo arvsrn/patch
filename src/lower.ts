@@ -14,26 +14,36 @@ import { PATCH_EXPORTS } from './schema/program';
 
 type Svelte = any;
 
+const FRAMES = ['main', 'div', 'button', 'a', 'nav', 'header', 'footer', 'section', 'article', 'aside', 'ul', 'ol', 'li', 'label', 'form'] as const;
+/** Text blocks; inside text, these are inline (as are <a> and <br>). */
+const TEXTS = ['p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'b', 'i', 'code', 'small', 's', 'mark'] as const;
 const KINDS: Record<Tag, Element['kind']> = {
-	main: 'frame',
-	div: 'frame',
-	button: 'frame',
-	a: 'frame',
-	p: 'text',
-	span: 'text',
+	...(Object.fromEntries(FRAMES.map((t) => [t, 'frame'])) as Record<(typeof FRAMES)[number], 'frame'>),
+	...(Object.fromEntries(TEXTS.map((t) => [t, 'text'])) as Record<(typeof TEXTS)[number], 'text'>),
 	input: 'input',
-	textarea: 'textarea'
+	textarea: 'textarea',
+	select: 'select',
+	option: 'option',
+	optgroup: 'optgroup'
 };
+/** What may be nested in text. */
+const INLINE_TAGS: string[] = [...TEXTS.filter((t) => t !== 'p' && !/^h\d$/.test(t)), 'a'];
+const TAG_LIST = 'main, div, button, a, nav, header, footer, section, article, aside, ul, ol, li, label, form, p, span, h1–h6, strong, em, b, i, code, small, s, mark, input, textarea, select';
 /** Attributes every element accepts (not an inline <span>), besides any `aria-*` and `data-*` (see check/template.ts). */
 const UNIVERSAL_ATTRIBUTES = ['portal', 'id', 'title', 'role', 'tabindex', 'lang', 'dir'];
 const isOpenAttribute = (name: string) => name.startsWith('aria-') || name.startsWith('data-');
 const FORM_ATTRIBUTES = ['name', 'autocomplete', 'readonly', 'required', 'minlength', 'maxlength', 'autofocus', 'spellcheck', 'inputmode', 'enterkeyhint'];
 /** Attributes (other than style= and on*=) each tag accepts. */
 const ATTRIBUTES: Partial<Record<Tag, string[]>> = {
-	button: ['disabled'],
+	button: ['disabled', 'type'],
 	a: ['href', 'target', 'rel', 'download'],
+	label: ['for'],
+	form: ['novalidate'],
 	input: ['value', 'placeholder', 'disabled', 'type', ...FORM_ATTRIBUTES],
-	textarea: ['value', 'placeholder', 'disabled', ...FORM_ATTRIBUTES]
+	textarea: ['value', 'placeholder', 'disabled', ...FORM_ATTRIBUTES],
+	select: ['value', 'disabled', 'name', 'required', 'autofocus'],
+	option: ['value', 'disabled'],
+	optgroup: ['label', 'disabled']
 };
 const UNSUPPORTED_NODES: Record<string, string> = {
 	HtmlTag: '{@html} is not supported',
@@ -259,6 +269,18 @@ class TemplateLowering {
 		private reporter: Reporter
 	) {}
 
+	/** Inside a <select>: where <option> and <optgroup> belong. */
+	private inSelect = false;
+	private within<T>(inSelect: boolean, fn: () => T): T {
+		const outer = this.inSelect;
+		this.inSelect = inSelect;
+		try {
+			return fn();
+		} finally {
+			this.inSelect = outer;
+		}
+	}
+
 	private unsupported(node: Svelte) {
 		this.reporter.report(nameSpan(node), UNSUPPORTED_NODES[node.type] ?? `<${node.name ?? node.type}> is not supported`);
 	}
@@ -321,7 +343,7 @@ class TemplateLowering {
 
 	/** `<Card a={x}>content</Card>`: attributes are props, the content is the `children` snippet. */
 	private component(node: Svelte): TemplateNode[] {
-		const children = this.children(node.fragment.nodes);
+		const children = this.within(false, () => this.children(node.fragment.nodes));
 		if (node.name.includes('.')) {
 			this.reporter.report(nameSpan(node), `<${node.name}>: a component tag must be a plain name; assign it first (const Item = ${node.name})`);
 			return children;
@@ -368,15 +390,30 @@ class TemplateLowering {
 		const tag = node.name;
 		if (tag === 'portal') return this.portal(node);
 		if (!isTag(tag)) {
-			this.reporter.report(nameSpan(node), `<${tag}> is not supported (use main, div, button, a, p, span, input, textarea)`);
+			this.reporter.report(nameSpan(node), `<${tag}> is not supported (use ${TAG_LIST})`);
 			return this.children(node.fragment.nodes);
 		}
 		const kind = KINDS[tag];
+		if ((kind === 'option' || kind === 'optgroup') !== this.inSelect)
+			this.reporter.report(nameSpan(node), this.inSelect ? `<${tag}> cannot be inside <select>; it holds <option>s and <optgroup>s` : `<${tag}> can only be inside <select>`);
 		const { style, attributes } = this.attributes(node, kind);
 		const base = { type: 'element' as const, tag, span: spanOf(node), nameSpan: nameSpan(node), style, attributes };
 		const nodes = node.fragment.nodes;
-		if (kind === 'frame') return [{ ...base, kind, children: this.children(nodes) }];
+		if (kind === 'frame') return [{ ...base, kind, children: this.within(false, () => this.children(nodes)) }];
 		if (kind === 'text') return [{ ...base, kind, content: this.inline(nodes) }];
+		if (kind === 'option') {
+			const content = this.inline(nodes);
+			const nested = content.find((part) => part.type === 'span');
+			if (nested?.type === 'span') this.reporter.report(nested.nameSpan, '<option> holds plain text: its label');
+			return [{ ...base, kind, content }];
+		}
+		if (kind === 'select' || kind === 'optgroup') {
+			const children = this.within(true, () => this.children(nodes));
+			for (const child of children)
+				if (child.type === 'text' || child.type === 'component' || child.type === 'portal' || child.type === 'render' || child.type === 'snippet')
+					this.reporter.report(child.type === 'component' ? child.nameSpan : child.span, `<${tag}> holds <option>s and <optgroup>s, directly or in {#if} and {#each}`);
+			return [{ ...base, kind, children }];
+		}
 		if (nodes.some((n: Svelte) => n.type !== 'Text' || n.data.trim()))
 			this.reporter.report(nameSpan(node), `<${tag}> cannot have children; use value={...}`);
 		return [{ ...base, kind }];
@@ -404,7 +441,7 @@ class TemplateLowering {
 		return name === null ? [] : [{ type: 'portal', span: spanOf(node), nameSpan: nameSpan(node), name }];
 	}
 
-	/** `kind` is null for a <span> nested in text, which only takes style=. */
+	/** `kind` is null for an element nested in text: no bindings or portal. */
 	private attributes(node: Svelte, kind: Element['kind'] | null) {
 		let style: Estree | null = null;
 		const attributes: Attribute[] = [];
@@ -418,21 +455,23 @@ class TemplateLowering {
 		for (const a of node.attributes) {
 			const span = spanOf(a);
 			if (a.type === 'BindDirective') {
-				if (a.name === 'this' ? inText : a.name !== 'value' || (kind !== 'input' && kind !== 'textarea'))
-					this.reporter.report(nameSpan(a), inText ? `bind:${a.name} is not supported on ${where}` : 'only bind:value on <input>/<textarea> and bind:this are supported');
+				if (a.name === 'this' ? inText : a.name !== 'value' || (kind !== 'input' && kind !== 'textarea' && kind !== 'select'))
+					this.reporter.report(nameSpan(a), inText ? `bind:${a.name} is not supported on ${where}` : 'only bind:value on <input>/<textarea>/<select> and bind:this are supported');
 				else attributes.push({ type: 'bind', name: a.name, span, nameSpan: nameSpan(a), expression: a.expression });
 			} else if (a.type !== 'Attribute') {
 				this.reporter.report(nameSpan(a), UNSUPPORTED_DIRECTIVES[a.type] ?? `${a.type} is not supported`);
+			} else if (a.name === 'style' && (kind === 'option' || kind === 'optgroup')) {
+				this.reporter.report(nameSpan(a), `<${node.name}> is drawn by the browser and takes no style=`);
 			} else if (a.name === 'style') {
 				if (Array.isArray(a.value) && a.value.some((part: Svelte) => part.type === 'Text'))
 					this.reporter.report(nameSpan(a), 'CSS strings are not supported; use style={$style({...})} or style={{ ... }}');
 				else style = expressionOf(a);
 			} else if (a.name === 'class') {
 				this.reporter.report(nameSpan(a), 'class= is not supported; use style={...}');
-			} else if (/^on[a-z]+$/.test(a.name) && !inText) {
+			} else if (/^on[a-z]+$/.test(a.name)) {
 				const handler = expressionOf(a);
 				if (handler) attributes.push({ type: 'event', name: a.name.slice(2), span, nameSpan: nameSpan(a), handler });
-			} else if (!inText && (UNIVERSAL_ATTRIBUTES.includes(a.name) || isOpenAttribute(a.name) || ATTRIBUTES[node.name as Tag]?.includes(a.name))) {
+			} else if ((UNIVERSAL_ATTRIBUTES.includes(a.name) && !(inText && a.name === 'portal')) || isOpenAttribute(a.name) || ATTRIBUTES[node.name as Tag]?.includes(a.name)) {
 				attributes.push({ type: 'attribute', name: a.name, span, nameSpan: nameSpan(a), value: attributeValue(a) });
 			} else {
 				this.reporter.report(nameSpan(a), `attribute "${a.name}" is not supported on ${where}`);
@@ -472,14 +511,18 @@ class TemplateLowering {
 			} else if (node.type === 'ExpressionTag') {
 				out.push({ type: 'expression', expression: node.expression });
 				state.space = false;
+			} else if (node.type === 'RegularElement' && node.name === 'br') {
+				if (node.attributes.length || node.fragment.nodes.length) this.reporter.report(nameSpan(node), '<br> takes no attributes or content');
+				out.push({ type: 'static', value: '\n' });
+				state.space = true;
 			} else if (node.type === 'RegularElement') {
-				if (node.name !== 'span') {
-					this.reporter.report(nameSpan(node), `<${node.name}> cannot appear inside text; only <span> can`);
+				if (!INLINE_TAGS.includes(node.name)) {
+					this.reporter.report(nameSpan(node), `<${node.name}> cannot appear inside text; only ${INLINE_TAGS.join(', ')} and br can`);
 					out.push(...this.inlineParts(node.fragment.nodes, state));
 					continue;
 				}
-				const { style } = this.attributes(node, null);
-				out.push({ type: 'span', span: spanOf(node), nameSpan: nameSpan(node), style, content: this.inlineParts(node.fragment.nodes, state) });
+				const { style, attributes } = this.attributes(node, null);
+				out.push({ type: 'span', tag: node.name, span: spanOf(node), nameSpan: nameSpan(node), style, attributes, content: this.inlineParts(node.fragment.nodes, state) });
 			} else if (node.type === 'IfBlock' || node.type === 'EachBlock' || node.type === 'SnippetBlock' || node.type === 'RenderTag') {
 				this.reporter.report(node, 'blocks cannot appear inside text; use a ternary {cond ? "a" : "b"} or move the block into a <div>');
 			} else if (node.type === 'Component') {

@@ -22,7 +22,7 @@ export type Concrete = Styled &
 		| {
 				type: 'input';
 				id: string;
-				tag: 'input' | 'textarea';
+				tag: 'input' | 'textarea' | 'select';
 				font: Font;
 				value: string;
 				placeholder: string;

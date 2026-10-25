@@ -119,6 +119,8 @@ export function collectStyles(component: Component, bindings: Bindings): Styles 
 	// A style= attribute: checked for the element it styles.
 	for (const element of elements(component.template)) {
 		const kind = element.type === 'span' ? 'inline' : element.kind;
+		// Options are drawn by the browser: lowering rejects their style=.
+		if (kind === 'option' || kind === 'optgroup') continue;
 		styles.elements.push({ kind, style: element.style, nameSpan: element.nameSpan, shape: element.style ? shape(element.style, kind, { held: false, seen: new Set() }) : NONE });
 	}
 	return styles;

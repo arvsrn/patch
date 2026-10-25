@@ -5,8 +5,8 @@
 
 import { ANCHOR_POSITIONS, isDesignNode, type DesignNode } from './anchor';
 
-/** What an element is for styling purposes. `inline` is a <span> nested in text. */
-export type ElementKind = 'frame' | 'text' | 'input' | 'textarea' | 'inline';
+/** What an element is for styling purposes. `inline` is an element nested in text. */
+export type ElementKind = 'frame' | 'text' | 'input' | 'textarea' | 'select' | 'inline';
 /** What a style is checked for: an element kind, or `any` element (a `$style` on its own). */
 export type StyleKind = ElementKind | 'any';
 
@@ -149,6 +149,9 @@ export type Font = { [K in (typeof TYPO)[number]]: K extends 'lineHeight' ? numb
 /** The line height, as a multiple of the font size, of text that sets none. */
 export const LINE_HEIGHT = 1.2;
 
+/** The room a <select>'s arrow takes, added to its right padding. */
+export const SELECT_ARROW = 16;
+
 /** The typography of the root: what every element inherits unless it or an ancestor sets it. */
 export const ROOT_FONT: Font = {
 	fontFamily: 'Inter',
@@ -175,17 +178,19 @@ const KINDS: Record<ElementKind, Longhand[]> = {
 	frame: [...BOX, ...TYPO, ...PAINT, ...FLEX, 'caretColor'],
 	input: [...BOX, ...TYPO, ...PAINT, 'caretColor'],
 	textarea: [...BOX, ...TYPO, ...PAINT, 'caretColor'],
+	select: [...BOX, ...TYPO, ...PAINT],
 	text: [...BOX, ...TYPO, 'textOverflow', 'maxLines'],
 	inline: [...TYPO.filter((k) => k !== 'textAlign'), ...INTERACTION]
 };
 const ALLOWED: Record<StyleKind, string[]> = { ...KINDS, any: [...new Set(Object.values(KINDS).flat())] };
 const KIND_LABEL: Record<StyleKind, string> = {
 	any: 'any element',
-	frame: 'containers (<main>, <div>, <button>, <a>)',
+	frame: 'containers (<main>, <div>, <button>, <a>, <nav>, <ul>, <form>, …)',
 	input: '<input>',
 	textarea: '<textarea>',
-	text: 'text elements (<p>, <span>); wrap the text in a <div> for boxes, padding and backgrounds',
-	inline: 'nested <span>s inside text; only typography, cursor, userSelect and pointerEvents are allowed there'
+	select: '<select>',
+	text: 'text elements (<p>, <span>, <h1>, <strong>, …); wrap the text in a <div> for boxes, padding and backgrounds',
+	inline: 'elements nested in text; only typography, cursor, userSelect and pointerEvents are allowed there'
 };
 
 const sides = (v: unknown, allowAuto: boolean): unknown[] | null => {
@@ -339,7 +344,7 @@ export const STYLE_RULES: StyleRule[] = [
 	},
 	{
 		keys: ['width'],
-		kinds: ['input', 'textarea'],
+		kinds: ['input', 'textarea', 'select'],
 		fails: (st, kind) => ((st.width ?? 'hug') === 'hug' ? `<${kind}> needs width: <number> or "fill"` : null)
 	},
 	{

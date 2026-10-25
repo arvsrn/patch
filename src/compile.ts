@@ -65,16 +65,8 @@ export function front(source: string, reporter: Reporter): Front | null {
 	return { component, bindings, styles: collectStyles(component, bindings) };
 }
 
-const ELEMENT_TYPES: Record<Tag, string> = {
-	main: 'HTMLElement',
-	div: 'HTMLDivElement',
-	button: 'HTMLButtonElement',
-	a: 'HTMLAnchorElement',
-	p: 'HTMLParagraphElement',
-	span: 'HTMLSpanElement',
-	input: 'HTMLInputElement',
-	textarea: 'HTMLTextAreaElement'
-};
+/** The DOM type of an element: TypeScript's own map of tag names. */
+const elementType = (tag: Tag) => `HTMLElementTagNameMap[${JSON.stringify(tag)}]`;
 
 /** What each `bind:this` assigns to its variable: the element while mounted, else `undefined`. */
 function boundElements(component: Component, bindings: Bindings): TemplateWrite[] {
@@ -83,7 +75,7 @@ function boundElements(component: Component, bindings: Bindings): TemplateWrite[
 		if (element.type !== 'element') continue;
 		for (const a of element.attributes)
 			if (a.type === 'bind' && a.name === 'this' && bindings.reference(a.expression)?.symbol)
-				writes.push({ name: a.expression.name, type: `${ELEMENT_TYPES[element.tag]} | undefined`, ...a.span });
+				writes.push({ name: a.expression.name, type: `${elementType(element.tag)} | undefined`, ...a.span });
 	}
 	return writes;
 }

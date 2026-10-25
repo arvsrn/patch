@@ -8,6 +8,7 @@ import { staticValue } from './names';
 import { elements, expressions, fragments, type Component, type TemplateNode } from '../ir';
 
 const INPUT_TYPES = ['text', 'password', 'email', 'search', 'url', 'tel'];
+const BUTTON_TYPES = ['submit', 'button', 'reset'];
 
 export function checkTemplate(component: Component, bindings: Bindings, reporter: Reporter) {
 	for (const element of elements(component.template)) {
@@ -23,7 +24,8 @@ export function checkTemplate(component: Component, bindings: Bindings, reporter
 				reporter.report(a.nameSpan, 'bind:value cannot be combined with value= or oninput=');
 			} else if (a.type === 'attribute' && a.name === 'type') {
 				const value = a.value !== true && 'parts' in a.value && a.value.parts.length === 1 ? a.value.parts[0] : null;
-				if (typeof value !== 'string' || !INPUT_TYPES.includes(value)) reporter.report(a.nameSpan, `type must be one of ${INPUT_TYPES.join(', ')}`);
+				const types = element.tag === 'button' ? BUTTON_TYPES : INPUT_TYPES;
+				if (typeof value !== 'string' || !types.includes(value)) reporter.report(a.nameSpan, `type must be one of ${types.join(', ')}`);
 			}
 		}
 	}

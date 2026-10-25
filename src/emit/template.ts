@@ -78,7 +78,12 @@ export class TemplateEmitter {
 				on.push(['input', `() => (event) => { ${name}.v = event.currentTarget.value }`]);
 			} else attrs.push([a.name, `() => (${this.attributeValue(a.value)})`]);
 		}
-		const kids = node.kind === 'frame' ? this.fragment(node.children) : node.kind === 'text' ? `[${this.inline(node.content)}]` : '[]';
+		const kids =
+			node.kind === 'frame' || node.kind === 'select' || node.kind === 'optgroup'
+				? this.fragment(node.children)
+				: node.kind === 'text' || node.kind === 'option'
+					? `[${this.inline(node.content)}]`
+					: '[]';
 		const style = node.style ? this.getter(node.style) : 'null';
 		return `{t:"el",tag:${str(node.tag)},kind:"${node.kind}",id:${str(this.id(node.span.start))},style:${style},attrs:${record(attrs)},on:${record(on)},ref:${ref},portal:${portal},kids:${kids}}`;
 	}
@@ -95,7 +100,12 @@ export class TemplateEmitter {
 				if (part.type === 'static') return str(part.value);
 				if (part.type === 'expression') return this.getter(part.expression);
 				const style = part.style ? this.getter(part.style) : 'null';
-				return `{t:"span",id:${str(this.id(part.span.start))},style:${style},kids:[${this.inline(part.content)}]}`;
+				const attrs: [string, string][] = [];
+				const on: [string, string][] = [];
+				for (const a of part.attributes)
+					if (a.type === 'event') on.push([a.name, this.getter(a.handler)]);
+					else if (a.type === 'attribute') attrs.push([a.name, `() => (${this.attributeValue(a.value)})`]);
+				return `{t:"span",tag:${str(part.tag)},id:${str(this.id(part.span.start))},style:${style},attrs:${record(attrs)},on:${record(on)},kids:[${this.inline(part.content)}]}`;
 			})
 			.join(',');
 	}

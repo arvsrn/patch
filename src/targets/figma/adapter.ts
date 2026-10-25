@@ -10,7 +10,7 @@
 import type { Concrete, Font, Run } from '../../schema/concrete';
 import { anchored, type Anchored } from '../../schema/anchor';
 import { ownLocation } from '../../schema/path';
-import { effectiveSizing, LINE_HEIGHT } from '../../schema/style';
+import { effectiveSizing, LINE_HEIGHT, SELECT_ARROW } from '../../schema/style';
 import type { DerivedText } from './glyphs';
 import { transformText } from './text';
 
@@ -224,11 +224,14 @@ class Converter {
 			// <input>/<textarea>: a clipped frame holding the value, or the
 			// placeholder at half opacity as the browser stylesheet draws it.
 			const multiline = n.tag === 'textarea';
+			// A select shows its option's label; its arrow takes room it is not drawn in.
+			if (n.tag === 'select') this.warn(n.id, "a <select>'s arrow is not drawn in Figma; its room is kept");
+			const style = n.tag === 'select' ? { ...n.style, paddingRight: (n.style.paddingRight ?? 0) + SELECT_ARROW } : n.style;
 			const shown = n.value ? (n.inputType === 'password' ? '•'.repeat(n.value.length) : n.value) : n.placeholder;
 			const text = this.text(n, layerName(shown), [{ text: shown, font: n.font }], n.font, n.value ? 1 : 0.5);
 			Object.assign(text, { width: { kind: 'FILL' }, height: { kind: 'HUG' }, opacity: 1, truncate: !multiline, editable: multiline });
 			for (const key of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'alignSelf', 'absolute', 'anchor', 'id'] as const) delete text[key];
-			node = this.frame(n, n.tag, { ...n.style, flexDirection: multiline ? 'column' : 'row', alignItems: multiline ? 'start' : 'center', overflowX: 'hidden', overflowY: 'hidden' }, [text]);
+			node = this.frame(n, n.tag, { ...style, flexDirection: multiline ? 'column' : 'row', alignItems: multiline ? 'start' : 'center', overflowX: 'hidden', overflowY: 'hidden' }, [text]);
 		}
 		return this.margins(n, node);
 	}

@@ -106,6 +106,8 @@ class Realizer {
 	}
 
 	private element(d: ElementNode, id: string, scope: Scope, font: Font): Concrete {
+		// Lowering keeps options inside a select, which reads them (`options`).
+		if (d.kind === 'option' || d.kind === 'optgroup') throw new Error(`<${d.tag}> outside <select> (at ${d.id})`);
 		const st = elementStyle(d, d.kind);
 		const own = inheritFont(font, st);
 		// A stand-in for an element holds its concrete id; anything else anchors to nothing.
@@ -119,6 +121,13 @@ class Realizer {
 		}
 		if (d.kind === 'frame') return { type: 'frame', id, tag: d.tag, ...styled, font: own, children: this.nodes(d.kids, scope, own) };
 		if (d.kind === 'text') return { type: 'text', id, tag: d.tag, ...styled, font: own, runs: inlineRuns(d.kids, own, [], d.id) };
+		if (d.kind === 'select') {
+			// It shows the label of the option whose value is its value, else the first, as the browser does.
+			const options = this.options(d.kids, []);
+			const value = attr('value');
+			const shown = options.find((o) => o.value === value) ?? options[0];
+			return { type: 'input', id, tag: 'select', ...styled, font: own, value: shown?.label ?? '', placeholder: '', inputType: 'select' };
+		}
 		return {
 			type: 'input',
 			id,
@@ -129,6 +138,21 @@ class Realizer {
 			placeholder: attr('placeholder'),
 			inputType: attr('type') || 'text'
 		};
+	}
+
+	/** The options a select holds, in order: directly, in optgroups, and in `{#if}` and `{#each}`. */
+	private options(nodes: ProgramNode[], out: { value: string; label: string }[]) {
+		for (const d of nodes) {
+			if (d.t === 'el' && d.kind === 'option') {
+				const label = d.kids.map((p) => (typeof p === 'string' ? p : typeof p === 'function' ? toText(withId(d.id, p)) : '')).join('');
+				out.push({ value: d.attrs.value ? toText(withId(d.id, d.attrs.value)) : label, label });
+			} else if (d.t === 'el' && d.kind === 'optgroup') this.options(d.kids, out);
+			else if (d.t === 'if') {
+				const branch = withId(d.id, () => d.b.find(([test]) => test()));
+				this.options(branch ? branch[1] : (d.e ?? []), out);
+			} else if (d.t === 'each') withId(d.id, () => eachList(d.list())).forEach((raw, i) => this.options(d.kids({ v: raw }, { v: i }), out));
+		}
+		return out;
 	}
 
 	/**

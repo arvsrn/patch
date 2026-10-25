@@ -4,7 +4,7 @@
 
 import { anchored } from '../schema/anchor';
 import type { ComponentNode, ElementNode, InlinePart, PageRoute, Pages, Program, ProgramNode, RenderNode, SpanNode } from '../schema/program';
-import { effectiveSizing, LINE_HEIGHT, ROOT_FONT, SHORTHANDS, sizingOf, type ElementKind, type Sizing, type Style } from '../schema/style';
+import { effectiveSizing, LINE_HEIGHT, ROOT_FONT, SELECT_ARROW, SHORTHANDS, sizingOf, type ElementKind, type Sizing, type Style } from '../schema/style';
 import { createApi, type ApiOptions, type Instance } from './api';
 import { createAnchoring, type AnchorSpec } from './anchoring';
 import { eachPlace, instancePlace, renderPlace, ROOT_PLACE, type Place } from '../schema/path';
@@ -23,6 +23,7 @@ html,body{margin:0;padding:0}
 [data-p=input][data-w=hug],[data-p=textarea][data-w=hug]{width:var(--hug-w)}
 [data-p=textarea][data-h=hug]{height:var(--hug-h)}
 [data-p=input]::placeholder,[data-p=textarea]::placeholder{color:currentColor;opacity:.5}
+[data-p=select]{display:block;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);background-size:4px 4px;background-position:right 10px center,right 6px center;background-repeat:no-repeat}
 [data-p=text]{display:block;white-space:pre}
 [data-p=text][data-w=fixed],[data-p=text][data-w=fill]{white-space:pre-wrap}
 [data-overflow=ellipsis]{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
@@ -33,7 +34,7 @@ html,body{margin:0;padding:0}
 [data-dir=row]>[data-w=fill],[data-dir=column]>[data-h=fill]{flex:1 1 0}
 [data-dir=row]>[data-h=fill],[data-dir=column]>[data-w=fill]{align-self:stretch!important}
 button[data-p]{cursor:pointer}
-a[data-p]{text-decoration:none}
+a[data-p=frame]{text-decoration:none}
 [data-p]:focus-visible{outline:2px solid #2563eb!important;outline-offset:1px!important}
 [data-host]{width:100vw;height:100vh;overflow:auto;background:#fff}
 `;
@@ -65,7 +66,10 @@ function toCss(kind: ElementKind, st: Style) {
 	if (st.userSelect) css['-webkit-user-select'] = st.userSelect;
 	const box = (prefix: string) => {
 		const keys = SHORTHANDS[prefix];
-		if (keys.some((k) => st[k] !== undefined)) css[prefix] = keys.map((k) => px(st[k] ?? 0)).join(' ');
+		// A select's arrow is drawn in 16px of its right padding.
+		const arrow = (k: string) => (kind === 'select' && k === 'paddingRight' ? SELECT_ARROW : 0);
+		if (kind === 'select' && prefix === 'padding') css[prefix] = keys.map((k) => px(((st[k] as number) ?? 0) + arrow(k))).join(' ');
+		else if (keys.some((k) => st[k] !== undefined)) css[prefix] = keys.map((k) => px(st[k] ?? 0)).join(' ');
 	};
 	box('padding');
 	box('margin');
@@ -290,30 +294,58 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 		else el.setAttribute(name, value === true ? '' : toText(value));
 	};
 
+	/** An element's attributes and event handlers. */
+	const bindAttributes = (el: HTMLElement, d: ElementNode | SpanNode, control: boolean) => {
+		for (const [name, value] of Object.entries(d.attrs))
+			effect(() => {
+				setAttribute(el, name, withId(d.id, value));
+				// What a control shows is its content size.
+				if (control) resizeLater();
+			});
+		if (control) el.addEventListener('input', resizeLater);
+		// A form never navigates: submitting it only runs its onsubmit.
+		if (d.tag === 'form') el.addEventListener('submit', (event) => event.preventDefault());
+		for (const [name, handler] of Object.entries(d.on))
+			el.addEventListener(name, (event: Event) => {
+				interact();
+				batch(() => {
+					const fn = untrack(handler);
+					if (typeof fn === 'function') fn(event);
+					else if (fn != null) throw new Error(`on${name} must be a function (at ${d.id})`);
+				});
+			});
+	};
+
 	const element = (d: ElementNode | SpanNode, tag: string, kind: ElementKind) => {
 		const el = document.createElement(tag);
 		el.setAttribute('data-p', kind);
 		if (d.style || kind !== 'inline') bindStyle(el, d, kind);
-		if (d.t === 'el') {
-			const control = kind === 'input' || kind === 'textarea';
-			for (const [name, value] of Object.entries(d.attrs))
-				effect(() => {
-					setAttribute(el, name, withId(d.id, value));
-					// What a control shows is its content size.
-					if (control) resizeLater();
-				});
-			if (control) el.addEventListener('input', resizeLater);
-			for (const [name, handler] of Object.entries(d.on))
-				el.addEventListener(name, (event: Event) => {
-					interact();
-					batch(() => {
-						const fn = untrack(handler);
-						if (typeof fn === 'function') fn(event);
-						else if (fn != null) throw new Error(`on${name} must be a function (at ${d.id})`);
-					});
-				});
-		}
+		bindAttributes(el, d, kind === 'input' || kind === 'textarea');
 		return el;
+	};
+
+	/**
+	 * An <option> or <optgroup>: drawn by the browser, without style. An option
+	 * is selected while its value (its `value`, else its label) is the
+	 * select's, so the selection follows options that mount later.
+	 */
+	const mountOption = (d: ElementNode, parent: Node, before: Node | null, scope: Scope) => {
+		const el = document.createElement(d.tag) as HTMLOptionElement;
+		bindAttributes(el, d, false);
+		if (d.kind === 'optgroup') mountNodes(d.kids, el, null, scope);
+		else if (d.kind === 'option') {
+			const parts = d.kids;
+			mountInline(parts, el);
+			const select = scope.select;
+			if (select) {
+				const label = () => parts.map((p) => (typeof p === 'function' ? toText(p()) : typeof p === 'string' ? p : '')).join('');
+				effect(() => {
+					const own = d.attrs.value ? toText(withId(d.id, d.attrs.value)) : withId(d.id, label);
+					el.selected = own === toText(select());
+				});
+			}
+		}
+		parent.insertBefore(el, before);
 	};
 
 	/**
@@ -342,7 +374,7 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 				});
 				holder().appendChild(node);
 			} else {
-				const span = element(part, 'span', 'inline');
+				const span = element(part, part.tag, 'inline');
 				mountInline(part.kids, span);
 				parent.appendChild(span);
 			}
@@ -350,7 +382,7 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 	};
 
 	/** What mounted content belongs to: the component instance rendering it, and where it is (for ids). */
-	type Scope = { instance: Instance; place: Place };
+	type Scope = { instance: Instance; place: Place; select?: () => unknown };
 
 	const mountNodes = (nodes: ProgramNode[], parent: Node, before: Node | null, scope: Scope) => {
 		for (const d of nodes) {
@@ -362,9 +394,17 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 				mountInline(d.parts, span);
 				parent.insertBefore(span, before);
 			} else if (d.t === 'el') {
+				if (d.kind === 'option' || d.kind === 'optgroup') {
+					mountOption(d, parent, before, scope);
+					continue;
+				}
 				const el = element(d, d.tag, d.kind);
-				if (d.kind === 'frame') mountNodes(d.kids, el, null, scope);
+				if (d.kind === 'frame') mountNodes(d.kids, el, null, { ...scope, select: undefined });
 				else if (d.kind === 'text') mountInline(d.kids, el);
+				else if (d.kind === 'select') {
+					const value = d.attrs.value;
+					mountNodes(d.kids, el, null, { ...scope, select: value && (() => withId(d.id, value)) });
+				}
 				if (d.portal) mountPortaled(d, el, parent, before);
 				else parent.insertBefore(el, before);
 				const ref = d.ref;

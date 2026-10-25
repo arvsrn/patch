@@ -240,15 +240,19 @@ async function later() { await x; n++; n++; }          // effects re-run twice
 
 | Tag | Kind | Children |
 | --- | --- | --- |
-| `<main>`, `<div>`, `<button>`, `<a>` | container | elements, text, blocks |
-| `<p>`, `<span>` | text | text, `{expressions}`, nested `<span>` |
+| `<main>`, `<div>`, `<button>`, `<a>`, `<nav>`, `<header>`, `<footer>`, `<section>`, `<article>`, `<aside>`, `<ul>`, `<ol>`, `<li>`, `<label>`, `<form>` | container | elements, text, blocks |
+| `<p>`, `<span>`, `<h1>`–`<h6>`, `<strong>`, `<em>`, `<b>`, `<i>`, `<code>`, `<small>`, `<s>`, `<mark>` | text | text, `{expressions}`, elements nested in text |
 | `<input>`, `<textarea>` | input | none |
+| `<select>` | input | `<option>`, `<optgroup>`, `{#if}`, `{#each}` |
 | `<portal>` | [portal](#portals) | none |
 
-A tag starting with an uppercase letter is a [component](#components). Any other tag (`<img>`, `<section>`, `<h1>`, …) is an error.
+A tag starting with an uppercase letter is a [component](#components). Any other tag (`<img>`, `<table>`, …) is an error.
 
-- **Containers** are flex boxes, laid out in a column by default. `<main>`, `<div>`, `<button>`, and `<a>` lay out identically. `<button>` additionally shows a pointer cursor and accepts `disabled`. `<a>` is a link: it shows a pointer cursor, is not underlined or colored by default, and accepts `href`, `target`, `rel` and `download` (see [Links](#links)).
-- **Text elements** contain only inline content. A `<span>` nested inside text is an *inline span*: it accepts only `style=`, and that style may contain typography only. You cannot put blocks (`{#if}`, `{#each}`) or other elements inside text. Use a ternary or move the block into a `<div>`.
+- **Containers** are flex boxes, laid out in a column by default, and all lay out identically: the tag gives the element its meaning (for assistive technology, and in the DOM), not its look. `<button>` additionally shows a pointer cursor and accepts `disabled` and `type` (`submit`, the default as in HTML, `button` or `reset`). `<a>` is a link: it shows a pointer cursor, is not underlined or colored by default, and accepts `href`, `target`, `rel` and `download` (see [Links](#links)). `<label>` accepts `for`, naming the `id` of the control it labels. Lists have no markers.
+- **Text elements** contain only inline content. Headings and `<strong>`, `<code>`, … are plain text like `<p>`: their typography is their `style`, so `<strong>` is not bold and `<code>` not monospace unless styled.
+- **Inside text**, `<span>`, `<a>`, `<strong>`, `<em>`, `<b>`, `<i>`, `<code>`, `<small>`, `<s>` and `<mark>` are *inline*: their style may contain typography only, and they accept the global attributes and event handlers (an inline `<a>` also its link attributes, and is a [link](#links) like any other). `<br />` is a line break. You cannot put blocks (`{#if}`, `{#each}`) or other elements inside text. Use a ternary or move the block into a `<div>`.
+- **`<form>`** never navigates: submitting it (Enter in one of its fields, or a submit button) runs its `onsubmit`, and the browser's own submission is always prevented. Its fields' `required`, `minlength`, … are checked by the browser first, unless it has `novalidate`.
+- **`<select>`** is a control like `<input>`: it needs `width: <number>` or `"fill"`, and accepts `value`, `bind:value`, `disabled`, `name`, `required` and `autofocus`. It holds `<option value disabled>` (whose text is its label, and its value without `value`) and `<optgroup label disabled>`, directly or through `{#if}` and `{#each}`; options take no `style`. The selected option is the one whose value is the select's, also as options are added and removed. Patch draws its arrow, in the text color, in 16px added to its right padding.
 - **Inputs** cannot have children. Set their content with `value={...}`.
 
 A `<span>` whose parent is a container is a text **block**, not inline:
@@ -399,7 +403,7 @@ These are not supported: `{#await}`, `{#key}`, `{@html}`, `{@const}`, `{@debug}`
 <input style={{ width: 240 }} bind:value={query} placeholder="Search" />
 ```
 
-- `bind:value` is allowed only on `<input>` and `<textarea>`. Its target must be a **top-level `$state` identifier**. A derived value, a member (`form.name`), or an each item is not allowed.
+- `bind:value` is allowed only on `<input>`, `<textarea>` and `<select>`. Its target must be a **top-level `$state` identifier**. A derived value, a member (`form.name`), or an each item is not allowed.
 - It is equivalent to `value={query}` plus an `input` handler that sets `query = event.currentTarget.value`. The bound value is always a string.
 - You cannot combine it with `value=` or `oninput=` on the same element.
 
@@ -1150,6 +1154,7 @@ The Figma target approximates what Figma cannot express, and prints a warning ea
 - negative margins are dropped
 - auto margins on absolute elements are dropped
 - a hugging-width text with a set height is given a fixed width
+- a `<select>` shows its selected option's label, without its arrow
 
 Without a warning, a snapshot also keeps a character whose uppercase or lowercase form is longer as it is: `textTransform: 'uppercase'` shows `ß` as `SS` in the browser but as `ß` in Figma until the layer is edited.
 

@@ -32,10 +32,10 @@ test('every problem in a statement is reported, not just the first', () => {
 });
 
 test('the contents of unsupported constructs are still checked', () => {
-	expect(messages(`<section><p style={{ padding: 1 }}>x</p><img /></section>`)).toEqual([
-		'<section> is not supported (use main, div, button, a, p, span, input, textarea)',
-		'"padding" is not supported on text elements (<p>, <span>); wrap the text in a <div> for boxes, padding and backgrounds',
-		'<img> is not supported (use main, div, button, a, p, span, input, textarea)'
+	expect(messages(`<blink><p style={{ padding: 1 }}>x</p><img /></blink>`)).toEqual([
+		'<blink> is not supported (use main, div, button, a, nav, header, footer, section, article, aside, ul, ol, li, label, form, p, span, h1–h6, strong, em, b, i, code, small, s, mark, input, textarea, select)',
+		'"padding" is not supported on text elements (<p>, <span>, <h1>, <strong>, …); wrap the text in a <div> for boxes, padding and backgrounds',
+		'<img> is not supported (use main, div, button, a, nav, header, footer, section, article, aside, ul, ol, li, label, form, p, span, h1–h6, strong, em, b, i, code, small, s, mark, input, textarea, select)'
 	]);
 	expect(messages(`{#each [1] as [a] (a)}<div class="x"></div>{/each}`)).toEqual([
 		'{#each} needs `as item` with a plain identifier',

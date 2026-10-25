@@ -6,7 +6,7 @@
 // Checks and code generation read these; none of them tracks scopes itself.
 
 import { children, isTypeNode, patternIdentifiers, rootOf, unwrap, type Estree } from './ast';
-import type { AttributeValue, Component, Inline, TemplateNode } from './ir';
+import type { Attribute, AttributeValue, Component, Inline, TemplateNode } from './ir';
 
 /** `prop`: declared by `$props()`. `param`: a snippet parameter. Both are read-only. */
 export type SymbolKind = 'state' | 'derived' | 'item' | 'prop' | 'param' | 'local';
@@ -395,24 +395,9 @@ class Binder {
 			if (node.type === 'text') this.inline(node.content, scope);
 			else if (node.type === 'element') {
 				this.visit(node.style, scope);
-				for (const a of node.attributes) {
-					if (a.type === 'event') {
-						this.visit(a.handler, scope);
-						const fn = this.functionOf(a.handler, scope);
-						if (fn) this.callbacks.push({ fn, receiver: null, reducer: false });
-					}
-					else if (a.type === 'bind') {
-						this.visit(a.expression, scope);
-						const symbol = a.name === 'this' && a.expression.type === 'Identifier' ? scope.get(a.expression.name) : null;
-						if (symbol) {
-							symbol.element = true;
-							symbol.reassigned = true;
-						}
-					}
-					else this.attributeValue(a.value, scope);
-				}
-				if (node.kind === 'frame') this.template(node.children, scope);
-				if (node.kind === 'text') this.inline(node.content, scope);
+				this.attributes(node.attributes, scope);
+				if (node.kind === 'frame' || node.kind === 'select' || node.kind === 'optgroup') this.template(node.children, scope);
+				if (node.kind === 'text' || node.kind === 'option') this.inline(node.content, scope);
 			} else if (node.type === 'if') {
 				for (const branch of node.branches) {
 					this.visit(branch.test, scope);
@@ -441,6 +426,23 @@ class Binder {
 		}
 	}
 
+	private attributes(attributes: Attribute[], scope: Scope) {
+		for (const a of attributes) {
+			if (a.type === 'event') {
+				this.visit(a.handler, scope);
+				const fn = this.functionOf(a.handler, scope);
+				if (fn) this.callbacks.push({ fn, receiver: null, reducer: false });
+			} else if (a.type === 'bind') {
+				this.visit(a.expression, scope);
+				const symbol = a.name === 'this' && a.expression.type === 'Identifier' ? scope.get(a.expression.name) : null;
+				if (symbol) {
+					symbol.element = true;
+					symbol.reassigned = true;
+				}
+			} else this.attributeValue(a.value, scope);
+		}
+	}
+
 	private attributeValue(value: AttributeValue, scope: Scope) {
 		if (value === true) return;
 		if ('expression' in value) this.visit(value.expression, scope);
@@ -452,6 +454,7 @@ class Binder {
 			if (part.type === 'expression') this.visit(part.expression, scope);
 			else if (part.type === 'span') {
 				this.visit(part.style, scope);
+				this.attributes(part.attributes, scope);
 				this.inline(part.content, scope);
 			}
 		}

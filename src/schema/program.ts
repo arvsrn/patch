@@ -69,7 +69,8 @@ export type InlinePart = string | Getter | SpanNode;
 /** Bare text between elements in a container. */
 export type TextNode = { t: 'text'; id: string; parts: InlinePart[] };
 
-export type SpanNode = { t: 'span'; id: string; style: Getter | null; kids: InlinePart[] };
+/** An element nested in text (`<span>`, `<a>`, `<strong>`, …). */
+export type SpanNode = { t: 'span'; tag: string; id: string; style: Getter | null; attrs: Record<string, Getter>; on: Record<string, Getter>; kids: InlinePart[] };
 
 type ElementBase = {
 	t: 'el';
@@ -88,7 +89,11 @@ type ElementBase = {
 export type FrameElement = ElementBase & { kind: 'frame'; kids: ProgramNode[] };
 export type TextElement = ElementBase & { kind: 'text'; kids: InlinePart[] };
 export type InputElement = ElementBase & { kind: 'input' | 'textarea'; kids: [] };
-export type ElementNode = FrameElement | TextElement | InputElement;
+/** <select> and <optgroup>: their options. */
+export type SelectElement = ElementBase & { kind: 'select' | 'optgroup'; kids: ProgramNode[] };
+/** <option>: its label. */
+export type OptionElement = ElementBase & { kind: 'option'; kids: InlinePart[] };
+export type ElementNode = FrameElement | TextElement | InputElement | SelectElement | OptionElement;
 
 /** `{#if}`: the first branch whose test is truthy, else `e`. */
 export type IfNode = { t: 'if'; id: string; b: [test: Getter, kids: ProgramNode[]][]; e: ProgramNode[] | null };

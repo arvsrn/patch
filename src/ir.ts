@@ -55,8 +55,11 @@ export type StateInfo = {
 
 export type TemplateNode = Element | Text | If | Each | Portal | ComponentUse | Snippet | Render;
 
-/** The tags PAT supports. */
-export type Tag = 'main' | 'div' | 'button' | 'a' | 'p' | 'span' | 'input' | 'textarea';
+/** The tags PAT supports (see `KINDS` in lower.ts). */
+export type Tag =
+	| 'main' | 'div' | 'button' | 'a' | 'nav' | 'header' | 'footer' | 'section' | 'article' | 'aside' | 'ul' | 'ol' | 'li' | 'label' | 'form'
+	| 'p' | 'span' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' | 'strong' | 'em' | 'b' | 'i' | 'code' | 'small' | 's' | 'mark'
+	| 'input' | 'textarea' | 'select' | 'option' | 'optgroup';
 
 type ElementBase = {
 	type: 'element';
@@ -68,12 +71,16 @@ type ElementBase = {
 	/** Attributes, event handlers and bindings, in source order. */
 	attributes: Attribute[];
 };
-/** <main>, <div>, <button>, <a>: containers. */
+/** <main>, <div>, <button>, <a>, <nav>, <ul>, <form>, …: containers. */
 export type Frame = ElementBase & { kind: 'frame'; children: TemplateNode[] };
-/** <p>, <span>: a block of text. */
+/** <p>, <span>, <h1>, <strong>, …: a block of text. */
 export type TextElement = ElementBase & { kind: 'text'; content: Inline[] };
 export type Input = ElementBase & { kind: 'input' | 'textarea' };
-export type Element = Frame | TextElement | Input;
+/** <select> and the <optgroup>s in it: hold options (directly, or through `{#if}`/`{#each}`). */
+export type Select = ElementBase & { kind: 'select' | 'optgroup'; children: TemplateNode[] };
+/** <option>: its label is its text. */
+export type Option = ElementBase & { kind: 'option'; content: Inline[] };
+export type Element = Frame | TextElement | Input | Select | Option;
 
 export type Attribute =
 	| { type: 'attribute'; name: string; span: Span; nameSpan: Span; value: AttributeValue }
@@ -87,13 +94,14 @@ export type AttributeValue = true | { expression: Estree } | { parts: (string | 
 export type Text = { type: 'text'; span: Span; content: Inline[] };
 
 /**
- * Text content with whitespace already collapsed: static text, `{expr}`, or a
- * nested <span> that may only carry typography.
+ * Text content with whitespace already collapsed: static text (a `<br>` is
+ * "\n"), `{expr}`, or an element nested in text (`<span>`, `<a>`, `<strong>`,
+ * …) whose style may only carry typography.
  */
 export type Inline =
 	| { type: 'static'; value: string }
 	| { type: 'expression'; expression: Estree }
-	| { type: 'span'; span: Span; nameSpan: Span; style: Estree | null; content: Inline[] };
+	| { type: 'span'; tag: Tag; span: Span; nameSpan: Span; style: Estree | null; attributes: Attribute[]; content: Inline[] };
 
 export type If = {
 	type: 'if';
@@ -143,7 +151,7 @@ export type Render = { type: 'render'; span: Span; callee: Estree; args: Estree[
 export function fragments(node: TemplateNode): TemplateNode[][] {
 	switch (node.type) {
 		case 'element':
-			return node.kind === 'frame' ? [node.children] : [];
+			return node.kind === 'frame' || node.kind === 'select' || node.kind === 'optgroup' ? [node.children] : [];
 		case 'if':
 			return [...node.branches.map((b) => b.body), ...(node.otherwise ? [node.otherwise] : [])];
 		case 'each':
@@ -160,7 +168,7 @@ export function* elements(nodes: TemplateNode[]): Generator<Element | Extract<In
 	for (const node of nodes) {
 		if (node.type === 'element') {
 			yield node;
-			if (node.kind === 'text') yield* spans(node.content);
+			if (node.kind === 'text' || node.kind === 'option') yield* spans(node.content);
 		} else if (node.type === 'text') yield* spans(node.content);
 		for (const fragment of fragments(node)) yield* elements(fragment);
 	}
@@ -177,6 +185,14 @@ function* spans(content: Inline[]): Generator<Extract<Inline, { type: 'span' }>>
 const valueExpressions = (value: AttributeValue): Estree[] =>
 	value === true ? [] : 'expression' in value ? [value.expression] : value.parts.filter((p) => typeof p !== 'string');
 
+function* attributeExpressions(attributes: Attribute[]): Generator<Estree> {
+	for (const a of attributes) {
+		if (a.type === 'event') yield a.handler;
+		else if (a.type === 'bind') yield a.expression;
+		else yield* valueExpressions(a.value);
+	}
+}
+
 /** Every JS expression in a template (tests, lists, keys, styles, attributes, props, text). */
 export function* expressions(nodes: TemplateNode[]): Generator<Estree> {
 	function* inline(content: Inline[]): Generator<Estree> {
@@ -184,6 +200,7 @@ export function* expressions(nodes: TemplateNode[]): Generator<Estree> {
 			if (part.type === 'expression') yield part.expression;
 			else if (part.type === 'span') {
 				if (part.style) yield part.style;
+				yield* attributeExpressions(part.attributes);
 				yield* inline(part.content);
 			}
 		}
@@ -192,12 +209,8 @@ export function* expressions(nodes: TemplateNode[]): Generator<Estree> {
 		if (node.type === 'text') yield* inline(node.content);
 		else if (node.type === 'element') {
 			if (node.style) yield node.style;
-			for (const a of node.attributes) {
-				if (a.type === 'event') yield a.handler;
-				else if (a.type === 'bind') yield a.expression;
-				else yield* valueExpressions(a.value);
-			}
-			if (node.kind === 'text') yield* inline(node.content);
+			yield* attributeExpressions(node.attributes);
+			if (node.kind === 'text' || node.kind === 'option') yield* inline(node.content);
 		} else if (node.type === 'if') yield* node.branches.map((b) => b.test);
 		else if (node.type === 'each') {
 			yield node.list;
