@@ -5,6 +5,7 @@
 // static description of the template whose dynamic parts are closures. Ids
 // are `line:column` of the construct in the .pat source.
 
+import type { Page, RouteInfo } from './route';
 import type { Style } from './style';
 
 /** A value read reactively. */
@@ -28,6 +29,10 @@ export type RuntimeApi = {
 	createContext: () => object;
 	setContext: (key: object, value: unknown) => void;
 	getContext: (key: object) => unknown;
+	/** The current location, read reactively. Only in an app with pages. */
+	page: Page;
+	/** Client-side navigation to a URL of this app. Only in an app with pages. */
+	goto: (url: string | URL) => void;
 };
 
 /** The runes, and the `$$rt` function each compiles to. */
@@ -41,11 +46,20 @@ export const RUNES = {
 } as const satisfies Record<string, keyof RuntimeApi>;
 export type Rune = keyof typeof RUNES;
 
-/** What `import { … } from 'patch'` provides in a .pat script: the `$$rt` function of the same name. */
-export const PATCH_EXPORTS = ['createContext', 'setContext', 'getContext'] as const satisfies readonly (keyof RuntimeApi)[];
+/** What `import { … } from 'patch'` provides in a .pat script: the `$$rt` member of the same name. */
+export const PATCH_EXPORTS = ['createContext', 'setContext', 'getContext', 'page', 'goto'] as const satisfies readonly (keyof RuntimeApi)[];
 export type PatchExport = (typeof PATCH_EXPORTS)[number];
 
 export type Program = (rt: RuntimeApi) => ProgramNode[];
+
+/** A page: the root program a route selects. */
+export type PageRoute = RouteInfo & { program: Program };
+
+/**
+ * An app made of pages: the route manifest generated from src/pages (see
+ * routes.ts). `notFound` renders when no route matches.
+ */
+export type Pages = { routes: PageRoute[]; notFound: Program };
 
 export type ProgramNode = TextNode | ElementNode | IfNode | EachNode | PortalNode | ComponentNode | RenderNode;
 

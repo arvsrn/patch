@@ -54,7 +54,7 @@ export type StateInfo = {
 export type TemplateNode = Element | Text | If | Each | Portal | ComponentUse | Snippet | Render;
 
 /** The tags PAT supports. */
-export type Tag = 'main' | 'div' | 'button' | 'p' | 'span' | 'input' | 'textarea';
+export type Tag = 'main' | 'div' | 'button' | 'a' | 'p' | 'span' | 'input' | 'textarea';
 
 type ElementBase = {
 	type: 'element';
@@ -66,7 +66,7 @@ type ElementBase = {
 	/** Attributes, event handlers and bindings, in source order. */
 	attributes: Attribute[];
 };
-/** <main>, <div>, <button>: containers. */
+/** <main>, <div>, <button>, <a>: containers. */
 export type Frame = ElementBase & { kind: 'frame'; children: TemplateNode[] };
 /** <p>, <span>: a block of text. */
 export type TextElement = ElementBase & { kind: 'text'; content: Inline[] };

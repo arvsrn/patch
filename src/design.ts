@@ -13,6 +13,10 @@
 // written at 12:3, in the item of the `{#each}` around it keyed "a". The
 // declaring component is found from the last `Tag@line:column` of the path,
 // so its type can be checked without running the app.
+//
+// In an app with pages, the root is the page the URL selects (see
+// `pageAt` in routes.ts), evaluated at that location: its `page` reads it,
+// and its state is named like the state of a single-file app.
 
 import { readFileSync } from 'node:fs';
 import { compile, type Compiled } from './compile';
@@ -21,6 +25,7 @@ import { realize } from './runtime/realize';
 import type { Concrete } from './schema/concrete';
 import { outsideKeys, parseStateId, sitePattern, stateId } from './schema/path';
 import type { Program } from './schema/program';
+import type { Location } from './schema/route';
 import { checkValues } from './typecheck';
 
 export type StateOverrides = Record<string, unknown>;
@@ -103,8 +108,8 @@ export function parseStateOverrides(compiled: Compiled, pairs: string[]): StateO
 	return Object.fromEntries(parsed.map((p) => [p.id, out[p.id]]));
 }
 
-/** Evaluates the app once at its initial state with `overrides` applied. */
-export async function evaluate(compiled: Compiled, overrides: StateOverrides = {}): Promise<Concrete[]> {
+/** Evaluates the app (or a page at `location`) once at its initial state with `overrides` applied. */
+export async function evaluate(compiled: Compiled, overrides: StateOverrides = {}, location?: Location): Promise<Concrete[]> {
 	const ids = Object.keys(overrides);
 	if (ids.length) {
 		const files = appFiles(compiled);
@@ -113,7 +118,7 @@ export async function evaluate(compiled: Compiled, overrides: StateOverrides = {
 	const program: Program = compiled.imports.length
 		? await importProgram(compiled)
 		: new Function(`return (${compiled.module.replace(/^export default /m, '')})`)();
-	return realize(program, overrides);
+	return realize(program, overrides, location);
 }
 
 // Compiled modules served to Bun's loader by path: the entry as compiled,

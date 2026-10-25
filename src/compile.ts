@@ -62,6 +62,7 @@ const ELEMENT_TYPES: Record<Tag, string> = {
 	main: 'HTMLElement',
 	div: 'HTMLDivElement',
 	button: 'HTMLButtonElement',
+	a: 'HTMLAnchorElement',
 	p: 'HTMLParagraphElement',
 	span: 'HTMLSpanElement',
 	input: 'HTMLInputElement',

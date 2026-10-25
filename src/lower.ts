@@ -18,6 +18,7 @@ const KINDS: Record<Tag, Element['kind']> = {
 	main: 'frame',
 	div: 'frame',
 	button: 'frame',
+	a: 'frame',
 	p: 'text',
 	span: 'text',
 	input: 'input',
@@ -28,6 +29,7 @@ const UNIVERSAL_ATTRIBUTES = ['portal'];
 /** Attributes (other than style= and on*=) each tag accepts. */
 const ATTRIBUTES: Partial<Record<Tag, string[]>> = {
 	button: ['disabled'],
+	a: ['href', 'target', 'rel', 'download'],
 	input: ['value', 'placeholder', 'disabled', 'type'],
 	textarea: ['value', 'placeholder', 'disabled']
 };
@@ -109,7 +111,7 @@ function lowerScript(instance: Svelte, reporter: Reporter): Script {
 					const name = sp.type === 'ImportSpecifier' ? (sp.imported.name ?? sp.imported.value) : null;
 					const imported = PATCH_EXPORTS.find((e) => e === name);
 					if (imported) script.patchImports.push({ local: sp.local.name, imported });
-					else reporter.report(sp, `"patch" provides ${PATCH_EXPORTS.join(', ')} (and the type Context)`);
+					else reporter.report(sp, `"patch" provides ${PATCH_EXPORTS.join(', ')} (and the types Context and Page)`);
 				}
 			}
 			// Vite only converts CommonJS for npm dependencies, not local files.
@@ -292,7 +294,7 @@ class TemplateLowering {
 		const tag = node.name;
 		if (tag === 'portal') return this.portal(node);
 		if (!isTag(tag)) {
-			this.reporter.report(nameSpan(node), `<${tag}> is not supported (use main, div, button, p, span, input, textarea)`);
+			this.reporter.report(nameSpan(node), `<${tag}> is not supported (use main, div, button, a, p, span, input, textarea)`);
 			return this.children(node.fragment.nodes);
 		}
 		const kind = KINDS[tag];

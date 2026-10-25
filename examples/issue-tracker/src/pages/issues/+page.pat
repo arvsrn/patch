@@ -1,7 +1,6 @@
 <script lang="ts">
+	import { page } from 'patch';
 	import {
-		initialIssues,
-		initialLabels,
 		labelColors,
 		members,
 		priorities,
@@ -10,7 +9,8 @@
 		type Label,
 		type Priority,
 		type Status
-	} from './data.ts';
+	} from '../../data.ts';
+	import { issueKey as key, workspace } from '../../workspace.ts';
 
 	type MenuKind = 'status' | 'priority' | 'assignee' | 'labels';
 	type Menu = { kind: MenuKind; issueId: number; key: string; trigger?: HTMLElement };
@@ -26,11 +26,12 @@
 		create?: boolean;
 	};
 
-	let issues: Issue[] = $state(initialIssues);
-	let labels: Label[] = $state(initialLabels);
-	let nextId = $state(232);
+	let issues: Issue[] = $state(workspace.issues);
+	let labels: Label[] = $state(workspace.labels);
+	let nextId = $state(workspace.nextId);
 
-	let query = $state('');
+	// /issues?q=… opens the board searching for it.
+	let query = $state(page.url.searchParams.get('q') ?? '');
 	let labelFilter: string | null = $state(null);
 	let selectedId: number | null = $state(null);
 	let hoveredId: number | null = $state(null);
@@ -52,7 +53,6 @@
 
 	const memberById = Object.fromEntries(members.map((m) => [m.id, m]));
 	const statusById = Object.fromEntries(statuses.map((s) => [s.id, s]));
-	const key = (id: number) => `ENG-${id}`;
 	const placeholders: Record<MenuKind, string> = {
 		status: 'Change status…',
 		priority: 'Set priority…',
@@ -230,6 +230,13 @@
 		};
 		window.addEventListener('pointerdown', onPointerDown);
 		return () => window.removeEventListener('pointerdown', onPointerDown);
+	});
+
+	// Kept for the other pages, and for this one when it is shown again.
+	$effect(() => {
+		workspace.issues = issues;
+		workspace.labels = labels;
+		workspace.nextId = nextId;
 	});
 
 	$effect(() => composerInput?.focus());
@@ -469,7 +476,7 @@
 	<div style={[row, { width: 'fill', gap: 12, padding: [12, 24] }]}>
 		<div style={[row, { gap: 8 }]}>
 			<div style={[avatar(accent, 22), { borderRadius: 6, fontSize: 12, fontWeight: 700 }]}>N</div>
-			<p style={{ fontWeight: 600 }}>Northwind</p>
+			<a href="/" style={{ fontWeight: 600 }}>Northwind</a>
 			<p style={{ color: '#c9cad0' }}>/</p>
 			<p style={{ color: muted }}>Engineering</p>
 			<p style={{ color: '#c9cad0' }}>/</p>
@@ -587,7 +594,7 @@
 											{/if}
 										</div>
 									</button>
-									<p style={{ color: faint, fontSize: 12, fontWeight: 500 }}>{key(issue.id)}</p>
+									<a href="/issues/{issue.id}" style={{ color: faint, fontSize: 12, fontWeight: 500 }}>{key(issue.id)}</a>
 									<div style={spacer}></div>
 									<button
 										style={{ borderRadius: 11 }}
@@ -663,6 +670,7 @@
 				<div style={[row, { width: 'fill', gap: 8 }]}>
 					<p style={{ color: muted, fontWeight: 500 }}>{key(selected.id)}</p>
 					<div style={spacer}></div>
+					<a href="/issues/{selected.id}" style={[button, { padding: [4, 8], fontSize: 12, color: accent }]}>Open</a>
 					<button style={[button, { padding: [4, 8], fontSize: 12, color: '#d14343' }]} onclick={() => deleteIssue(selected!.id)}>
 						Delete
 					</button>

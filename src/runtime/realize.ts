@@ -21,8 +21,10 @@ import type { ElementNode, Getter, InlinePart, Program, ProgramNode } from '../s
 import { inheritFont, ROOT_FONT } from '../schema/style';
 import { createApi, type Instance } from './api';
 import { eachPlace, instancePlace, nodeId, renderPlace, ROOT_PLACE, type Place } from '../schema/path';
+import type { Location } from '../schema/route';
 import { componentOf, eachList, elementStyle, portalName, renderable, toText, withId } from './evaluate';
 import { createReactive } from './reactive';
+import { pageOf } from './router';
 
 function inlineRuns(parts: InlinePart[], font: Font, runs: Run[], scope: string): Run[] {
 	for (const part of parts) {
@@ -175,9 +177,19 @@ function resolveAnchors(tree: Concrete[]) {
 	for (const n of anchored) if (!ids.has(n.anchor!)) n.anchor = null;
 }
 
-/** Runs the program without effects and evaluates its template (twice, for `bind:this`; see above). */
-export function realize(program: Program, overrides: Record<string, unknown> = {}): Concrete[] {
-	const { root, instance } = createApi(createReactive(), { overrides, design: true });
+const designGoto = (url: string | URL) => {
+	throw new Error(`goto(${JSON.stringify(String(url))}) cannot navigate at design time; evaluate the page at that URL instead`);
+};
+
+/**
+ * Runs the program without effects and evaluates its template (twice, for
+ * `bind:this`; see above). A page is evaluated at `location`, which its
+ * `page` reads.
+ */
+export function realize(program: Program, overrides: Record<string, unknown> = {}, location?: Location): Concrete[] {
+	const routing = location && { page: pageOf(() => location), goto: designGoto };
+	const { root: makeRoot, instance } = createApi(createReactive(), { overrides, design: true }, routing);
+	const root = makeRoot();
 	const nodes = program(root.api);
 	const handles = new Map<string, DesignNode>();
 	const instances: Instances = new Map();

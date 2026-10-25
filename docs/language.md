@@ -1,6 +1,6 @@
 # The Patch language
 
-This is the reference for Patch as currently implemented. A `.pat` file is a component: an optional `<script>` and a template. An app is the `.pat` file you run, plus the components it imports (see [Components](#components)). The template is built from a small set of elements and components, and styled only through `style={...}`.
+This is the reference for Patch as currently implemented. A `.pat` file is a component: an optional `<script>` and a template. An app is the `.pat` file you run, plus the components it imports (see [Components](#components)), or a directory of [pages](#pages-and-routing), one `.pat` file per URL. The template is built from a small set of elements and components, and styled only through `style={...}`.
 
 ```svelte
 <script lang="ts">
@@ -70,7 +70,7 @@ import { load, type Task } from './api.ts'; // local ES module (.ts, .js, .mjs)
 - Imports must be static ES imports. They are resolved relative to the `.pat` file.
 - Type-only imports are removed from the output.
 - A `.pat` file is imported as one component, with a default import: `import Card from './Card.pat'`. A missing file is a compile error. See [Components](#components).
-- `'patch'` provides the [context](#context) functions: `import { createContext, setContext, getContext } from 'patch'`, and the type `Context`. It can be imported from `.pat` files and from `.ts`/`.js` modules.
+- `'patch'` provides the [context](#context) functions (`createContext`, `setContext`, `getContext`), the [routing](#page-state) values `page` and `goto`, and the types `Context` and `Page`. It can be imported from `.pat` files and from `.ts`/`.js` modules, but only `createContext` works outside a `.pat` script; the others throw there.
 - You cannot import local CommonJS files (`.cjs`, `.cts`). CommonJS npm packages work.
 - You cannot import stylesheets (`.css`, `.scss`, `.sass`, `.less`, `.styl`, `.pcss`, …).
 
@@ -202,14 +202,14 @@ async function later() { await x; n++; n++; }          // effects re-run twice
 
 | Tag | Kind | Children |
 | --- | --- | --- |
-| `<main>`, `<div>`, `<button>` | container | elements, text, blocks |
+| `<main>`, `<div>`, `<button>`, `<a>` | container | elements, text, blocks |
 | `<p>`, `<span>` | text | text, `{expressions}`, nested `<span>` |
 | `<input>`, `<textarea>` | input | none |
 | `<portal>` | [portal](#portals) | none |
 
-A tag starting with an uppercase letter is a [component](#components). Any other tag (`<img>`, `<section>`, `<h1>`, `<a>`, …) is an error.
+A tag starting with an uppercase letter is a [component](#components). Any other tag (`<img>`, `<section>`, `<h1>`, …) is an error.
 
-- **Containers** are flex boxes, laid out in a column by default. `<main>`, `<div>`, and `<button>` lay out identically. `<button>` additionally shows a pointer cursor and accepts `disabled`.
+- **Containers** are flex boxes, laid out in a column by default. `<main>`, `<div>`, `<button>`, and `<a>` lay out identically. `<button>` additionally shows a pointer cursor and accepts `disabled`. `<a>` is a link: it shows a pointer cursor, is not underlined or colored by default, and accepts `href`, `target`, `rel` and `download` (see [Links](#links)).
 - **Text elements** contain only inline content. A `<span>` nested inside text is an *inline span*: it accepts only `style=`, and that style may contain typography only. You cannot put blocks (`{#if}`, `{#each}`) or other elements inside text. Use a ternary or move the block into a `<div>`.
 - **Inputs** cannot have children. Set their content with `value={...}`.
 
@@ -238,6 +238,7 @@ Elements accept only these attributes, plus `style=` and event handlers (`on…`
 | Element | Attributes |
 | --- | --- |
 | `<button>` | `disabled` |
+| `<a>` | `href`, `target`, `rel`, `download` |
 | `<input>` | `value`, `placeholder`, `disabled`, `type` |
 | `<textarea>` | `value`, `placeholder`, `disabled` |
 | every element except inline spans | [`portal`](#portals) |
@@ -252,6 +253,7 @@ You can write an attribute value in these forms:
 ```
 
 - `disabled` is applied as `!!value`, so `disabled="false"` disables the element.
+- On other attributes, `true` sets the attribute with an empty value, and `false`, `null` and `undefined` remove it: `download={false}` is no `download`.
 - `type` must be a static string: `text`, `password`, `email`, `search`, `url`, or `tel`. The default is `text`.
 - `value` sets the field's current value. It is one-way: typing changes the field but not your state. The field is reset only when the expression's value changes.
 - Not allowed: `class`, `id` (except on `<portal>`), `title`, `aria-*`, any other attribute, spread attributes (`{...props}`), `class:`, `style:`, `on:event`, `use:`, `transition:`, `animate:`, and `{@attach}`.
@@ -538,6 +540,124 @@ export const ThemeContext = createContext<Theme>();
 - Context follows component ancestry, not element nesting: content passed as `children` and rendered by `Card` sees the contexts `Card` and its ancestors set.
 - Context is not reactive by itself. The value is passed as it is, once. To share state that changes, pass something that reads it, such as a getter (`get mode() { return mode; }`) or functions. Reading it then updates like any other read of that state.
 - `setContext` and `getContext` only work in a `.pat` script; called from a `.ts` module they throw.
+
+## Pages and routing
+
+An app with more than one URL is a directory with a `src/pages` directory. Every `+page.pat` below it is a **page**: the root component rendered at the URLs its location in `src/pages` describes.
+
+```text
+my-app/
+  src/
+    pages/
+      +page.pat              → /
+      issues/
+        +page.pat            → /issues
+        Row.pat              → (a component the pages import, not a route)
+        new/
+          +page.pat          → /issues/new
+        [id]/
+          +page.pat          → /issues/:id
+      settings/
+        +page.pat            → /settings
+      +404.pat               → rendered when no route matches (optional)
+```
+
+```sh
+patch dev my-app
+patch build my-app
+patch routes my-app
+```
+
+A page is an ordinary component: its script, state, components, snippets, context and effects work as in any `.pat` file. It takes no props. While its route is shown it is the root of the app, as the file of a single-file app is: its state ids are plain names and its top-level nodes fill the viewport.
+
+### Routes
+
+- **Static segments.** A directory name is a literal path segment, compared with the URL's decoded segment, case-sensitively. It cannot contain `[ ] ( ) + : * ? #` or `%`.
+- **Params.** A directory named `[name]` matches any one non-empty segment, and the page reads it as `page.params.name`. `name` is letters, digits and `_`, starting with a letter or `_`. A route cannot use the same param name twice.
+- **Route id.** A route's id is its directories from `src/pages`, written as they are: `/`, `/issues`, `/issues/[id]`. Its **pattern** is the same with `:name` params: `/issues/:id`. Route ids name application routes; they are unrelated to the node and state paths of [snapshots](#state-of-component-instances).
+- **Other files.** Files under `src/pages` other than `+page.pat` are not routes: components and modules can live next to the pages that use them. A directory only has to be a valid segment when a page is below it. Hidden entries (`.name`) are ignored.
+- **Errors.** Discovery fails, before anything runs, on: two routes that match exactly the same URLs (`issues/[id]` and `issues/[slug]`), a catch-all (`[...rest]`) or optional (`[[id]]`) segment, any other `[` in a name, a repeated param name, `+404.pat` anywhere but directly in `src/pages`, any other `+` file (`+layout.pat`, `+page.ts`, …), and no page at all. The error lists every problem with its file.
+
+### Matching
+
+A URL is matched on its path only; the query and the hash stay on [`page.url`](#page-state).
+
+1. The path is split at `/`. One trailing slash is ignored (`/issues/` is `/issues`). Each segment is percent-decoded (`/issues/a%20b` gives `id` = `"a b"`, and `%2F` gives a `/` inside a param). A path with an empty segment (`/a//b`) or malformed encoding (`%E0%A4%A`) matches nothing.
+2. A route matches when it has as many segments as the path, and each static segment equals the path's segment.
+3. Of several matching routes, the one with a static segment where the others first have a param wins: `/issues/new` beats `/issues/[id]`, and `/a/[x]` beats `/[y]/b` for `/a/b`. Two different routes can never tie, because routes matching the same URLs are an error.
+4. No match renders the **not-found page**: `src/pages/+404.pat` when it exists, else Patch's built-in one ("404 · No page at …" with a link to `/`). It never falls back to another route. On it, `page.route.id` is `null` and `page.params` is empty.
+
+`patch routes <app>` prints the manifest as JSON, in precedence order, without running any page:
+
+```json
+{
+	"routes": [
+		{ "id": "/", "pattern": "/", "params": [], "file": "src/pages/+page.pat" },
+		{ "id": "/issues", "pattern": "/issues", "params": [], "file": "src/pages/issues/+page.pat" },
+		{ "id": "/issues/[id]", "pattern": "/issues/:id", "params": ["id"], "file": "src/pages/issues/[id]/+page.pat" }
+	],
+	"notFound": null
+}
+```
+
+`notFound` is the `+404.pat` file, or `null` for the built-in page. The same discovery is available to tooling as `discoverRoutes(pagesDir)` from `src/routes.ts`, and the built app contains the same list.
+
+### Page state
+
+```svelte
+<script lang="ts">
+	import { page, goto } from 'patch';
+	let id = $derived(Number(page.params.id));
+	let tab = $derived(page.url.searchParams.get('tab') ?? 'details');
+</script>
+<p>{page.route.id}: issue {id}, {tab}</p>
+```
+
+`page` is the current location, read-only and reactive like `$state`: a template, `$derived` or `$effect` reading it updates when the location changes.
+
+| | Type | |
+| --- | --- | --- |
+| `page.url` | `URL` | The full current URL, query and hash included. Read the query with `page.url.searchParams`. Do not modify it; navigate instead. |
+| `page.params` | `Readonly<Record<string, string>>` | The decoded `[param]` segments of the current route. Query parameters are never here. |
+| `page.route.id` | `string \| null` | The route id, `/issues/[id]`; `null` on the not-found page. |
+
+`page` and `goto` can be used by any component of an app with pages, not only by the page itself. In a single-file app, reading `page` or calling `goto` throws.
+
+### Links
+
+`<a href="…">` is a link. A click on it navigates **in the app**, without reloading the document, when all of these hold:
+
+- it is a plain left click: button 0, no Ctrl, Meta (⌘), Shift or Alt, and no handler called `event.preventDefault()`;
+- the link has no `target`, or `target="_self"`, no `download`, and no `rel` containing `external`;
+- `href`, resolved against the current URL, has the app's origin, and its path matches one of the app's routes;
+- it is not a link to a fragment of the current page (same path and query, with a `#hash`).
+
+Anything else is left to the browser: other origins and schemes (`mailto:`, …), new tabs and windows, downloads, in-page fragments, and same-origin URLs that are not routes (a server endpoint, a file), which load as a normal page.
+
+### `goto`
+
+`goto(url)` navigates in the app the way a link click does: `url` (a string or `URL`) is resolved against the current URL, recorded in history, and the page it selects is shown. Unlike a link, it also shows the not-found page for a path that matches no route. It throws for another origin. Navigating to exactly the current URL does nothing.
+
+```svelte
+<button onclick={() => { remove(id); goto('/issues'); }}>Delete</button>
+```
+
+### Navigation and history
+
+A navigation, by link or `goto`:
+
+1. records the new URL with `history.pushState`,
+2. matches it against the routes,
+3. updates `page`,
+4. shows the page for the route.
+
+When the route changes, the previous page is **destroyed** as a branch of an `{#if}` is: its effects' cleanups run, its state is dropped, its DOM and event handlers are removed. The new page is created fresh. When only the params, query or hash change (`/issues/1` → `/issues/2?tab=activity`), the page stays, keeps its state, and everything reading `page` updates. To start fresh per param, reset the state in an `$effect` reading `page.params`. State that should outlive a page belongs in a `.ts` module.
+
+Back and forward (`popstate`) update `page` and show the matching page without adding a history entry. Loading or reloading the document at any URL shows the page for that URL. `patch dev` serves the app at every path; a built app must be served the same way (every path answered with the built HTML file), since a server that only answers `/` cannot load `/issues/1` directly. Opening a built app from disk (`file://`) shows the not-found page, because its path is the file's.
+
+### Not supported yet
+
+Layouts and nested layouts, loaders and server actions, route guards, redirects, middleware, catch-all and optional segments, route groups, per-route code splitting (every page is in the one bundle), server-side rendering, scroll restoration (the scroll position is not changed by a navigation), and navigation transitions. There is no `replaceState` navigation and no typed params per route.
 
 ## Styles
 
@@ -900,9 +1020,18 @@ patch dev app.pat                       # browser, live reload; effects run
 patch build app.pat [out.html]          # standalone HTML; effects run
 patch snapshot html app.pat [out.html] [--state name=value]...
 patch snapshot figma app.pat [--state name=value]...
+patch snapshot figma my-app --url '/issues/231?tab=activity' [--state name=value]...
 ```
 
 A snapshot renders the app from its **initial state**, with optional overrides, **without running `$effect`s**.
+
+### Snapshots of pages
+
+In an app with pages, a snapshot renders the page at `--url` (a path, optionally with a query and hash; default `/`). The URL is matched as in the browser, and the page reads it from `page`: `page.url` is that URL (on the origin `http://localhost` when only a path is given), `page.params` its params, `page.route.id` its route. A URL matching no route renders the not-found page. Nothing reads `window.location`, so the same URL and state always give the same snapshot.
+
+- `--state` names the state of that page as it would a single-file app's: `filter=done` is the page's `filter`, `Row@12:3/open=true` an instance in it.
+- An HTML snapshot keeps its location to itself: it starts at `--url` wherever the file is opened, links and `goto` navigate within it, and it does not touch the browser's history (back and forward leave the file). Overrides only apply to the page it starts on; a page navigated to starts from its own initial state.
+- `goto` cannot be called while a snapshot is evaluated (it throws), since nothing runs after the first render; calling it from a handler or effect is fine.
 
 ### State overrides
 
@@ -973,6 +1102,7 @@ Without a warning, a snapshot also keeps a character whose uppercase or lowercas
 | `bind:` other than `bind:value` on inputs and `bind:this`; `bind:` on components, `$bindable` | `value=` plus a handler; a prop plus a [callback prop](#props) |
 | slots, named slots, `<svelte:fragment>` | [`children`](#children) and snippet props |
 | component events, lifecycle functions (`onMount`, …), component refs and methods | callback props, `$effect` |
+| `+layout`, `+page.ts`/loaders, catch-all and optional route segments, redirects | see [Not supported yet](#not-supported-yet) |
 | `on:click` / `onClick` | `onclick` |
 | transitions, animations, actions (`use:`) | none |
 | spread attributes, arbitrary HTML attributes | none |

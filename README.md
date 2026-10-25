@@ -79,6 +79,14 @@ patch snapshot html app.pat \
   --state filter=done
 ```
 
+An app with several pages is a directory whose `src/pages/**/+page.pat` files are its routes (`src/pages/issues/[id]/+page.pat` is `/issues/:id`). Snapshots pick the page with `--url`, and `patch routes` lists every route without running the app:
+
+```sh
+patch dev examples/issue-tracker
+patch snapshot html examples/issue-tracker --url /issues/231
+patch routes examples/issue-tracker
+```
+
 Agents can use HTML snapshots to visually verify the code they write: snapshot the screen in the state they just changed, open the file in a browser, and look at it.
 
 Since state can be set from outside, an agent can jump straight to the screen it wants to look at instead of clicking through the app, mocking network requests, or seeding a database to get there. The same mechanism is what fixtures are built on.
@@ -92,7 +100,8 @@ Patch currently supports apps made of `.pat` components with:
 - `$state`, `$derived`, and `$effect`
 - Components: `import Card from './Card.pat'`, read-only reactive props from `$props()`, callback props instead of two-way binding, `children` and snippets (`{#snippet}`, `{@render}`), and context (`createContext`, `setContext`, `getContext` from `'patch'`)
 - `{#if}`, `{:else if}`, `{:else}`, and `{#each}`, keyed (`{#each list as item (item.id)}`) or by position
-- `<main>`, `<div>`, `<button>`, `<p>`, `<span>`, `<input>`, and `<textarea>`
+- `<main>`, `<div>`, `<button>`, `<a>`, `<p>`, `<span>`, `<input>`, and `<textarea>`
+- Pages and routing: `src/pages` routes with `[param]` segments, `page` (`url`, `params`, `route.id`) and `goto` from `'patch'`, client-side links, browser history, and a not-found page
 - Portals: `<portal id="overlay" />` and `portal="overlay"` render an element elsewhere without changing where it belongs
 - `onclick={...}`-style event handlers, `bind:value` on inputs, and `bind:this` for the underlying DOM element
 - Flex layout with fixed, `hug`, and `fill` sizing, and scroll containers (`overflow`, `overflowX`, `overflowY`)

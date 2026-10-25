@@ -45,6 +45,18 @@ declare module 'patch' {
 	export function setContext<T>(context: Context<T>, value: T): void;
 	/** The value of the nearest ancestor (or this instance) that set this context. Throws when none did. */
 	export function getContext<T>(context: Context<T>): T;
+	/** The current location of an app with pages. Read-only and reactive. */
+	export interface Page {
+		/** The current URL, query and hash included. */
+		readonly url: URL;
+		/** The decoded [param] segments of the current route. */
+		readonly params: Readonly<Record<string, string>>;
+		/** The route: its id, as the directories under src/pages (/issues/[id]), or null on the not-found page. */
+		readonly route: { readonly id: string | null };
+	}
+	export const page: Page;
+	/** Navigates to a URL of this app without reloading, adding a history entry. */
+	export function goto(url: string | URL): void;
 }
 `;
 

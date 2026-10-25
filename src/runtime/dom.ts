@@ -3,14 +3,16 @@
 // each element's own style becomes inline CSS.
 
 import { anchored } from '../schema/anchor';
-import type { ComponentNode, ElementNode, InlinePart, Program, ProgramNode, RenderNode, SpanNode } from '../schema/program';
+import type { ComponentNode, ElementNode, InlinePart, PageRoute, Pages, Program, ProgramNode, RenderNode, SpanNode } from '../schema/program';
 import { effectiveSizing, LINE_HEIGHT, ROOT_FONT, SHORTHANDS, sizingOf, type ElementKind, type Sizing, type Style } from '../schema/style';
 import { createApi, type ApiOptions, type Instance } from './api';
 import { createAnchoring, type AnchorSpec } from './anchoring';
 import { eachPlace, instancePlace, renderPlace, ROOT_PLACE, type Place } from '../schema/path';
 import { componentOf, eachList, elementStyle, portalName, renderable, toText, withId } from './evaluate';
+import { appLink, browserHistory, type NavigationWindow } from './navigation';
 import { createPortals } from './portals';
 import { createReactive, type Cell, type Owner } from './reactive';
+import { createRouter, MEMORY_HISTORY } from './router';
 
 const BASE_CSS = `
 html,body{margin:0;padding:0}
@@ -31,6 +33,7 @@ html,body{margin:0;padding:0}
 [data-dir=row]>[data-w=fill],[data-dir=column]>[data-h=fill]{flex:1 1 0}
 [data-dir=row]>[data-h=fill],[data-dir=column]>[data-w=fill]{align-self:stretch!important}
 button[data-p]{cursor:pointer}
+a[data-p]{text-decoration:none}
 [data-host]{width:100vw;height:100vh;overflow:auto;background:#fff}
 `;
 const FLEX_VALUE: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', 'space-between': 'space-between', baseline: 'baseline' };
@@ -177,17 +180,31 @@ const moveRange = (start: Node, end: Node, before: Node) => {
 	}
 };
 
+export type MountOptions = ApiOptions & {
+	/**
+	 * An app with pages starts at this URL (a path, or a full URL) and keeps
+	 * its location to itself. Without it, the location is the browser's:
+	 * it starts at `window.location`, navigations push history entries, and
+	 * back and forward move between them.
+	 */
+	url?: string;
+};
+
 /**
- * Mounts `program` into `target`. Returns a function that disposes it.
- * `options` start it from overridden state (snapshots); with `design`, its
- * `$effect`s start at the first interaction, so the initial view is exactly
- * that state and the app behaves as usual from then on.
+ * Mounts `app`, one program or an app with pages, into `target`. Returns a
+ * function that disposes it. `options` start it from overridden state
+ * (snapshots); with `design`, its `$effect`s start at the first interaction,
+ * so the initial view is exactly that state and the app behaves as usual
+ * from then on.
  */
-export function mount(program: Program, target: HTMLElement, options: ApiOptions = {}): () => void {
+export function mount(app: Program | Pages, target: HTMLElement, options: MountOptions = {}): () => void {
 	const r = createReactive();
 	const { effect, newOwner, dispose, within, untrack, onCleanup, batch, cell, derived } = r;
 	const root = newOwner();
-	const { root: app, instance, startEffects } = createApi(r, options);
+	const pages = typeof app === 'function' ? null : app;
+	const win = pages && options.url === undefined ? (window as NavigationWindow) : null;
+	const router = pages && createRouter(r, pages.routes, options.url ?? win!.location.href, win ? browserHistory(win) : MEMORY_HISTORY);
+	const { root: makeRoot, instance, startEffects } = createApi(r, options, router ?? undefined);
 	const portals = createPortals();
 	const anchoring = createAnchoring(target);
 	const interact = () => batch(startEffects);
@@ -240,7 +257,8 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 			const next = toText(value);
 			if (el.value !== next) el.value = next;
 		} else if (name === 'disabled') el.disabled = !!value;
-		else el.setAttribute(name, toText(value));
+		else if (value === false || value === null || value === undefined) el.removeAttribute(name);
+		else el.setAttribute(name, value === true ? '' : toText(value));
 	};
 
 	const element = (d: ElementNode | SpanNode, tag: string, kind: ElementKind) => {
@@ -492,7 +510,48 @@ export function mount(program: Program, target: HTMLElement, options: ApiOptions
 	target.setAttribute('data-p', 'frame');
 	target.setAttribute('data-dir', 'column');
 	target.setAttribute('data-host', '');
-	batch(() => within(root, null, () => mountNodes(program(app.api), target, null, { instance: app, place: ROOT_PLACE })));
+	const mountRoot = (program: Program, before: Node | null, overrides?: Record<string, unknown>) => {
+		const instance = makeRoot(overrides);
+		mountNodes(program(instance.api), target, before, { instance, place: ROOT_PLACE });
+	};
+	if (!pages || !router) batch(() => within(root, null, () => mountRoot(app as Program, null)));
+	else {
+		// The page is the root program its route selects. Another route
+		// destroys it and mounts the new page, fresh: overrides only apply to
+		// the page the app starts on. The same route with other params or
+		// query keeps the page, which reads the new location from `page`.
+		let first = true;
+		const NOT_FOUND = {};
+		batch(() =>
+			within(root, null, () =>
+				mountRegion('page', target, null, () => router.location().route ?? NOT_FOUND, (route, end) => {
+					mountRoot(route === NOT_FOUND ? pages.notFound : (route as PageRoute).program, end, first ? undefined : {});
+					first = false;
+				})
+			)
+		);
+		const onClick = (event: MouseEvent) => {
+			const anchor = (event.target as Element | null)?.closest?.('a');
+			if (!anchor || !target.contains(anchor)) return;
+			const url = appLink(event, anchor, router.peek().url, router.owns);
+			if (!url) return;
+			event.preventDefault();
+			interact();
+			router.goto(url);
+		};
+		const onPopState = () => {
+			interact();
+			router.show(win!.location.href);
+		};
+		target.addEventListener('click', onClick);
+		win?.addEventListener('popstate', onPopState);
+		within(root, null, () =>
+			onCleanup(() => {
+				target.removeEventListener('click', onClick);
+				win?.removeEventListener('popstate', onPopState);
+			})
+		);
+	}
 	// Content sizes measured before a web font loads are re-measured with it.
 	document.fonts?.addEventListener('loadingdone', resizeLater);
 	return () => {

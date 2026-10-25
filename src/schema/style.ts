@@ -181,7 +181,7 @@ const KINDS: Record<ElementKind, Longhand[]> = {
 const ALLOWED: Record<StyleKind, string[]> = { ...KINDS, any: [...new Set(Object.values(KINDS).flat())] };
 const KIND_LABEL: Record<StyleKind, string> = {
 	any: 'any element',
-	frame: 'containers (<main>, <div>, <button>)',
+	frame: 'containers (<main>, <div>, <button>, <a>)',
 	input: '<input>',
 	textarea: '<textarea>',
 	text: 'text elements (<p>, <span>); wrap the text in a <div> for boxes, padding and backgrounds',
