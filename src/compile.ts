@@ -12,7 +12,7 @@
 // (runtime/module-state.ts), named by the module's file relative to the app
 // root (schema/path.ts).
 
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { forEachNode, rootOf, unwrap, type Estree } from './ast';
 import { bind, isSignal, type Bindings } from './bind';
@@ -241,7 +241,9 @@ export function compileModule(source: string, filename: string, root = dirname(r
 	if (!lowered || diagnostics.some((d) => d.severity === 'error')) throw new CompileError(diagnostics, source, filename);
 
 	const edits = new Edits(wrapped);
-	const file = relative(resolve(root), path).split(sep).join('/');
+	// Real paths: a module may be loaded through a symlink (`/var` → `/private/var`).
+	const real = (p: string) => (existsSync(p) ? realpathSync(p) : p);
+	const file = relative(real(resolve(root)), real(path)).split(sep).join('/');
 	const states = lowered.states.map(({ id, call, initial, keys }) => {
 		const stateId = moduleStateId(file, id.name);
 		edits.replace(call.callee.start, call.callee.end, '$$moduleState');
