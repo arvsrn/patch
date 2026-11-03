@@ -4,8 +4,7 @@ import { forEachNode } from '../ast';
 import type { Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
 import type { DomNames } from '../typecheck';
-import { staticValue } from './names';
-import { elements, expressions, fragments, type Component, type TemplateNode } from '../ir';
+import { elements, expressions, fragments, staticValue, type Component, type TemplateNode } from '../ir';
 import { RESERVED_DATA } from '../runtime/dom';
 
 const INPUT_TYPES = ['text', 'password', 'email', 'search', 'url', 'tel'];

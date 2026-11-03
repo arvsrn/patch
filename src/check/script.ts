@@ -6,12 +6,12 @@ import { children, forEachNode, isTypeNode, rootOf, unwrap, type Estree } from '
 import { isSignal, type Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
 import { fromDom, sharedWith } from '../flow';
-import { expressions, type Component } from '../ir';
+import { expressions, type Component, type ModuleStateDecl } from '../ir';
 import { RUNES } from '../schema/program';
 
 // Built-in methods that change their receiver, and functions that change their first argument.
 const ARRAY_MUTATORS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin']);
-export const MUTATORS = new Set([...ARRAY_MUTATORS, 'set', 'add', 'delete', 'clear']);
+const MUTATORS = new Set([...ARRAY_MUTATORS, 'set', 'add', 'delete', 'clear']);
 const STATIC_MUTATORS: Record<string, string[]> = {
 	Object: ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf'],
 	Reflect: ['set', 'deleteProperty', 'defineProperty', 'setPrototypeOf']
@@ -48,6 +48,34 @@ export function checkScript(component: Component, bindings: Bindings, reporter: 
 	for (const root of [...script, ...template]) forEachNode(root, (node) => syntax(node, bindings, reporter));
 	for (const root of script) topLevelAwait(root, 'the script runs before the first render; use an async function or $effect', reporter);
 	for (const root of template) topLevelAwait(root, 'template expressions are synchronous; keep the result in $state', reporter);
+}
+
+/**
+ * Module state is replaced, never changed in place: the binding is not
+ * reassigned, and only its own properties are assigned. (In a .pat.ts the
+ * types say so too, through aliases; this catches the direct forms, also in JS.)
+ */
+export function checkModuleState(states: ModuleStateDecl[], body: Estree[], bindings: Bindings, reporter: Reporter) {
+	const symbols = new Set(states.map((s) => bindings.topLevel(s.id.name)));
+	for (const ref of bindings.references)
+		if (ref.access === 'write' && symbols.has(ref.symbol))
+			reporter.report(ref.node, `"${ref.node.name}" is module state and is never reassigned; assign its properties: ${ref.node.name}.key = value`);
+	const inPlace = (target: Estree) => {
+		const object = unwrap(target.object);
+		const root = rootOf(object);
+		return object.type !== 'Identifier' && root?.type === 'Identifier' && symbols.has(bindings.reference(root)?.symbol ?? null) ? root.name : null;
+	};
+	for (const write of bindings.memberWrites) {
+		const name = inPlace(write.target);
+		if (name) reporter.report(write.node, `this changes module state "${name}" in place, which is not tracked; assign a new value to its property instead`);
+	}
+	for (const statement of body)
+		forEachNode(statement, (node) => {
+			const callee = node.type === 'CallExpression' ? unwrap(node.callee) : null;
+			if (callee?.type !== 'MemberExpression' || callee.computed || !MUTATORS.has(callee.property.name)) return;
+			const name = inPlace({ object: callee.object });
+			if (name) reporter.report(callee.property, `.${callee.property.name}() changes module state "${name}" in place, which is not tracked; assign a new value to its property instead`);
+		});
 }
 
 /** `await` outside any function: the script and template expressions run synchronously. */

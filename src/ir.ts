@@ -5,8 +5,9 @@
 // script keeps its statements and only the top-level declarations PAT gives
 // meaning to (runes, imports) are classified.
 
-import type { Estree } from './ast';
+import { literal, NOT_STATIC, type Estree } from './ast';
 import type { Span } from './diagnostics';
+import { patImportFile } from './schema/path';
 import type { PatchExport } from './schema/program';
 
 export type Component = {
@@ -167,6 +168,42 @@ export type Snippet = { type: 'snippet'; span: Span; name: Estree; params: Estre
 
 /** `{@render name(args)}`, or `{@render name?.(args)}` (`optional`: a nullish snippet renders nothing). */
 export type Render = { type: 'render'; span: Span; callee: Estree; args: Estree[]; optional: boolean };
+
+/** `"name"` or `{"name"}`: the string, null when it is computed, or true for a bare attribute. */
+export function staticValue(value: AttributeValue): string | null | true {
+	if (value === true) return true;
+	if ('expression' in value) {
+		const v = literal(value.expression);
+		return v !== NOT_STATIC && typeof v === 'string' ? v : null;
+	}
+	return value.parts.every((p) => typeof p === 'string') ? value.parts.join('') : null;
+}
+
+/** The components a script imports (`import Card from "./Card.pat"`): local name → the file its specifier names, and the import. */
+export function componentImports(script: Script | null): Map<string, { file: string; statement: Estree }> {
+	const out = new Map<string, { file: string; statement: Estree }>();
+	for (const statement of script?.imports ?? []) {
+		const file = patImportFile(statement.source.value);
+		const local = statement.specifiers[0]?.local?.name;
+		if (file && local) out.set(local, { file, statement });
+	}
+	return out;
+}
+
+/** A relative `src` written on an <img> (`./logo.png`): an asset of the app, at `specifier` from the .pat file. */
+export type Asset = { value: AttributeValue; specifier: string; span: Span };
+
+export function assets(template: TemplateNode[]): Asset[] {
+	const out: Asset[] = [];
+	for (const element of elements(template))
+		if (element.type === 'element' && element.kind === 'image')
+			for (const a of element.attributes) {
+				if (a.type !== 'attribute' || a.name !== 'src') continue;
+				const value = staticValue(a.value);
+				if (typeof value === 'string' && /^\.\.?\//.test(value)) out.push({ value: a.value, specifier: value, span: a.span });
+			}
+	return out;
+}
 
 /** The node lists directly below `node` (content that is not its own). */
 export function fragments(node: TemplateNode): TemplateNode[][] {

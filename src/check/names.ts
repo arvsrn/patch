@@ -5,25 +5,14 @@
 // an element that would render into itself. Whether a used portal exists
 // depends on which components render the file, so that is checked at runtime.
 
-import { literal, NOT_STATIC } from '../ast';
 import type { Reporter, Span } from '../diagnostics';
-import type { AttributeValue, If, TemplateNode } from '../ir';
+import { staticValue, type If, type TemplateNode } from '../ir';
 
 /**
  * Where a node sits: the `{#if}` branches leading to it, and whether a
  * `{#each}` repeats it in every item (no `{#if}` in between).
  */
 type Site = { branches: [If, number][]; repeated: boolean };
-
-/** `"name"` or `{"name"}`: the string, null when it is computed, or true for a bare attribute. */
-export function staticValue(value: AttributeValue): string | null | true {
-	if (value === true) return true;
-	if ('expression' in value) {
-		const v = literal(value.expression);
-		return v !== NOT_STATIC && typeof v === 'string' ? v : null;
-	}
-	return value.parts.every((p) => typeof p === 'string') ? value.parts.join('') : null;
-}
 
 /** Two sites that are never rendered together: different branches of the same `{#if}`. */
 const exclusive = (a: Site, b: Site) => a.branches.some(([node, i]) => b.branches.some(([other, j]) => node === other && i !== j));

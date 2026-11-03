@@ -13,22 +13,21 @@
 // root (schema/path.ts).
 
 import { existsSync, realpathSync } from 'node:fs';
-import { dirname, relative, resolve, sep } from 'node:path';
-import { forEachNode, rootOf, unwrap, type Estree } from './ast';
+import { basename, dirname, relative, resolve, sep } from 'node:path';
 import { bind, isSignal, type Bindings } from './bind';
-import { checkNames, staticValue } from './check/names';
-import { checkScript, MUTATORS } from './check/script';
+import { checkNames } from './check/names';
+import { checkModuleState, checkScript } from './check/script';
 import { checkAnchorReferences, checkStyles } from './check/styles';
 import { checkAttributes, checkEvents, checkTemplate, checkTemplateNames } from './check/template';
-import { CompileError, Reporter, type Diagnostic, type Span } from './diagnostics';
+import { CompileError, Reporter, type Diagnostic } from './diagnostics';
 import { Edits } from './emit/edits';
 import { emitScript } from './emit/script';
 import { TemplateEmitter } from './emit/template';
-import { elements, fragments, type AttributeValue, type Component, type Element, type StateInfo, type TemplateNode } from './ir';
+import { assets, componentImports, elements, fragments, type Component, type Element, type StateInfo, type TemplateNode } from './ir';
 import { lower, lowerModule } from './lower';
 import { parse } from './parse';
 import { RUNTIME } from './paths';
-import { location, moduleStateId, patImportFile } from './schema/path';
+import { location, moduleStateId } from './schema/path';
 import { collectStyles, type Styles } from './styles';
 import { domNames, globalNames, typecheck, type TemplateWrite } from './typecheck';
 
@@ -82,25 +81,17 @@ function boundElements(component: Component, bindings: Bindings): TemplateWrite[
 	return writes;
 }
 
-/** The .pat files the script imports: local name → absolute path. */
-function componentImports(component: Component, filename: string): Map<string, { path: string; statement: any }> {
-	const out = new Map<string, { path: string; statement: any }>();
-	for (const statement of component.script?.imports ?? []) {
-		const file = patImportFile(statement.source.value);
-		const local = statement.specifiers[0]?.local?.name;
-		if (file && local) out.set(local, { path: resolve(dirname(resolve(filename)), file), statement });
-	}
-	return out;
-}
-
-function componentSites(component: Component, bindings: Bindings, filename: string, position: (offset: number) => string): ComponentSite[] {
-	const imports = componentImports(component, filename);
+/** Where the template renders the components the script imports. */
+function componentSites(component: Component, bindings: Bindings, path: string, position: (offset: number) => string): ComponentSite[] {
+	const imports = componentImports(component.script);
 	const sites: ComponentSite[] = [];
 	const walk = (nodes: TemplateNode[], repeated: boolean) => {
 		for (const node of nodes) {
-			const symbol = node.type === 'component' ? bindings.reference(node.name)?.symbol : null;
-			const imported = node.type === 'component' && symbol && symbol === bindings.topLevel(node.name.name) ? imports.get(node.name.name) : undefined;
-			if (node.type === 'component' && imported) sites.push({ tag: node.name.name, id: position(node.span.start), path: imported.path, repeated });
+			if (node.type === 'component') {
+				const symbol = bindings.reference(node.name)?.symbol;
+				const imported = symbol && symbol === bindings.topLevel(node.name.name) ? imports.get(node.name.name) : undefined;
+				if (imported) sites.push({ tag: node.name.name, id: position(node.span.start), path: fromFile(path, imported.file), repeated });
+			}
 			for (const fragment of fragments(node)) walk(fragment, repeated || node.type === 'each');
 		}
 	};
@@ -108,63 +99,58 @@ function componentSites(component: Component, bindings: Bindings, filename: stri
 	return sites;
 }
 
-/**
- * A relative `src` written on an <img> (`./logo.png`): an asset of the app,
- * imported so the bundler resolves it (from the .pat file), serves it, and
- * inlines it into a standalone build.
- */
-type Asset = { value: AttributeValue; specifier: string; path: string; span: Span };
+/** Where `specifier`, written in the file at `path`, points. */
+const fromFile = (path: string, specifier: string) => resolve(dirname(path), specifier);
 
-function assets(component: Component, filename: string): Asset[] {
-	const out: Asset[] = [];
-	for (const element of elements(component.template))
-		if (element.type === 'element' && element.kind === 'image')
-			for (const a of element.attributes) {
-				const value = a.type === 'attribute' && a.name === 'src' ? staticValue(a.value) : null;
-				if (typeof value === 'string' && /^\.\.?\//.test(value))
-					out.push({ value: (a as { value: AttributeValue }).value, specifier: value, path: resolve(dirname(resolve(filename)), value), span: a.span });
-			}
-	return out;
+/** TypeScript's diagnostics, except where a PAT error already covers the spot (an `import "./App.pat"` is not also "Cannot find module"). */
+function uncovered<T extends { start: number }>(pat: Diagnostic[], diagnostics: T[]): T[] {
+	const errors = pat.filter((d) => d.severity === 'error');
+	return diagnostics.filter((d) => !errors.some((p) => p.start <= d.start && d.start < p.end));
 }
 
-function check(source: string, filename: string, reporter: Reporter): Front | null {
+const byOffset = (a: Diagnostic, b: Diagnostic) => a.start - b.start;
+
+/** Every check of a .pat file at `path` (absolute), TypeScript's included. */
+function check(source: string, path: string, reporter: Reporter): Front | null {
 	const result = front(source, reporter);
 	if (!result) return null;
 	const { component, bindings, styles } = result;
-	for (const { path, statement } of componentImports(component, filename).values())
-		if (!existsSync(path)) reporter.report(statement.source, `cannot find component ${statement.source.value}`);
-	for (const asset of assets(component, filename)) if (!existsSync(asset.path)) reporter.report(asset.span, `cannot find ${asset.specifier}`);
+	for (const { file, statement } of componentImports(component.script).values())
+		if (!existsSync(fromFile(path, file))) reporter.report(statement.source, `cannot find component ${statement.source.value}`);
+	for (const asset of assets(component.template)) if (!existsSync(fromFile(path, asset.specifier))) reporter.report(asset.span, `cannot find ${asset.specifier}`);
 	checkScript(component, bindings, reporter);
 	checkTemplate(component, bindings, reporter);
-	checkTemplateNames(component, bindings, globalNames(resolve(filename)), reporter);
-	const dom = domNames(resolve(filename));
+	checkTemplateNames(component, bindings, globalNames(path), reporter);
+	const dom = domNames(path);
 	checkEvents(component, dom, reporter);
 	checkAttributes(component, dom, reporter);
 	checkNames(component.template, reporter);
 	checkAnchorReferences(styles, bindings, reporter);
 	checkStyles(styles, reporter);
-	reporter.diagnostics.sort((a, b) => a.start - b.start);
 
-	// TypeScript diagnostics for the script. A PAT error already covering the
-	// same spot wins (e.g. an `import "./App.pat"` is not also "Cannot find module").
 	const script = component.script;
 	if (script?.lang === 'ts') {
-		const pat = reporter.diagnostics.filter((d) => d.severity === 'error');
 		const writes = boundElements(component, bindings);
-		for (const { write, ...d } of typecheck(source, resolve(filename), script.span.start, script.span.end, writes)) {
-			if (pat.some((p) => p.start <= d.start && d.start < p.end)) continue;
+		for (const { write, ...d } of uncovered(reporter.diagnostics, typecheck(source, path, script.span.start, script.span.end, writes))) {
 			const message = write === undefined ? d.message : `bind:this sets "${writes[write].name}" to ${writes[write].type}: ${d.message}`;
 			reporter.diagnostics.push({ ...d, message, source: 'typescript', ...reporter.position(d.start) });
 		}
 	}
+	reporter.diagnostics.sort(byOffset);
 	return result;
 }
 
 /** Validation only: every diagnostic, no code generation. */
 export function analyze(source: string, options: { filename?: string } = {}): Analysis {
 	const reporter = new Reporter(source);
-	check(source, options.filename ?? 'app.pat', reporter);
+	check(source, resolve(options.filename ?? 'app.pat'), reporter);
 	return { diagnostics: reporter.diagnostics };
+}
+
+/** Transpiles generated TypeScript or JavaScript for the browser, and lists what it still imports. */
+function transpile(code: string, loader: 'ts' | 'js') {
+	const module = new Bun.Transpiler({ loader, target: 'browser' }).transformSync(code);
+	return { module, imports: new Bun.Transpiler({ loader: 'js' }).scanImports(module).map((i) => i.path) };
 }
 
 /**
@@ -173,8 +159,9 @@ export function analyze(source: string, options: { filename?: string } = {}): An
  * listing every diagnostic.
  */
 export function compile(source: string, filename = 'app.pat'): Compiled {
+	const path = resolve(filename);
 	const reporter = new Reporter(source);
-	const result = check(source, filename, reporter);
+	const result = check(source, path, reporter);
 	if (!result || reporter.hasErrors()) throw new CompileError(reporter.diagnostics, source, filename);
 	const { component, bindings } = result;
 
@@ -184,24 +171,22 @@ export function compile(source: string, filename = 'app.pat'): Compiled {
 		const { line, column } = reporter.position(offset);
 		return location(line, column);
 	};
-	const imported = new Map(assets(component, filename).map((asset, i) => [asset.value, { name: `$$asset${i}`, specifier: asset.specifier }]));
+	const imported = assets(component.template).map((asset, i) => ({ ...asset, name: `$$asset${i}` }));
 	const template = new TemplateEmitter(
 		edits,
 		position,
 		(node) => (isSignal(bindings.reference(node)?.symbol) ? `${node.name}.v` : node.name),
-		new Map([...imported].map(([value, { name }]) => [value, name]))
+		new Map(imported.map((asset) => [asset.value, asset.name]))
 	).fragment(component.template);
-	const assetImports = [...imported.values()].map(({ name, specifier }) => `import ${name} from ${JSON.stringify(specifier)};`);
-	const ts = `${[...script.imports, ...assetImports].join('\n')}\nexport default function program($$rt) {\n${script.code}\nreturn ${template};\n}\n`;
-	const module = new Bun.Transpiler({ loader: 'ts', target: 'browser' }).transformSync(ts);
-	const imports = new Bun.Transpiler({ loader: 'js' }).scanImports(module).map((i) => i.path);
+	const assetImports = imported.map(({ name, specifier }) => `import ${name} from ${JSON.stringify(specifier)};`);
+	const { module, imports } = transpile(`${[...script.imports, ...assetImports].join('\n')}\nexport default function program($$rt) {\n${script.code}\nreturn ${template};\n}\n`, 'ts');
 	const info = component.script;
 	return {
-		path: resolve(filename),
+		path,
 		module,
 		imports,
 		state: info?.state.map((d) => d.info) ?? [],
-		components: componentSites(component, bindings, filename, position),
+		components: componentSites(component, bindings, path, position),
 		script: info ? { lang: info.lang, source, start: info.span.start, end: info.span.end } : null
 	};
 }
@@ -229,9 +214,10 @@ function checkModule(source: string, filename: string, typescript: boolean) {
 	const reporter = new Reporter(wrapped);
 	const at = (offset: number) => ({ start: open.length + offset, end: open.length + offset + 1 });
 	const closing = source.search(/<\/script/i);
-	const component = path.slice(0, -3);
+	// `x.pat.ts` next to `x.pat`.
+	const sibling = path.slice(0, -3);
 	if (closing >= 0) reporter.report(at(closing), 'a module cannot contain "</script"; write it as "<\\/script"');
-	else if (existsSync(component)) reporter.report(at(0), `${component.split(sep).pop()} is a component next to this module; rename one (TypeScript would resolve the component's import to this file)`);
+	else if (existsSync(sibling)) reporter.report(at(0), `${basename(sibling)} is a component next to this module; rename one (TypeScript would resolve the component's import to this file)`);
 	const ast = closing >= 0 ? null : parse(wrapped, reporter);
 	const lowered = ast && lowerModule(ast, reporter);
 	const bindings = lowered && bind(lowered.component);
@@ -246,12 +232,9 @@ function checkModule(source: string, filename: string, typescript: boolean) {
 		const start = d.start - open.length;
 		return { ...d, start, end: d.end - open.length, ...own.position(start) };
 	});
-	if (typescript && lang === 'ts' && lowered) {
-		const pat = diagnostics.filter((d) => d.severity === 'error');
-		for (const d of typecheck(source, path, 0, source.length))
-			if (!pat.some((p) => p.start <= d.start && d.start < p.end)) diagnostics.push({ ...d, source: 'typescript', ...own.position(d.start) });
-	}
-	diagnostics.sort((a, b) => a.start - b.start);
+	if (typescript && lang === 'ts' && lowered)
+		for (const d of uncovered(diagnostics, typecheck(source, path, 0, source.length))) diagnostics.push({ ...d, source: 'typescript', ...own.position(d.start) });
+	diagnostics.sort(byOffset);
 	return { path, lang, open, wrapped, lowered, diagnostics };
 }
 
@@ -285,35 +268,6 @@ export function compileModule(source: string, filename: string, root = dirname(r
 		return { name: id.name, id: stateId, keys };
 	});
 	const header = states.length ? `import { moduleState as $$moduleState } from ${JSON.stringify(RUNTIME.moduleState)};\n` : '';
-	const module = new Bun.Transpiler({ loader: lang, target: 'browser' }).transformSync(header + edits.render(open.length, open.length + source.length));
-	const imports = new Bun.Transpiler({ loader: 'js' }).scanImports(module).map((i) => i.path);
+	const { module, imports } = transpile(header + edits.render(open.length, open.length + source.length), lang);
 	return { path, module, imports, states, source, lang };
-}
-
-/**
- * Module state is replaced, never changed in place: the binding is not
- * reassigned, and only its own properties are assigned. (In a .pat.ts the
- * types say so too, through aliases; this catches the direct forms, also in JS.)
- */
-function checkModuleState(states: { id: Estree }[], body: Estree[], bindings: Bindings, reporter: Reporter) {
-	const symbols = new Set(states.map((s) => bindings.topLevel(s.id.name)));
-	for (const ref of bindings.references)
-		if (ref.access === 'write' && symbols.has(ref.symbol))
-			reporter.report(ref.node, `"${ref.node.name}" is module state and is never reassigned; assign its properties: ${ref.node.name}.key = value`);
-	const inPlace = (target: Estree) => {
-		const object = unwrap(target.object);
-		const root = rootOf(object);
-		return object.type !== 'Identifier' && root?.type === 'Identifier' && symbols.has(bindings.reference(root)?.symbol ?? null) ? root.name : null;
-	};
-	for (const write of bindings.memberWrites) {
-		const name = inPlace(write.target);
-		if (name) reporter.report(write.node, `this changes module state "${name}" in place, which is not tracked; assign a new value to its property instead`);
-	}
-	for (const statement of body)
-		forEachNode(statement, (node) => {
-			const callee = node.type === 'CallExpression' ? unwrap(node.callee) : null;
-			if (callee?.type !== 'MemberExpression' || callee.computed || !MUTATORS.has(callee.property.name)) return;
-			const name = inPlace({ object: callee.object });
-			if (name) reporter.report(callee.property, `.${callee.property.name}() changes module state "${name}" in place, which is not tracked; assign a new value to its property instead`);
-		});
 }

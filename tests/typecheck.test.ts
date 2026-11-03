@@ -68,7 +68,7 @@ test('a missing module is a TypeScript diagnostic; a missing .pat component is o
 
 test('PAT and TypeScript diagnostics appear together', () => {
 	const source = script(`\tlet x: string = 42;\n\tconst s = $style({ zIndex: 1 });`, '<div class="a"></div>');
-	expect(check(source).map((d) => `${d.source}:${d.line}`)).toEqual(['pat:3', 'pat:6', 'typescript:2']);
+	expect(check(source).map((d) => `${d.source}:${d.line}`)).toEqual(['typescript:2', 'pat:3', 'pat:6']);
 });
 
 test('compile refuses type errors and keeps imports in the module', () => {
