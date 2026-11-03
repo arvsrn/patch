@@ -202,11 +202,12 @@ test('links and goto navigate through history; another route replaces the page, 
 	expect(click(target, span.parentNode!, { metaKey: true }).defaultPrevented).toBe(false);
 	expect(win.pushes.length).toBe(before);
 
-	// Disposing removes the app's listeners and destroys the page.
+	// Disposing removes the app's listeners, destroys the page and leaves the host as it was.
 	dispose();
 	expect(target.listeners.get('click')!.size).toBe(0);
 	expect(win.listeners.size).toBe(0);
 	expect(log.at(-1)).toBe('list destroyed');
+	expect([target.childNodes.length, target.attributes.size, (globalThis as any).document.head.childNodes.length]).toEqual([0, 0, 0]);
 });
 
 test('an unknown URL renders the not-found page, never another route', async () => {

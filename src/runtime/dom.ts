@@ -115,6 +115,13 @@ const HOST_FONT_CSS = (() => {
 	return `[data-host]{${declarations.join(';')}}\n`;
 })();
 
+/** What the host element is while an app is mounted in it. */
+const HOST_ATTRIBUTES = [
+	['data-p', 'frame'],
+	['data-dir', 'column'],
+	['data-host', '']
+] as const;
+
 /**
  * Writes every element's effective sizing (`data-w`/`data-h`) from its
  * authored sizing, its parent's effective sizing and its flow siblings, top
@@ -614,14 +621,15 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 	const sheet = document.createElement('style');
 	sheet.textContent = BASE_CSS + HOST_FONT_CSS;
 	document.head.appendChild(sheet);
-	target.setAttribute('data-p', 'frame');
-	target.setAttribute('data-dir', 'column');
-	target.setAttribute('data-host', '');
+	for (const [name, value] of HOST_ATTRIBUTES) target.setAttribute(name, value);
+	// The app's content is between these, so disposing removes exactly what it rendered.
+	const start = target.appendChild(document.createComment('app'));
+	const end = target.appendChild(document.createComment('/app'));
 	const mountRoot = (program: Program, before: Node | null, overrides?: Record<string, unknown>) => {
 		const instance = makeRoot(overrides);
 		mountNodes(program(instance.api), target, before, { instance, place: ROOT_PLACE });
 	};
-	if (!pages || !router) batch(() => within(root, null, () => mountRoot(app as Program, null)));
+	if (!pages || !router) batch(() => within(root, null, () => mountRoot(app as Program, end)));
 	else {
 		// The page is the root program its route selects. Another route
 		// destroys it and mounts the new page, fresh: overrides only apply to
@@ -631,7 +639,7 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 		const NOT_FOUND = {};
 		batch(() =>
 			within(root, null, () =>
-				mountRegion('page', target, null, () => router.location().route ?? NOT_FOUND, (route, end) => {
+				mountRegion('page', target, end, () => router.location().route ?? NOT_FOUND, (route, end) => {
 					mountRoot(route === NOT_FOUND ? pages.notFound : (route as PageRoute).program, end, first ? undefined : {});
 					first = false;
 				})
@@ -666,5 +674,8 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 		document.fonts?.removeEventListener('loadingdone', resizeLater);
 		dispose(root);
 		anchoring.dispose();
+		removeRange(start, end);
+		sheet.remove();
+		for (const [name] of HOST_ATTRIBUTES) target.removeAttribute(name);
 	};
 }
