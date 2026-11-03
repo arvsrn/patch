@@ -14,14 +14,18 @@ export type Getter<T = unknown> = () => T;
 /** A reactive value; `{#each}` items and indexes are passed to templates as cells. */
 export type Cell<T = unknown> = { readonly v: T };
 
+/** A `$state` variable: its value, and `notify` for a change made inside it. */
+export type StateCell = { v: unknown; notify: () => void };
+
 /** `$$rt`: what compiled scripts call. Each component instance has its own. */
 export type RuntimeApi = {
 	/** `initial` computes the initial value; it is not called when the state is overridden. */
-	state: (id: string, initial?: () => unknown) => { v: unknown };
+	state: (id: string, initial?: () => unknown) => StateCell;
 	derived: <T>(fn: () => T) => Cell<T>;
 	effect: (fn: () => unknown) => void;
 	style: (input: unknown) => Style;
-	mutate: <T>(target: { v: unknown }, result: T) => T;
+	/** After a member assignment rooted at `target` (`todos[0].done = true`): what reads `target` updates. */
+	mutate: <T>(target: StateCell, result: T) => T;
 	/** A prop of `$props()`: the value the parent passes, or `fallback()` when that is undefined. */
 	prop: (name: string, fallback?: () => unknown) => Cell;
 	/** Marks a function as a snippet: `{@render}` only renders these. */

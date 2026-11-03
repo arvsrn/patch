@@ -62,9 +62,8 @@ export function createApi(r: Reactive, { overrides = {}, design = false }: ApiOp
 			derived: r.derived,
 			effect,
 			style: normalizeStyle,
-			// Member assignment rooted at a state variable (`todos[0].done = true`).
 			mutate: (target, result) => {
-				(target as ReturnType<Reactive['cell']>).notify();
+				target.notify();
 				return result;
 			},
 			prop: (name, fallback) =>
