@@ -3,7 +3,7 @@
 // dynamic parts become closures.
 
 import type { Estree } from '../ast';
-import type { AttributeValue, ComponentUse, Each, Element, If, Inline, Render, Snippet, TemplateNode } from '../ir';
+import type { Attribute, AttributeValue, ComponentUse, Each, Element, If, Inline, Render, Snippet, TemplateNode } from '../ir';
 import type { Edits } from './edits';
 
 const str = JSON.stringify;
@@ -63,23 +63,30 @@ export class TemplateEmitter {
 		return `{t:"render",id:${str(this.id(node.span.start))},snippet:${this.getter(node.callee)},args:[${node.args.map((a) => this.getter(a)).join(',')}],optional:${node.optional}}`;
 	}
 
-	private element(node: Element) {
+	/** Attributes, event handlers, `bind:this` (`ref`) and `portal=`, as the program's fields. */
+	private attributes(attributes: Attribute[]) {
 		const attrs: [string, string][] = [];
 		const on: [string, string][] = [];
 		let ref = 'null';
 		let portal = 'null';
-		for (const a of node.attributes) {
+		for (const a of attributes) {
 			if (a.type === 'event') on.push([a.name, this.getter(a.handler)]);
 			else if (a.type === 'attribute' && a.name === 'portal') portal = `() => (${this.attributeValue(a.value)})`;
-			else if (a.type === 'bind' && a.name === 'this') {
+			else if (a.type === 'attribute') attrs.push([a.name, `() => (${this.attributeValue(a.value)})`]);
+			else {
 				const target = this.variable(a.expression);
-				ref = `{get: () => (${target}), set: (node) => { ${target} = node }}`;
-			} else if (a.type === 'bind') {
-				const name = a.expression.name;
-				attrs.push(['value', `() => (${name}.v)`]);
-				on.push(['input', `() => (event) => { ${name}.v = event.currentTarget.value }`]);
-			} else attrs.push([a.name, `() => (${this.attributeValue(a.value)})`]);
+				if (a.name === 'this') ref = `{get: () => (${target}), set: (node) => { ${target} = node }}`;
+				else {
+					attrs.push(['value', `() => (${target})`]);
+					on.push(['input', `() => (event) => { ${target} = event.currentTarget.value }`]);
+				}
+			}
 		}
+		return { attrs: record(attrs), on: record(on), ref, portal };
+	}
+
+	private element(node: Element) {
+		const { attrs, on, ref, portal } = this.attributes(node.attributes);
 		const kids =
 			'children' in node
 				? this.fragment(node.children)
@@ -87,7 +94,7 @@ export class TemplateEmitter {
 					? `[${this.inline(node.content)}]`
 					: '[]';
 		const style = node.style ? this.getter(node.style) : 'null';
-		return `{t:"el",tag:${str(node.tag)},kind:"${node.kind}",id:${str(this.id(node.span.start))},style:${style},attrs:${record(attrs)},on:${record(on)},ref:${ref},portal:${portal},kids:${kids}}`;
+		return `{t:"el",tag:${str(node.tag)},kind:"${node.kind}",id:${str(this.id(node.span.start))},style:${style},attrs:${attrs},on:${on},ref:${ref},portal:${portal},kids:${kids}}`;
 	}
 
 	private attributeValue(value: AttributeValue) {
@@ -104,12 +111,9 @@ export class TemplateEmitter {
 				if (part.type === 'static') return str(part.value);
 				if (part.type === 'expression') return this.getter(part.expression);
 				const style = part.style ? this.getter(part.style) : 'null';
-				const attrs: [string, string][] = [];
-				const on: [string, string][] = [];
-				for (const a of part.attributes)
-					if (a.type === 'event') on.push([a.name, this.getter(a.handler)]);
-					else if (a.type === 'attribute') attrs.push([a.name, `() => (${this.attributeValue(a.value)})`]);
-				return `{t:"span",tag:${str(part.tag)},id:${str(this.id(part.span.start))},style:${style},attrs:${record(attrs)},on:${record(on)},kids:[${this.inline(part.content)}]}`;
+				// Lowering gives an element in text no bindings or portal.
+				const { attrs, on } = this.attributes(part.attributes);
+				return `{t:"span",tag:${str(part.tag)},id:${str(this.id(part.span.start))},style:${style},attrs:${attrs},on:${on},kids:[${this.inline(part.content)}]}`;
 			})
 			.join(',');
 	}

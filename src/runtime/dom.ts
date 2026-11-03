@@ -8,7 +8,7 @@ import { effectiveSizing, LINE_HEIGHT, ROOT_FONT, SELECT_ARROW, SHORTHANDS, sizi
 import { createApi, type ApiOptions, type Instance } from './api';
 import { createAnchoring, type AnchorSpec } from './anchoring';
 import { eachPlace, instancePlace, renderPlace, ROOT_PLACE, type Place } from '../schema/path';
-import { componentOf, eachList, elementStyle, portalName, renderable, toText, withId } from './evaluate';
+import { attributeText, componentOf, eachKeys, eachList, elementStyle, plainText, portalName, renderable, toText, withId } from './evaluate';
 import { appLink, browserHistory, type NavigationWindow } from './navigation';
 import { createPortals } from './portals';
 import { reactive, type Cell, type Owner } from './reactive';
@@ -183,22 +183,16 @@ function sizeControl(el: HTMLInputElement | HTMLTextAreaElement, width: boolean,
 	}
 }
 
-const removeRange = (start: Node, end: Node) => {
-	let node: Node | null = start;
-	while (node) {
+/** Calls `fn` on each sibling from `start` to `end`, both included; `fn` may move the node. */
+const eachInRange = (start: Node, end: Node, fn: (node: Node) => void) => {
+	for (let node: Node | null = start; node; ) {
 		const next: Node | null = node === end ? null : node.nextSibling;
-		node.parentNode?.removeChild(node);
+		fn(node);
 		node = next;
 	}
 };
-const moveRange = (start: Node, end: Node, before: Node) => {
-	let node: Node | null = start;
-	while (node) {
-		const next: Node | null = node === end ? null : node.nextSibling;
-		before.parentNode!.insertBefore(node, before);
-		node = next;
-	}
-};
+const removeRange = (start: Node, end: Node) => eachInRange(start, end, (node) => node.parentNode?.removeChild(node));
+const moveRange = (start: Node, end: Node, before: Node) => eachInRange(start, end, (node) => before.parentNode!.insertBefore(node, before));
 
 export type MountOptions = ApiOptions & {
 	/**
@@ -352,13 +346,11 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 			const parts = d.kids;
 			mountInline(parts, el);
 			const select = scope.select;
-			if (select) {
-				const label = () => parts.map((p) => (typeof p === 'function' ? toText(p()) : typeof p === 'string' ? p : '')).join('');
+			if (select)
 				effect(() => {
-					const own = d.attrs.value ? toText(withId(d.id, d.attrs.value)) : withId(d.id, label);
+					const own = attributeText(d, 'value') ?? plainText(parts, d.id);
 					el.selected = own === toText(select());
 				});
-			}
 		}
 		parent.insertBefore(el, before);
 	};
@@ -406,8 +398,8 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 		el.setAttribute('data-p', 'svg');
 		bindStyle(el, d, 'svg');
 		bindAttributes(el, d, false);
-		const attr = (name: string) => (d.attrs[name] ? toText(withId(d.id, d.attrs[name])) : null);
 		effect(() => {
+			const attr = (name: string) => attributeText(d, name);
 			const { width, height } = svgSize({ width: attr('width'), height: attr('height'), viewBox: attr('viewBox') });
 			el.style.setProperty('--hug-w', `${width}px`);
 			el.style.setProperty('--hug-h', `${height}px`);
@@ -578,11 +570,11 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 			effect(() => {
 				const list = withId(d.id, () => eachList(d.list()));
 				untrack(() => {
+					const keys = eachKeys(d, list);
 					const next = new Map<unknown, Item>();
 					const order: Item[] = [];
 					list.forEach((raw, i) => {
-						const key = withId(d.id, () => d.key({ v: raw }, { v: i }));
-						if (next.has(key)) throw new Error(`Duplicate each key ${JSON.stringify(key)} (at ${d.id})`);
+						const key = keys[i];
 						let entry = items.get(key);
 						if (entry) {
 							// Mutation is tracked per state variable, not per object: the

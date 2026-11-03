@@ -23,7 +23,7 @@ import { createApi, type Instance } from './api';
 import { eachPlace, instancePlace, nodeId, renderPlace, ROOT_PLACE, type Place } from '../schema/path';
 import type { Location } from '../schema/route';
 import { svgSize } from '../schema/svg';
-import { componentOf, eachList, elementStyle, portalName, renderable, toText, withId } from './evaluate';
+import { attributeText, componentOf, eachKeys, eachList, elementStyle, plainText, portalName, renderable, toText, withId } from './evaluate';
 import { reactive } from './reactive';
 import { pageOf } from './router';
 
@@ -85,13 +85,9 @@ class Realizer {
 			return [{ nodes: branch ? branch[1] : (d.e ?? []), scope }];
 		}
 		if (d.t === 'each') {
-			const seen = new Set();
-			return withId(d.id, () => eachList(d.list())).map((raw, i) => {
-				const key = withId(d.id, () => d.key({ v: raw }, { v: i }));
-				if (seen.has(key)) throw new Error(`Duplicate each key ${JSON.stringify(key)} (at ${d.id})`);
-				seen.add(key);
-				return { nodes: d.kids({ v: raw }, { v: i }), scope: { ...scope, place: eachPlace(scope.place, key) } };
-			});
+			const list = withId(d.id, () => eachList(d.list()));
+			const keys = eachKeys(d, list);
+			return list.map((raw, i) => ({ nodes: d.kids({ v: raw }, { v: i }), scope: { ...scope, place: eachPlace(scope.place, keys[i]) } }));
 		}
 		if (d.t === 'component') {
 			const component = withId(d.id, () => componentOf(d.component(), d.tag, d.id)) as Program;
@@ -117,7 +113,7 @@ class Realizer {
 	private graphics(nodes: ProgramNode[], scope: Scope): SvgContent[] {
 		const out: SvgContent[] = [];
 		for (const d of nodes) {
-			if (d.t === 'text') out.push(d.parts.map((p) => (typeof p === 'string' ? p : typeof p === 'function' ? toText(withId(d.id, p)) : '')).join(''));
+			if (d.t === 'text') out.push(plainText(d.parts, d.id));
 			else if (d.t === 'el' && d.kind === 'graphic') {
 				this.bind(d, nodeId(scope.place, d.id));
 				out.push({ tag: d.tag, attrs: this.attrs(d), children: this.graphics(d.kids, scope) });
@@ -154,7 +150,7 @@ class Realizer {
 		// A stand-in for an element holds its concrete id; anything else anchors to nothing.
 		const { anchor, ...style } = st;
 		const styled = { style, ...(anchor === undefined ? {} : { anchor: isDesignNode(anchor) ? anchor[DESIGN_NODE] : null }) };
-		const attr = (name: string) => (d.attrs[name] ? toText(withId(d.id, d.attrs[name])) : '');
+		const attr = (name: string) => attributeText(d, name) ?? '';
 		this.bind(d, id);
 		if (d.kind === 'frame') return { type: 'frame', id, tag: d.tag, ...styled, font: own, children: this.nodes(d.kids, scope, own) };
 		if (d.kind === 'text') return { type: 'text', id, tag: d.tag, ...styled, font: own, runs: inlineRuns(d.kids, own, [], d.id) };
@@ -186,8 +182,8 @@ class Realizer {
 	private options(nodes: ProgramNode[], scope: Scope, out: { value: string; label: string }[]) {
 		for (const d of nodes) {
 			if (d.t === 'el' && d.kind === 'option') {
-				const label = d.kids.map((p) => (typeof p === 'string' ? p : typeof p === 'function' ? toText(withId(d.id, p)) : '')).join('');
-				out.push({ value: d.attrs.value ? toText(withId(d.id, d.attrs.value)) : label, label });
+				const label = plainText(d.kids, d.id);
+				out.push({ value: attributeText(d, 'value') ?? label, label });
 			} else if (d.t === 'el' && d.kind === 'optgroup') this.options(d.kids, scope, out);
 			else for (const part of this.expand(d, scope)) this.options(part.nodes, part.scope, out);
 		}

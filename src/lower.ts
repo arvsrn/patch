@@ -45,6 +45,7 @@ const UNSUPPORTED_NODES: Record<string, string> = {
 	DebugTag: '{@debug} is not supported',
 	AttachTag: '{@attach} is not supported'
 };
+const REQUIRE_IMPORT = '`import x = require(...)` is not supported; use an ES import';
 const UNSUPPORTED_DIRECTIVES: Record<string, string> = {
 	SpreadAttribute: 'spread attributes are not supported',
 	ClassDirective: 'class: is not supported; use style={[base, active && selected]}',
@@ -53,7 +54,7 @@ const UNSUPPORTED_DIRECTIVES: Record<string, string> = {
 	UseDirective: 'use: actions are not supported',
 	TransitionDirective: 'transitions are not supported in v0',
 	AnimateDirective: 'animations are not supported in v0',
-	AttachTag: '{@attach} is not supported'
+	AttachTag: UNSUPPORTED_NODES.AttachTag
 };
 const isTag = (name: string): name is Tag => Object.hasOwn(TAG_KINDS, name);
 
@@ -75,13 +76,13 @@ export function lower(ast: SvelteAst, source: string, reporter: Reporter): Compo
 
 // ------------------------------------------------------------------ script
 
-function lowerScript(instance: Svelte, reporter: Reporter): Script {
+/** A `<script>` with `body` and nothing classified yet. */
+function emptyScript(instance: Svelte, body: Estree[]): Script {
 	const program = instance.content;
-	const lang = instance.attributes.find((a: Svelte) => a.name === 'lang')?.value?.[0]?.data === 'ts' ? 'ts' : 'js';
-	const script: Script = {
-		lang,
+	return {
+		lang: instance.attributes.find((a: Svelte) => a.name === 'lang')?.value?.[0]?.data === 'ts' ? 'ts' : 'js',
 		span: { start: program.start, end: program.end },
-		body: program.body,
+		body,
 		imports: [],
 		state: [],
 		derived: [],
@@ -90,6 +91,11 @@ function lowerScript(instance: Svelte, reporter: Reporter): Script {
 		patchImports: [],
 		runes: new Set()
 	};
+}
+
+function lowerScript(instance: Svelte, reporter: Reporter): Script {
+	const program = instance.content;
+	const script = emptyScript(instance, program.body);
 
 	for (const statement of program.body) {
 		if (statement.type === 'ImportDeclaration') {
@@ -106,7 +112,7 @@ function lowerScript(instance: Svelte, reporter: Reporter): Script {
 			}
 			script.imports.push(statement);
 		} else if (statement.type === 'TSImportEqualsDeclaration') {
-			reporter.report(statement, '`import x = require(...)` is not supported; use an ES import');
+			reporter.report(statement, REQUIRE_IMPORT);
 		} else if (/^(Export|TSExport)/.test(statement.type)) {
 			reporter.report(statement, 'a .pat file cannot export anything; it is a component, and takes its inputs from $props()');
 		} else if (statement.type === 'VariableDeclaration') {
@@ -166,19 +172,7 @@ function importProblem(statement: Estree, reporter: Reporter): boolean {
 export function lowerModule(ast: SvelteAst, reporter: Reporter): { component: Component; states: ModuleStateDecl[] } {
 	const instance = (ast as Svelte).instance;
 	const program = instance.content;
-	const lang = instance.attributes.find((a: Svelte) => a.name === 'lang')?.value?.[0]?.data === 'ts' ? 'ts' : 'js';
-	const script: Script = {
-		lang,
-		span: { start: program.start, end: program.end },
-		body: [],
-		imports: [],
-		state: [],
-		derived: [],
-		props: [],
-		propsDeclarator: null,
-		patchImports: [],
-		runes: new Set()
-	};
+	const script = emptyScript(instance, []);
 	const states: ModuleStateDecl[] = [];
 	const shape = 'module state is declared as `const name = $state({ key: value, … })` at the top level';
 	for (const outer of program.body) {
@@ -189,7 +183,7 @@ export function lowerModule(ast: SvelteAst, reporter: Reporter): { component: Co
 			continue;
 		}
 		if (outer.type === 'TSImportEqualsDeclaration') {
-			reporter.report(outer, '`import x = require(...)` is not supported; use an ES import');
+			reporter.report(outer, REQUIRE_IMPORT);
 			continue;
 		}
 		const statement = outer.type === 'ExportNamedDeclaration' || outer.type === 'ExportDefaultDeclaration' ? outer.declaration : outer.type === 'ExportAllDeclaration' ? null : outer;
@@ -423,6 +417,7 @@ class TemplateLowering {
 			if (!attributes.some((a) => a.type === 'attribute' && a.name === 'src')) this.reporter.report(nameSpan(node), '<img> needs src');
 			if (!attributes.some((a) => a.type === 'attribute' && a.name === 'alt'))
 				this.reporter.report(nameSpan(node), '<img> needs alt: what the image shows, or alt="" when it is decorative', 'warning');
+			// Separate returns narrow `kind` to each element type.
 			return [{ ...base, kind }];
 		}
 		return [{ ...base, kind }];
