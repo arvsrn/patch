@@ -97,7 +97,7 @@ function toCss(kind: ElementKind, st: Style) {
 	// An unset axis is `visible`, which the browser turns into `auto` when the other axis is not.
 	if (st.overflowX) css['overflow-x'] = st.overflowX;
 	if (st.overflowY) css['overflow-y'] = st.overflowY;
-	if (st.boxShadow) css['box-shadow'] = st.boxShadow.map((s: any) => `${s.inset ? 'inset ' : ''}${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`).join(', ');
+	if (st.boxShadow) css['box-shadow'] = st.boxShadow.map((s) => `${s.inset ? 'inset ' : ''}${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`).join(', ');
 	if (st.fontFamily) css['font-family'] = JSON.stringify(st.fontFamily);
 	if (st.fontWeight) css['font-weight'] = String(st.fontWeight);
 	if (st.fontStyle) css['font-style'] = st.fontStyle;
@@ -289,7 +289,7 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 		if (kind !== 'inline') onCleanup(() => anchoring.track(el, null, {}));
 	};
 
-	const setAttribute = (el: any, name: string, value: unknown) => {
+	const setAttribute = (el: Element & { value?: string; disabled?: boolean }, name: string, value: unknown) => {
 		if (name === 'value') {
 			const next = toText(value);
 			if (el.value !== next) el.value = next;

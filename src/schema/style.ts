@@ -136,6 +136,8 @@ type Normalized = {
 export type Style = { [K in Longhand]?: K extends keyof Normalized ? Normalized[K] : Accepted<K> };
 
 const specOf = (key: string): Spec | undefined => (SPEC as Record<string, Spec>)[key];
+/** The string literals a spec's validator carries (see `literals`). */
+const literalsOf = (spec: Spec | undefined): string[] => (spec?.[0] as { values?: string[] } | undefined)?.values ?? [];
 
 export const SHORTHANDS: Record<string, Longhand[]> = {
 	padding: ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'],
@@ -221,6 +223,14 @@ const EXPAND: Record<string, [(v: unknown) => unknown[] | null, string]> = {
 	overflow: [(v) => (OVERFLOW[0](v) ? [v, v] : null), OVERFLOW[1]]
 };
 
+/** How a valid value of each property in `Normalized` is stored. */
+const NORMALIZE: { [K in keyof Normalized]: (value: Accepted<K>) => Normalized[K] } = {
+	anchor: (v) => v ?? null,
+	anchorPadding: (v) => sides(v, false) as Sides,
+	borderRadius: (v) => (typeof v === 'number' ? [v, v, v, v] : v),
+	boxShadow: (v) => (Array.isArray(v) ? v : [v]).map((s) => ({ x: 0, y: 0, blur: 0, spread: 0, color: '#00000040', inset: false, ...s }))
+};
+
 /** Validates one style object and expands shorthands. Idempotent. Throws on invalid input. */
 export function normalizeStyle(input: unknown): Style {
 	if (!input || typeof input !== 'object' || Array.isArray(input))
@@ -239,16 +249,8 @@ export function normalizeStyle(input: unknown): Style {
 		const spec = specOf(key);
 		if (!spec) throw new Error(`Unsupported style property "${key}"`);
 		if (!spec[0](value)) throw new Error(`Invalid ${key}: ${JSON.stringify(value)} (expected ${spec[1]})`);
-		out[key] =
-			key === 'anchor'
-				? (value ?? null)
-				: key === 'anchorPadding'
-					? sides(value, false)
-					: key === 'borderRadius' && typeof value === 'number'
-				? [value, value, value, value]
-				: key === 'boxShadow'
-					? (Array.isArray(value) ? value : [value]).map((s: any) => ({ x: 0, y: 0, blur: 0, spread: 0, color: '#00000040', inset: false, ...s }))
-					: value;
+		const normalize = NORMALIZE[key as keyof Normalized];
+		out[key] = normalize ? normalize(value) : value;
 	}
 	return Object.freeze(out) as Style;
 }
@@ -377,7 +379,7 @@ export function checkStyle(kind: ElementKind, st: Style) {
 }
 
 /** The string literals a longhand property accepts. */
-export const styleLiterals = (key: string): string[] => ((specOf(key)?.[0] as any)?.values ?? []) as string[];
+export const styleLiterals = (key: string): string[] => literalsOf(specOf(key));
 
 export type Sizing = 'fixed' | 'hug' | 'fill';
 
@@ -403,6 +405,6 @@ export function styleProperties(kind: StyleKind): StyleProperty[] {
 		.filter((key) => (SHORTHANDS[key] ?? [key]).every((k) => ALLOWED[kind].includes(k)))
 		.map((key) => {
 			const spec = specOf(SHORTHANDS[key]?.[0] ?? key)!;
-			return { name: key, hint: key in SHORTHANDS ? EXPAND[key][1] : spec[1], values: ((spec[0] as any).values ?? []) as string[] };
+			return { name: key, hint: key in SHORTHANDS ? EXPAND[key][1] : spec[1], values: literalsOf(spec) };
 		});
 }

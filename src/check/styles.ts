@@ -109,6 +109,15 @@ function combinations(shape: StyleShape): Combination[] | null {
  */
 type Merged = { values: Map<string, unknown>; open: boolean };
 
+/** `{ [key]: value }` normalized, or null when it is invalid. */
+function validStyle(key: string, value: unknown): Style | null {
+	try {
+		return normalizeStyle({ [key]: value });
+	} catch {
+		return null;
+	}
+}
+
 /** Merges entries the way `resolveStyle` does, keeping what is not visible as UNKNOWN. */
 function merge(entries: (ObjectExpression | null)[]): Merged {
 	const merged: Merged = { values: new Map(), open: false };
@@ -143,13 +152,10 @@ function merge(entries: (ObjectExpression | null)[]): Merged {
 				merged.values.set(key, ANCHORED);
 				continue;
 			}
-			try {
-				if (value === NOT_STATIC) throw 0;
-				for (const [k, v] of Object.entries(normalizeStyle({ [key]: value }))) merged.values.set(k, v);
-			} catch {
-				// A value that is not visible may also be null (absent): either way, unknown.
-				for (const k of longhands) merged.values.set(k, UNKNOWN);
-			}
+			const normalized = value === NOT_STATIC ? null : validStyle(key, value);
+			if (normalized) for (const [k, v] of Object.entries(normalized)) merged.values.set(k, v);
+			// Invalid (reported already), or not visible and so possibly null (absent): either way, unknown.
+			else for (const k of longhands) merged.values.set(k, UNKNOWN);
 		}
 	}
 	return merged;

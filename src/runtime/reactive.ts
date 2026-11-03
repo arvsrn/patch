@@ -9,16 +9,21 @@
 // cell a module created. What belongs to one app (its owner tree, portals,
 // held effects) lives with the app, not here.
 
-export type Owner = {
+type OwnerBase = {
 	children: Set<Owner>;
 	cleanups: (() => void)[];
 	parent: Owner | null;
 	disposed: boolean;
-	id?: number;
-	fn?: () => void;
-	deps?: Set<Set<Owner>>;
-	derived?: () => void;
 };
+/** An owner that tracks the cells it reads: `deps` holds the subscriber set of each. */
+type Tracking = OwnerBase & { deps: Set<Set<Observer>> };
+/** An effect: runs `fn`, in creation order (`id`) with other queued effects. */
+type Effect = Tracking & { kind: 'effect'; id: number; fn: () => void };
+/** A derived value's computation: `invalidate` marks it dirty when a dependency changes. */
+type Computation = Tracking & { kind: 'derived'; invalidate: () => void };
+type Observer = Effect | Computation;
+/** Owns what is created inside it (a component instance, a block). */
+export type Owner = (OwnerBase & { kind: 'owner' }) | Observer;
 
 export type Cell<T = any> = { v: T; notify: () => void };
 
@@ -26,21 +31,23 @@ export type Reactive = ReturnType<typeof createReactive>;
 
 export function createReactive() {
 	let owner: Owner | null = null;
-	let observer: Owner | null = null;
+	let observer: Observer | null = null;
 	let nextId = 0;
 	let batchDepth = 0;
 	let flushing = false;
-	const queue = new Set<Owner>();
+	const queue = new Set<Effect>();
 
-	const newOwner = (extra: Partial<Owner> = {}): Owner => {
-		const o: Owner = { children: new Set(), cleanups: [], parent: owner, disposed: false, ...extra };
+	/** An owner below the current one. */
+	const adopt = <O extends Owner>(o: O): O => {
 		owner?.children.add(o);
 		return o;
 	};
+	const newOwner = (): Owner => adopt({ kind: 'owner', children: new Set(), cleanups: [], parent: owner, disposed: false });
+	const newEffect = (fn: () => void): Effect => adopt({ kind: 'effect', id: nextId++, fn, deps: new Set(), children: new Set(), cleanups: [], parent: owner, disposed: false });
 	const reset = (o: Owner) => {
 		for (const child of [...o.children]) dispose(child);
 		for (const cleanup of o.cleanups.splice(0)) cleanup();
-		if (o.deps) {
+		if (o.kind !== 'owner') {
 			for (const subs of o.deps) subs.delete(o);
 			o.deps.clear();
 		}
@@ -52,7 +59,7 @@ export function createReactive() {
 		o.parent?.children.delete(o);
 	};
 	/** Runs `fn` with `o` as the owner of anything it creates and `obs` tracking its reads. */
-	const within = <T>(o: Owner | null, obs: Owner | null, fn: () => T): T => {
+	const within = <T>(o: Owner | null, obs: Observer | null, fn: () => T): T => {
 		const prevOwner = owner;
 		const prevObserver = observer;
 		owner = o;
@@ -64,25 +71,25 @@ export function createReactive() {
 			observer = prevObserver;
 		}
 	};
-	const track = (subs: Set<Owner>) => {
+	const track = (subs: Set<Observer>) => {
 		if (!observer) return;
 		subs.add(observer);
-		observer.deps!.add(subs);
+		observer.deps.add(subs);
 	};
-	const trigger = (subs: Set<Owner>) => {
+	const trigger = (subs: Set<Observer>) => {
 		batchDepth++;
 		try {
-			for (const c of [...subs]) c.derived ? c.derived() : queue.add(c);
+			for (const c of [...subs]) c.kind === 'derived' ? c.invalidate() : queue.add(c);
 		} finally {
 			batchDepth--;
 		}
 		if (!batchDepth) flush();
 	};
 	/** One run of an effect. An error is logged and leaves the effect subscribed to what it read, on the first run as on later ones. */
-	const run = (c: Owner) => {
+	const run = (c: Effect) => {
 		reset(c);
 		try {
-			within(c, c, c.fn!);
+			within(c, c, c.fn);
 		} catch (error) {
 			console.error(error);
 		}
@@ -94,7 +101,7 @@ export function createReactive() {
 		try {
 			while (queue.size) {
 				if (++rounds > 1000) throw new Error('Reactive loop: effects keep invalidating each other');
-				const pending = [...queue].sort((a, b) => a.id! - b.id!);
+				const pending = [...queue].sort((a, b) => a.id - b.id);
 				queue.clear();
 				for (const c of pending) if (!c.disposed) run(c);
 			}
@@ -117,7 +124,7 @@ export function createReactive() {
 	const onCleanup = (fn: () => void) => owner?.cleanups.push(fn);
 
 	const cell = <T>(initial: T): Cell<T> => {
-		const subs = new Set<Owner>();
+		const subs = new Set<Observer>();
 		let value = initial;
 		return {
 			get v(): T {
@@ -139,17 +146,17 @@ export function createReactive() {
 	 * reset or disposed, and recomputes if it is read again.
 	 */
 	const derived = <T>(fn: () => T) => {
-		const subs = new Set<Owner>();
+		const subs = new Set<Observer>();
 		let value: T;
 		let dirty = true;
-		const c: Owner = {
+		const c: Computation = {
+			kind: 'derived',
 			children: new Set(),
 			cleanups: [],
 			parent: null,
 			disposed: false,
-			id: nextId++,
 			deps: new Set(),
-			derived: () => {
+			invalidate: () => {
 				if (dirty) return;
 				dirty = true;
 				trigger(subs);
@@ -174,20 +181,16 @@ export function createReactive() {
 
 	/** Runs now, re-runs when its dependencies change. */
 	const effect = (fn: () => void) => {
-		const c = newOwner({ id: nextId++, fn, deps: new Set() });
+		const c = newEffect(fn);
 		run(c);
 		return c;
 	};
 
 	/** Like `effect`, but the first run is queued until the current batch ends. A returned function is a cleanup. */
 	const deferredEffect = (fn: () => unknown) => {
-		const c = newOwner({
-			id: nextId++,
-			deps: new Set(),
-			fn: () => {
-				const cleanup = fn();
-				if (typeof cleanup === 'function') owner!.cleanups.push(cleanup as () => void);
-			}
+		const c = newEffect(() => {
+			const cleanup = fn();
+			if (typeof cleanup === 'function') owner!.cleanups.push(cleanup as () => void);
 		});
 		queue.add(c);
 		if (!batchDepth) flush();
