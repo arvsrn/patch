@@ -22,20 +22,16 @@
 // app root and the variable: `src/workspace.pat.ts#workspace`, checked against
 // that module. Every evaluation loads its own copy of the app's modules, so
 // module state starts fresh, from its initializer or its override, and one
-// evaluation never sees another's (see `importProgram`). Evaluations run one
-// at a time.
+// evaluation never sees another's (see module-graph.ts).
 
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, extname, resolve, sep } from 'node:path';
+import { resolve } from 'node:path';
 import { compile, compileModule, type Compiled } from './compile';
-import { PATCH_SRC } from './paths';
+import { ModuleGraph } from './module-graph';
 import { appRootOf } from './routes';
-import * as patchModule from './runtime/context';
-import { setModuleOverrides } from './runtime/module-state';
 import { realize } from './runtime/realize';
 import type { Concrete } from './schema/concrete';
 import { isPatModule, outsideKeys, parseModuleStateId, parseStateId, sitePattern, stateId } from './schema/path';
-import type { Program } from './schema/program';
 import type { Location } from './schema/route';
 import { checkValues } from './typecheck';
 
@@ -162,6 +158,7 @@ export type EvaluateOptions = {
 	root?: string;
 };
 
+// Module state overrides are still set process-wide while a graph imports, so evaluations take turns.
 let queue: Promise<unknown> = Promise.resolve();
 
 /** Evaluates the app (or a page at `location`) once at its initial state with `overrides` applied. */
@@ -177,80 +174,11 @@ async function evaluateNow(compiled: Compiled, overrides: StateOverrides, { loca
 		const files = appFiles(compiled);
 		for (const id of ids) if (!resolveState(files, compiled, id, root)) throw unknown(id, files, compiled);
 	}
-	const moduleValues = Object.fromEntries(Object.entries(overrides).filter(([id]) => parseModuleStateId(id)));
-	const program: Program = compiled.imports.length
-		? await importProgram(compiled, root, moduleValues)
-		: new Function(`return (${compiled.module.replace(/^export default /m, '')})`)();
-	return realize(program, overrides, location);
-}
-
-// Each evaluation imports the app as a module graph of its own: its files
-// are loaded under `/__patch_eval_<n>__/<path>`, so a relative import from
-// one of them resolves to another file of the same graph. Packages and
-// Patch's runtime stay shared (one reactive core). .pat files and .pat.ts
-// modules are compiled as they load, the entry as already compiled.
-
-const GRAPH = /^\/__patch_eval_\d+__/;
-let graphs = 0;
-let current: { root: string; entry: Compiled } | null = null;
-const cache = new Map<string, { source: string; root: string; module: string }>();
-
-/** Whether `path` is the app's own (loaded in each graph) rather than a package's or Patch's. */
-const ownFile = (path: string) => path.startsWith(sep) && !path.includes(`${sep}node_modules${sep}`) && !path.startsWith(PATCH_SRC + sep);
-
-const IMAGES = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', '.ico'];
-const LOADERS: Record<string, 'ts' | 'tsx' | 'js' | 'jsx' | 'json'> = { '.ts': 'ts', '.mts': 'ts', '.tsx': 'tsx', '.js': 'js', '.mjs': 'js', '.jsx': 'jsx', '.json': 'json' };
-
-function load(path: string): { contents: string; loader: 'ts' | 'tsx' | 'js' | 'jsx' | 'json' } {
-	const { root, entry } = current!;
-	if (path === entry.path) return { contents: entry.module, loader: 'js' };
-	// An image is its path (it is not drawn at design time).
-	if (IMAGES.includes(extname(path).toLowerCase())) return { contents: `export default ${JSON.stringify(path)};`, loader: 'js' };
-	const source = readFileSync(path, 'utf8');
-	const patch = path.endsWith('.pat') || isPatModule(path);
-	if (!patch) {
-		const loader = LOADERS[extname(path)];
-		if (!loader) throw new Error(`Cannot import ${path} at design time`);
-		return { contents: source, loader };
-	}
-	let hit = cache.get(path);
-	if (hit?.source !== source || hit.root !== root) {
-		const module = path.endsWith('.pat') ? compile(source, path).module : compileModule(source, path, root).module;
-		cache.set(path, (hit = { source, root, module }));
-	}
-	return { contents: hit.module, loader: 'js' };
-}
-
-let registered = false;
-async function importProgram(compiled: Compiled, root: string, moduleValues: StateOverrides): Promise<Program> {
-	if (!registered) {
-		registered = true;
-		Bun.plugin({
-			name: 'pat',
-			setup(build) {
-				// Bun resolves bare specifiers before runtime plugins see them, so `patch` is a virtual module.
-				build.module('patch', () => ({ exports: patchModule, loader: 'object' }));
-				build.onResolve({ filter: /.*/ }, (args) => {
-					if (GRAPH.test(args.path)) return { path: args.path };
-					const graph = GRAPH.exec(args.importer)?.[0];
-					if (!graph || args.path === 'patch') return undefined;
-					const path = Bun.resolveSync(args.path, dirname(args.importer.slice(graph.length)));
-					if (!path.startsWith(sep)) return undefined;
-					return { path: ownFile(path) ? graph + path : path };
-				});
-				build.onLoad({ filter: GRAPH }, ({ path }) => load(path.replace(GRAPH, '')));
-			}
-		});
-	}
-	current = { root, entry: compiled };
-	setModuleOverrides(moduleValues);
-	const graph = `/__patch_eval_${++graphs}__`;
+	if (!compiled.imports.length) return realize(new Function(`return (${compiled.module.replace(/^export default /m, '')})`)(), overrides, location);
+	const graph = new ModuleGraph(compiled, root, Object.fromEntries(Object.entries(overrides).filter(([id]) => parseModuleStateId(id))));
 	try {
-		return (await import(graph + compiled.path)).default;
+		return realize(await graph.import(), overrides, location);
 	} finally {
-		setModuleOverrides({});
-		current = null;
-		// The program holds what it needs; the loader would otherwise keep every graph for the life of the process.
-		for (const key of Object.keys(require.cache)) if (key.startsWith(graph + sep)) delete require.cache[key];
+		graph.dispose();
 	}
 }
