@@ -5,7 +5,7 @@
 // change through a member (`a.b = c`, `delete a.b`), and every rune call.
 // Checks and code generation read these; none of them tracks scopes itself.
 
-import { calleeName, children, isTypeNode, patternIdentifiers, rootOf, unwrap, type Estree } from './ast';
+import { calleeName, children, isTypeNode, patternIdentifiers, rootOf, unwrap, type CallExpression, type Estree, type Identifier, type MemberExpression } from './ast';
 import type { Attribute, AttributeValue, Component, Inline, TemplateNode } from './ir';
 
 /** `prop`: declared by `$props()`. `param`: a snippet parameter. Both are read-only. */
@@ -19,7 +19,7 @@ export type SymbolKind = 'state' | 'derived' | 'item' | 'prop' | 'param' | 'loca
 export type Def = { value: Estree; whole: boolean };
 
 /** A declared name. */
-export type Symbol = {
+export type BoundSymbol = {
 	name: string;
 	kind: SymbolKind;
 	/** Values given to it by its declaration and assignments. */
@@ -35,12 +35,12 @@ export type Symbol = {
 };
 
 /** Reactive symbols: reads become `.v`. */
-export const isSignal = (symbol: Symbol | null | undefined) => !!symbol && symbol.kind !== 'local';
+export const isSignal = (symbol: BoundSymbol | null | undefined) => !!symbol && symbol.kind !== 'local';
 
 export type Reference = {
-	node: Estree;
+	node: Identifier;
 	/** null: a global (or an unknown name). */
-	symbol: Symbol | null;
+	symbol: BoundSymbol | null;
 	access: 'read' | 'write';
 	/** `{ x }` in an object literal: emitted as `{ x: x.v }`. */
 	shorthand: boolean;
@@ -49,7 +49,7 @@ export type Reference = {
 };
 
 /** An assignment, update or delete through a member: `a.b = c`, `a[i]++`, `delete a.b`, or `[a.b] = …` (`inPattern`). */
-export type MemberWrite = { node: Estree; target: Estree; root: Reference | null; inPattern: boolean };
+export type MemberWrite = { node: Estree; target: MemberExpression; root: Reference | null; inPattern: boolean };
 
 /**
  * Names reserved for runes: `$` followed by an identifier character (`$state`,
@@ -59,25 +59,25 @@ export type MemberWrite = { node: Estree; target: Estree; root: Reference | null
 export const isRuneName = (name: string) => /^\$[\p{ID_Start}$_]/u.test(name);
 
 /** A call to a rune name: `$state(…)`, `$derived.by(…)`, `$foo(…)`. */
-export type RuneCall = { node: Estree; name: string };
+export type RuneCall = { node: CallExpression; name: string };
 
 export type Bindings = {
 	references: Reference[];
 	memberWrites: MemberWrite[];
 	runeCalls: RuneCall[];
 	/** The identifiers of declarations that take a rune name. */
-	reserved: Estree[];
+	reserved: Identifier[];
 	/** The reference an identifier node is, if it is one. */
 	reference(node: Estree): Reference | undefined;
 	runeCall(node: Estree): RuneCall | undefined;
 	/** The symbol a top-level name of the script declares. */
-	topLevel(name: string): Symbol | null;
+	topLevel(name: string): BoundSymbol | null;
 };
 
 class Scope {
-	vars = new Map<string, Symbol>();
+	vars = new Map<string, BoundSymbol>();
 	constructor(readonly parent?: Scope) {}
-	get(name: string): Symbol | null {
+	get(name: string): BoundSymbol | null {
 		for (let s: Scope | undefined = this; s; s = s.parent) {
 			const symbol = s.vars.get(name);
 			if (symbol) return symbol;
@@ -125,7 +125,7 @@ class Binder {
 	references: Reference[] = [];
 	memberWrites: MemberWrite[] = [];
 	runeCalls: RuneCall[] = [];
-	reserved: Estree[] = [];
+	reserved: Identifier[] = [];
 	/** The scope holding each function's parameters. */
 	private paramScopes = new Map<Estree, Scope>();
 	/**
@@ -156,12 +156,12 @@ class Binder {
 		}
 	}
 
-	private reference(node: Estree, scope: Scope, access: Reference['access'], extra: Partial<Reference> = {}) {
+	private reference(node: Identifier, scope: Scope, access: Reference['access'], extra: Partial<Reference> = {}) {
 		this.references.push({ node, symbol: scope.get(node.name), access, shorthand: false, destructured: null, ...extra });
 	}
 
 	/** Declares `id` in `scope`, unless it already is, and records a reserved name. */
-	declare(scope: Scope, id: Estree, kind: SymbolKind) {
+	declare(scope: Scope, id: Identifier, kind: SymbolKind) {
 		if (scope.declare(id.name, kind) && isRuneName(id.name)) this.reserved.push(id);
 	}
 

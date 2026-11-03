@@ -6,18 +6,27 @@
 // (and, for an unsupported container, its children), so later phases only
 // ever see valid PAT and one pass surfaces as many problems as possible.
 
-import { calleeName, unwrap, type Estree } from './ast';
+import { calleeName, identifier, unwrap, type Estree } from './ast';
 import type { Reporter, Span } from './diagnostics';
 import { TAG_KINDS, TEXT_TAGS, type Attribute, type AttributeValue, type Component, type ComponentUse, type Each, type Element, type If, type Inline, type ModuleStateDecl, type Render, type Script, type Snippet, type Tag, type TemplateNode } from './ir';
+import type { AST } from 'svelte/compiler';
 import type { SvelteAst } from './parse';
 import { patImportFile } from './schema/path';
 import { PATCH_EXPORTS } from './schema/program';
 import { isSvgOnly, SVG_EXCLUDED, SVG_TAGS, SVG_TEXT } from './schema/svg';
 
-type Svelte = any;
+type Nodes = AST.Fragment['nodes'];
+type SvelteNode = Nodes[number];
+/** Any svelte node: template nodes, attributes and directives. */
+type Located = { start: number; end: number; name_loc?: unknown };
+/** Text with no visible characters: what a leaf element may hold. */
+const blank = (n: SvelteNode) => n.type === 'Text' && !n.data.trim();
+/** A JS node in svelte's AST as it is: acorn's, with offsets and TypeScript, where svelte types plain ESTree. */
+const js = (node: object): Estree => node;
 
 /** What may be nested in text. */
-const INLINE_TAGS: string[] = [...TEXT_TAGS.filter((t) => t !== 'p' && !/^h\d$/.test(t)), 'a'];
+const INLINE_TAGS: Tag[] = [...TEXT_TAGS.filter((t) => t !== 'p' && !/^h\d$/.test(t)), 'a'];
+const isInlineTag = (name: string): name is Tag => (INLINE_TAGS as string[]).includes(name);
 /** The tags an element can be written with outside a <select>, headings as one. */
 const TAG_LIST = [...Object.keys(TAG_KINDS).filter((t) => !/^(h[2-6]|option|optgroup)$/.test(t)), 'svg'].join(', ').replace('h1', 'h1–h6');
 /** Attributes every element accepts (not an inline <span>), besides any `aria-*` and `data-*` (see check/template.ts). */
@@ -59,12 +68,15 @@ const UNSUPPORTED_DIRECTIVES: Record<string, string> = {
 const isTag = (name: string): name is Tag => Object.hasOwn(TAG_KINDS, name);
 
 /** A node's name when it has one (elements, attributes), else the node. */
-const nameSpan = (node: Svelte): Span =>
-	node.name_loc ? { start: node.name_loc.start.character, end: node.name_loc.end.character } : { start: node.start, end: node.end };
-const spanOf = (node: Svelte): Span => ({ start: node.start, end: node.end });
+const nameSpan = (node: Located): Span => {
+	// svelte's locations also carry offsets (`character`), which its types leave out.
+	const loc = node.name_loc as { start: { character: number }; end: { character: number } } | null | undefined;
+	return loc ? { start: loc.start.character, end: loc.end.character } : { start: node.start, end: node.end };
+};
+const spanOf = (node: Located): Span => ({ start: node.start, end: node.end });
 
 export function lower(ast: SvelteAst, source: string, reporter: Reporter): Component {
-	const a = ast as Svelte;
+	const a = ast;
 	if (a.css) reporter.report(a.css, '<style> is not supported; use style={...} with $style({...}) values');
 	if (a.module) reporter.report(a.module, '<script module> is not supported in v0');
 	if (a.options) reporter.report(a.options, '<svelte:options> is not supported');
@@ -77,10 +89,11 @@ export function lower(ast: SvelteAst, source: string, reporter: Reporter): Compo
 // ------------------------------------------------------------------ script
 
 /** A `<script>` with `body` and nothing classified yet. */
-function emptyScript(instance: Svelte, body: Estree[]): Script {
-	const program = instance.content;
+function emptyScript(instance: AST.Script, body: Estree[]): Script {
+	const program: Estree = instance.content;
+	const lang = instance.attributes.find((a) => a.name === 'lang')?.value;
 	return {
-		lang: instance.attributes.find((a: Svelte) => a.name === 'lang')?.value?.[0]?.data === 'ts' ? 'ts' : 'js',
+		lang: Array.isArray(lang) && lang[0]?.type === 'Text' && lang[0].data === 'ts' ? 'ts' : 'js',
 		span: { start: program.start, end: program.end },
 		body,
 		imports: [],
@@ -93,8 +106,9 @@ function emptyScript(instance: Svelte, body: Estree[]): Script {
 	};
 }
 
-function lowerScript(instance: Svelte, reporter: Reporter): Script {
-	const program = instance.content;
+function lowerScript(instance: AST.Script, reporter: Reporter): Script {
+	// Svelte types the script as plain ESTree; it is acorn's, with TypeScript and offsets.
+	const program: Estree = instance.content;
 	const script = emptyScript(instance, program.body);
 
 	for (const statement of program.body) {
@@ -170,8 +184,9 @@ function importProblem(statement: Estree, reporter: Reporter): boolean {
  * `$state` declarations: `const name = $state({ key: value, … })`.
  */
 export function lowerModule(ast: SvelteAst, reporter: Reporter): { component: Component; states: ModuleStateDecl[] } {
-	const instance = (ast as Svelte).instance;
-	const program = instance.content;
+	// A module is parsed as a script, so it has one.
+	const instance = ast.instance!;
+	const program: Estree = instance.content;
 	const script = emptyScript(instance, []);
 	const states: ModuleStateDecl[] = [];
 	const shape = 'module state is declared as `const name = $state({ key: value, … })` at the top level';
@@ -266,14 +281,14 @@ class TemplateLowering {
 		return this.context === 'svg' || this.context === 'svg-text';
 	}
 
-	private unsupported(node: Svelte) {
-		this.reporter.report(nameSpan(node), UNSUPPORTED_NODES[node.type] ?? `<${node.name ?? node.type}> is not supported`);
+	private unsupported(node: SvelteNode) {
+		this.reporter.report(nameSpan(node), UNSUPPORTED_NODES[node.type] ?? `<${'name' in node ? node.name : node.type}> is not supported`);
 	}
 
 	/** The children of a container. Runs of text and `{expr}` become one Text node. */
-	children(nodes: Svelte[]): TemplateNode[] {
+	children(nodes: Nodes): TemplateNode[] {
 		const out: TemplateNode[] = [];
-		let group: Svelte[] = [];
+		let group: Nodes = [];
 		const flush = () => {
 			const span = group.length ? { start: group[0].start, end: group[group.length - 1].end } : null;
 			// SVG collapses whitespace but keeps the space between runs (`a <tspan>b</tspan>`).
@@ -302,12 +317,12 @@ class TemplateLowering {
 		return out;
 	}
 
-	private ifBlock(node: Svelte): If {
+	private ifBlock(node: AST.IfBlock): If {
 		const result: If = { type: 'if', span: spanOf(node), branches: [], otherwise: null };
-		for (let current = node; current; ) {
+		for (let current: AST.IfBlock | null = node; current; ) {
 			result.branches.push({ test: current.test, body: this.children(current.consequent.nodes) });
-			const alternate = current.alternate?.nodes ?? [];
-			const elseIf = alternate.find((n: Svelte) => n.type === 'IfBlock' && n.elseif);
+			const alternate: Nodes = current.alternate?.nodes ?? [];
+			const elseIf = alternate.find((n): n is AST.IfBlock => n.type === 'IfBlock' && n.elseif);
 			if (elseIf) current = elseIf;
 			else {
 				if (current.alternate) result.otherwise = this.children(alternate);
@@ -317,7 +332,7 @@ class TemplateLowering {
 		return result;
 	}
 
-	private eachBlock(node: Svelte): Each[] {
+	private eachBlock(node: AST.EachBlock): Each[] {
 		if (node.fallback) this.reporter.report(nameSpan(node.fallback.nodes[0] ?? node), '{:else} inside {#each} is not supported; use {#if list.length === 0}');
 		const body = this.children(node.body.nodes);
 		if (!node.context || node.context.type !== 'Identifier') {
@@ -325,13 +340,13 @@ class TemplateLowering {
 			return [];
 		}
 		// svelte gives the index as a bare name; it follows the item and its type annotation.
-		const at = node.index ? this.source.indexOf(node.index, (node.context.typeAnnotation ?? node.context).end) : -1;
-		const index = node.index ? { type: 'Identifier', name: node.index, start: at, end: at + node.index.length } : null;
-		return [{ type: 'each', span: spanOf(node), list: node.expression, item: node.context, index, key: node.key ?? null, body }];
+		const item = js(node.context);
+		const index = node.index ? identifier(node.index, this.source.indexOf(node.index, (item.typeAnnotation ?? item).end)) : null;
+		return [{ type: 'each', span: spanOf(node), list: node.expression, item, index, key: node.key ?? null, body }];
 	}
 
 	/** `<Card a={x}>content</Card>`: attributes are props, the content is the `children` snippet. */
-	private component(node: Svelte): TemplateNode[] {
+	private component(node: AST.Component): TemplateNode[] {
 		// Content passed to a component is in the same place: HTML, or SVG.
 		const children = this.within(this.context === 'select' ? 'html' : this.context, () => this.children(node.fragment.nodes));
 		if (node.name.includes('.')) {
@@ -351,23 +366,24 @@ class TemplateLowering {
 		const explicit = props.find((p) => p.name === 'children');
 		if (explicit && children.length) this.reporter.report(explicit.nameSpan, 'children is given both as a prop and as content');
 		const loc = nameSpan(node);
-		const name = { type: 'Identifier', name: node.name, start: loc.start, end: loc.end };
+		const name = identifier(node.name, loc.start);
 		return [{ type: 'component', span: spanOf(node), nameSpan: loc, name, props, children: children.length ? children : null }];
 	}
 
-	private snippet(node: Svelte): Snippet[] {
+	private snippet(node: AST.SnippetBlock): Snippet[] {
 		const body = this.children(node.body.nodes);
 		const params = node.parameters.filter((p: Estree) => {
 			if (unwrap(p)?.type === 'Identifier') return true;
 			this.reporter.report(p, 'snippet parameters must be plain names');
 			return false;
 		});
-		return [{ type: 'snippet', span: spanOf(node), name: node.expression, params: params.map(unwrap), body }];
+		return [{ type: 'snippet', span: spanOf(node), name: js(node.expression), params: params.map(unwrap), body }];
 	}
 
-	private render(node: Svelte): Render[] {
-		const chain = node.expression.type === 'ChainExpression';
-		const call = chain ? node.expression.expression : node.expression;
+	private render(node: AST.RenderTag): Render[] {
+		const expression = js(node.expression);
+		const chain = expression.type === 'ChainExpression';
+		const call = chain ? expression.expression : expression;
 		if (call.arguments.some((a: Estree) => a.type === 'SpreadElement')) {
 			this.reporter.report(node, '{@render} arguments cannot be spread');
 			return [];
@@ -376,7 +392,7 @@ class TemplateLowering {
 	}
 
 	/** One element, or (for an unsupported tag) its lowered children so their problems are reported too. */
-	private element(node: Svelte): TemplateNode[] {
+	private element(node: AST.RegularElement): TemplateNode[] {
 		const tag = node.name;
 		if (this.inSvg && tag === 'portal') {
 			this.reporter.report(nameSpan(node), '<portal> cannot be inside <svg>');
@@ -411,7 +427,7 @@ class TemplateLowering {
 					this.reporter.report(child.type === 'component' ? child.nameSpan : child.span, `<${tag}> holds <option>s and <optgroup>s, directly or in {#if} and {#each}`);
 			return [{ ...base, kind, children }];
 		}
-		if (nodes.some((n: Svelte) => n.type !== 'Text' || n.data.trim()))
+		if (!nodes.every(blank))
 			this.reporter.report(nameSpan(node), kind === 'image' ? '<img> cannot have children' : `<${tag}> cannot have children; use value={...}`);
 		if (kind === 'image') {
 			if (!attributes.some((a) => a.type === 'attribute' && a.name === 'src')) this.reporter.report(nameSpan(node), '<img> needs src');
@@ -424,14 +440,14 @@ class TemplateLowering {
 	}
 
 	/** `<svg>`: a leaf of the layout, holding SVG. */
-	private svg(node: Svelte): TemplateNode[] {
+	private svg(node: AST.RegularElement): TemplateNode[] {
 		const { style, attributes } = this.attributes(node, 'svg');
 		const children = this.within('svg', () => this.children(node.fragment.nodes));
 		return [{ type: 'element', tag: 'svg', kind: 'svg', span: spanOf(node), nameSpan: nameSpan(node), style, attributes, children }];
 	}
 
 	/** An SVG element: in an <svg>, or an SVG-only tag (the root of a component rendered in one). */
-	private graphic(node: Svelte): TemplateNode[] {
+	private graphic(node: AST.RegularElement): TemplateNode[] {
 		const tag: string = node.name;
 		const excluded = SVG_EXCLUDED[tag];
 		if (excluded || !SVG_TAGS.has(tag)) {
@@ -444,10 +460,10 @@ class TemplateLowering {
 	}
 
 	/** `<portal id="name" />`: only a static, non-empty id. */
-	private portal(node: Svelte): TemplateNode[] {
+	private portal(node: AST.RegularElement): TemplateNode[] {
 		const needsId = '<portal> needs a static id: <portal id="name" />';
 		let name: string | null = null;
-		let id: Svelte = null;
+		let id: AST.Attribute | null = null;
 		for (const a of node.attributes) {
 			if (a.type === 'Attribute' && a.name === 'id') {
 				id = a;
@@ -460,18 +476,18 @@ class TemplateLowering {
 			}
 		}
 		if (!id) this.reporter.report(nameSpan(node), needsId);
-		if (node.fragment.nodes.some((n: Svelte) => n.type !== 'Text' || n.data.trim()))
+		if (!node.fragment.nodes.every(blank))
 			this.reporter.report(nameSpan(node), '<portal> cannot have children; elements render into it with portal="..."');
 		return name === null ? [] : [{ type: 'portal', span: spanOf(node), nameSpan: nameSpan(node), name }];
 	}
 
 	/** `kind` is null for an element nested in text: no bindings or portal. */
-	private attributes(node: Svelte, kind: Element['kind'] | null) {
+	private attributes(node: AST.RegularElement, kind: Element['kind'] | null) {
 		let style: Estree | null = null;
 		const attributes: Attribute[] = [];
 		const inText = kind === null;
 		const where = `<${node.name}>${inText ? ' inside text' : ''}`;
-		const expressionOf = (a: Svelte): Estree | null => {
+		const expressionOf = (a: AST.Attribute): Estree | null => {
 			if (a.value !== true && !Array.isArray(a.value)) return a.value.expression;
 			this.reporter.report(nameSpan(a), `${a.name} needs an expression: ${a.name}={...}`);
 			return null;
@@ -479,9 +495,9 @@ class TemplateLowering {
 		for (const a of node.attributes) {
 			const span = spanOf(a);
 			if (a.type === 'BindDirective') {
-				if (a.name === 'this' ? inText : a.name !== 'value' || (kind !== 'input' && kind !== 'textarea' && kind !== 'select'))
-					this.reporter.report(nameSpan(a), inText ? `bind:${a.name} is not supported on ${where}` : 'only bind:value on <input>/<textarea>/<select> and bind:this are supported');
-				else attributes.push({ type: 'bind', name: a.name, span, nameSpan: nameSpan(a), expression: a.expression });
+				const name = a.name === 'this' && !inText ? 'this' : a.name === 'value' && (kind === 'input' || kind === 'textarea' || kind === 'select') ? 'value' : null;
+				if (name) attributes.push({ type: 'bind', name, span, nameSpan: nameSpan(a), expression: js(a.expression) });
+				else this.reporter.report(nameSpan(a), inText ? `bind:${a.name} is not supported on ${where}` : 'only bind:value on <input>/<textarea>/<select> and bind:this are supported');
 			} else if (a.type !== 'Attribute') {
 				this.reporter.report(nameSpan(a), UNSUPPORTED_DIRECTIVES[a.type] ?? `${a.type} is not supported`);
 			} else if (a.name === 'style' && (kind === 'option' || kind === 'optgroup')) {
@@ -489,7 +505,7 @@ class TemplateLowering {
 			} else if (a.name === 'style' && kind === 'graphic') {
 				this.reporter.report(nameSpan(a), 'SVG elements are styled with presentation attributes (fill, stroke, opacity, …), not style=');
 			} else if (a.name === 'style') {
-				if (Array.isArray(a.value) && a.value.some((part: Svelte) => part.type === 'Text'))
+				if (Array.isArray(a.value) && a.value.some((part) => part.type === 'Text'))
 					this.reporter.report(nameSpan(a), 'CSS strings are not supported; use style={$style({...})} or style={{ ... }}');
 				else style = expressionOf(a);
 			} else if (a.name === 'class') {
@@ -520,7 +536,7 @@ class TemplateLowering {
 	 * Text content. Static whitespace collapses to one space and is trimmed at
 	 * the edges (across nested spans); expression values are kept verbatim.
 	 */
-	private inline(nodes: Svelte[]): Inline[] {
+	private inline(nodes: Nodes): Inline[] {
 		const content = this.inlineParts(nodes, { space: true });
 		const trimEnd = (list: Inline[]) => {
 			const last = list[list.length - 1];
@@ -534,7 +550,7 @@ class TemplateLowering {
 		return content;
 	}
 
-	private inlineParts(nodes: Svelte[], state: { space: boolean }): Inline[] {
+	private inlineParts(nodes: Nodes, state: { space: boolean }): Inline[] {
 		const out: Inline[] = [];
 		for (const node of nodes) {
 			if (node.type === 'Comment') continue;
@@ -552,7 +568,7 @@ class TemplateLowering {
 				out.push({ type: 'static', value: '\n' });
 				state.space = true;
 			} else if (node.type === 'RegularElement') {
-				if (!INLINE_TAGS.includes(node.name)) {
+				if (!isInlineTag(node.name)) {
 					this.reporter.report(nameSpan(node), `<${node.name}> cannot appear inside text; only ${INLINE_TAGS.join(', ')} and br can`);
 					out.push(...this.inlineParts(node.fragment.nodes, state));
 					continue;
@@ -569,8 +585,8 @@ class TemplateLowering {
 	}
 }
 
-function attributeValue(a: Svelte): AttributeValue {
+function attributeValue(a: AST.Attribute): AttributeValue {
 	if (a.value === true) return true;
 	if (!Array.isArray(a.value)) return { expression: a.value.expression };
-	return { parts: a.value.map((part: Svelte) => (part.type === 'Text' ? part.data : part.expression)) };
+	return { parts: a.value.map((part) => (part.type === 'Text' ? part.data : js(part.expression))) };
 }

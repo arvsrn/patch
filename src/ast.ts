@@ -1,8 +1,31 @@
 // Helpers for ESTree nodes (the JS/TS inside <script> and template `{...}`).
-// Nodes are untyped (`any`): they come from svelte's acorn with TypeScript
-// support, and only the shapes used here matter.
+// Nodes come from svelte's acorn with TypeScript support. A node in general
+// is untyped (`Estree`); the kinds the IR and the binder hold on to are
+// typed below, as far as Patch reads them, and their children are `Estree`
+// again. More kinds get a type as code comes to rely on their shape.
 
 export type Estree = any;
+
+/** What every node has: its kind and its UTF-16 offsets in the .pat source. */
+type Node<T extends string> = { type: T; start: number; end: number };
+
+export type Identifier = Node<'Identifier'> & {
+	name: string;
+	/** `x: T` in a declaration or parameter. */
+	typeAnnotation?: Node<'TSTypeAnnotation'> & { typeAnnotation: Estree };
+};
+/** An identifier for a name svelte gives as a string, written at `start`. */
+export const identifier = (name: string, start: number): Identifier => ({ type: 'Identifier', name, start, end: start + name.length });
+export type CallExpression = Node<'CallExpression'> & { callee: Estree; arguments: Estree[]; optional: boolean };
+export type MemberExpression = Node<'MemberExpression'> & { object: Estree; property: Estree; computed: boolean; optional: boolean };
+export type Property = Node<'Property'> & { key: Estree; value: Estree; computed: boolean; shorthand: boolean; method: boolean; kind: 'init' | 'get' | 'set' };
+export type ObjectExpression = Node<'ObjectExpression'> & { properties: (Property | (Node<'SpreadElement'> & { argument: Estree }))[] };
+export type ImportDeclaration = Node<'ImportDeclaration'> & {
+	source: Node<'Literal'> & { value: string };
+	specifiers: (Node<'ImportSpecifier' | 'ImportDefaultSpecifier' | 'ImportNamespaceSpecifier'> & { local: Identifier; imported?: Estree; importKind?: 'type' | 'value' })[];
+	importKind?: 'type' | 'value';
+};
+export type VariableDeclarator = Node<'VariableDeclarator'> & { id: Estree; init: Estree | null };
 
 /** Keys that never hold child nodes we care about, including type annotations. */
 const SKIP_KEYS = new Set(['type', 'start', 'end', 'loc', 'range', 'typeAnnotation', 'returnType', 'typeParameters', 'typeArguments', 'leadingComments', 'trailingComments', 'metadata']);
@@ -27,7 +50,7 @@ export const calleeName = (callee: Estree): string | null => {
 };
 
 /** The identifiers a declaration pattern binds. */
-export const patternIdentifiers = (p: Estree, out: Estree[] = []): Estree[] => {
+export const patternIdentifiers = (p: Estree, out: Identifier[] = []): Identifier[] => {
 	if (!p) return out;
 	if (p.type === 'Identifier') out.push(p);
 	else if (p.type === 'ObjectPattern') p.properties.forEach((q: Estree) => patternIdentifiers(q.type === 'RestElement' ? q.argument : q.value, out));

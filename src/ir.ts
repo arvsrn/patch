@@ -5,7 +5,7 @@
 // script keeps its statements and only the top-level declarations PAT gives
 // meaning to (runes, imports) are classified.
 
-import { literal, NOT_STATIC, type Estree } from './ast';
+import { literal, NOT_STATIC, type CallExpression, type Estree, type Identifier, type ImportDeclaration, type ObjectExpression, type VariableDeclarator } from './ast';
 import type { Span } from './diagnostics';
 import { patImportFile } from './schema/path';
 import type { PatchExport } from './schema/program';
@@ -23,26 +23,26 @@ export type Script = {
 	span: Span;
 	/** Every top-level statement, imports included. */
 	body: Estree[];
-	imports: Estree[];
+	imports: ImportDeclaration[];
 	/** `let x = $state(...)`. */
 	state: StateDecl[];
 	/** The names `let { ... } = $props()` declares. */
 	props: PropDecl[];
 	/** The declarator holding `$props()`. */
-	propsDeclarator: Estree | null;
+	propsDeclarator: VariableDeclarator | null;
 	/** `import { getContext as get } from 'patch'`: local name → imported name. */
 	patchImports: { local: string; imported: PatchExport }[];
 	/** The names `let x = $derived(...)` / `$derived.by(...)` declares. */
-	derived: Estree[];
+	derived: Identifier[];
 	/** The `$state`/`$derived`/`$effect`/`$props` calls in a position where PAT accepts them, whatever their shape. */
-	runes: Set<Estree>;
+	runes: Set<CallExpression>;
 };
 
-export type StateDecl = { id: Estree; call: Estree; info: StateInfo };
+export type StateDecl = { id: Identifier; call: CallExpression; info: StateInfo };
 /** `const name = $state({ … })` in a .pat.ts module: the object's own keys, in order. */
-export type ModuleStateDecl = { id: Estree; call: Estree; initial: Estree; keys: string[] };
+export type ModuleStateDecl = { id: Identifier; call: CallExpression; initial: ObjectExpression; keys: string[] };
 /** `key: local = fallback` in `let { ... } = $props()`. */
-export type PropDecl = { key: string; local: Estree; fallback: Estree | null };
+export type PropDecl = { key: string; local: Identifier; fallback: Estree | null };
 
 export type StateInfo = {
 	/**
@@ -136,9 +136,9 @@ export type Each = {
 	type: 'each';
 	span: Span;
 	list: Estree;
-	item: Estree;
+	item: Identifier;
 	/** The index name, as an identifier. */
-	index: Estree | null;
+	index: Identifier | null;
 	key: Estree | null;
 	body: TemplateNode[];
 };
@@ -158,13 +158,13 @@ export type ComponentUse = {
 	span: Span;
 	nameSpan: Span;
 	/** The tag as an identifier reference. */
-	name: Estree;
+	name: Identifier;
 	props: { name: string; span: Span; nameSpan: Span; value: AttributeValue }[];
 	children: TemplateNode[] | null;
 };
 
 /** `{#snippet name(a, b)}…{/snippet}`: a render fragment declared in its block. */
-export type Snippet = { type: 'snippet'; span: Span; name: Estree; params: Estree[]; body: TemplateNode[] };
+export type Snippet = { type: 'snippet'; span: Span; name: Identifier; params: Identifier[]; body: TemplateNode[] };
 
 /** `{@render name(args)}`, or `{@render name?.(args)}` (`optional`: a nullish snippet renders nothing). */
 export type Render = { type: 'render'; span: Span; callee: Estree; args: Estree[]; optional: boolean };
@@ -180,8 +180,8 @@ export function staticValue(value: AttributeValue): string | null | true {
 }
 
 /** The components a script imports (`import Card from "./Card.pat"`): local name → the file its specifier names, and the import. */
-export function componentImports(script: Script | null): Map<string, { file: string; statement: Estree }> {
-	const out = new Map<string, { file: string; statement: Estree }>();
+export function componentImports(script: Script | null): Map<string, { file: string; statement: ImportDeclaration }> {
+	const out = new Map<string, { file: string; statement: ImportDeclaration }>();
 	for (const statement of script?.imports ?? []) {
 		const file = patImportFile(statement.source.value);
 		const local = statement.specifiers[0]?.local?.name;

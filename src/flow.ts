@@ -4,14 +4,14 @@
 // understood is treated as unrelated.
 
 import { unwrap, type Estree } from './ast';
-import { isSignal, type Bindings, type Symbol } from './bind';
+import { isSignal, type Bindings, type BoundSymbol } from './bind';
 
 /**
  * A reactive variable a value may share objects with. `fresh`: the value
  * is a new container whose contents are the variable's (`list.slice()`,
  * `[...list]`, `{ ...obj }`), so changing the container itself is safe.
  */
-export type Alias = { symbol: Symbol; fresh: boolean };
+export type Alias = { symbol: BoundSymbol; fresh: boolean };
 
 /** Calls returning an element of the receiver. */
 const ELEMENT = new Set(['find', 'findLast', 'at', 'get']);
@@ -19,7 +19,7 @@ const ELEMENT = new Set(['find', 'findLast', 'at', 'get']);
 const COPY = new Set(['filter', 'slice', 'concat', 'toSorted', 'toReversed', 'toSpliced', 'with', 'flat', 'values']);
 
 /** The reactive variables (state, derived, each items) `expr`'s value may be, or be part of. */
-export function aliases(bindings: Bindings, expr: Estree, seen = new Set<Symbol>()): Alias[] {
+export function aliases(bindings: Bindings, expr: Estree, seen = new Set<BoundSymbol>()): Alias[] {
 	const e = unwrap(expr);
 	const within = (node: Estree) => aliases(bindings, node, seen).map((a) => ({ ...a, fresh: false }));
 	const copied = (node: Estree) => aliases(bindings, node, seen).map((a) => ({ ...a, fresh: true }));
@@ -78,7 +78,7 @@ const isDomType = (t: Estree): boolean => {
  * handler's event, a `bind:this` variable, a value typed or cast as a DOM
  * type, or anything read or called from one of those.
  */
-export function fromDom(bindings: Bindings, expr: Estree, seen = new Set<Symbol>()): boolean {
+export function fromDom(bindings: Bindings, expr: Estree, seen = new Set<BoundSymbol>()): boolean {
 	if (!expr) return false;
 	if (/^TS(As|Satisfies|TypeAssertion)Expression$/.test(expr.type)) return isDomType(expr.typeAnnotation) || fromDom(bindings, expr.expression, seen);
 	const e = unwrap(expr);
@@ -114,4 +114,4 @@ export function fromDom(bindings: Bindings, expr: Estree, seen = new Set<Symbol>
 }
 
 /** A reactive variable whose objects `expr` is (not a fresh copy of), so changing `expr` in place changes it. */
-export const sharedWith = (bindings: Bindings, expr: Estree): Symbol | null => aliases(bindings, expr).find((a) => !a.fresh)?.symbol ?? null;
+export const sharedWith = (bindings: Bindings, expr: Estree): BoundSymbol | null => aliases(bindings, expr).find((a) => !a.fresh)?.symbol ?? null;

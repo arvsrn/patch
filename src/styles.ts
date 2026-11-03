@@ -2,15 +2,14 @@
 // the element kind it styles, and the shape of every element's style=.
 // `check/styles.ts` validates them and completion lists from them.
 
-import { children, propertyName, unwrap, type Estree } from './ast';
+import { children, propertyName, unwrap, type Estree, type ObjectExpression } from './ast';
 import type { Bindings } from './bind';
 import type { Span } from './diagnostics';
 import { elements, type Component } from './ir';
 import type { ElementKind, StyleKind } from './schema/style';
 
 export type StyleUse = {
-	/** An ObjectExpression. */
-	object: Estree;
+	object: ObjectExpression;
 	/** The kind it is checked for. A `$style(...)` on its own is checked for `any` element. */
 	kind: StyleKind;
 };
@@ -22,7 +21,7 @@ export type StyleUse = {
  * (a falsy value), or something it cannot see into.
  */
 export type StyleShape =
-	| { type: 'object'; object: Estree }
+	| { type: 'object'; object: ObjectExpression }
 	| { type: 'list'; items: StyleShape[] }
 	| { type: 'choice'; options: { shape: StyleShape; node: Estree | null }[] }
 	| { type: 'none' }
@@ -54,7 +53,7 @@ export function collectStyles(component: Component, bindings: Bindings): Styles 
 	type Path = { held: boolean; seen: Set<unknown> };
 	const shape = (expr: Estree, kind: StyleKind, path: Path): StyleShape => {
 		const e = unwrap(expr);
-		const object = (object: Estree, frozen: boolean): StyleShape => {
+		const object = (object: ObjectExpression, frozen: boolean): StyleShape => {
 			styles.uses.push({ object, kind });
 			return frozen ? { type: 'object', object } : UNKNOWN;
 		};

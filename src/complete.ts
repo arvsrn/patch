@@ -6,7 +6,7 @@
 // kind, comes from the same analysis the checks use. Anywhere else this
 // returns nothing.
 
-import { propertyName, type Estree } from './ast';
+import { propertyName, type ObjectExpression, type Property } from './ast';
 import { front } from './compile';
 import { Reporter } from './diagnostics';
 import { styleProperties, type StyleKind } from './schema/style';
@@ -21,7 +21,7 @@ export type Completion = {
 
 const HOLE = '$$complete';
 
-export function complete(source: string, offset: number, _options: { filename?: string } = {}): Completion[] {
+export function complete(source: string, offset: number): Completion[] {
 	const before = source.slice(0, offset);
 	const after = source.slice(offset);
 	const value = /[A-Za-z_$][\w$]*\s*:\s*(['"]?)[\w-]*$/.exec(before);
@@ -41,15 +41,15 @@ export function complete(source: string, offset: number, _options: { filename?: 
 	const result = front(patched, new Reporter(patched));
 	if (!result) return [];
 	const kinds = new Set<StyleKind>();
-	let object: Estree;
-	let property: Estree;
+	let object: ObjectExpression | undefined;
+	let property: Property | undefined;
 	for (const use of result.styles.uses) {
-		const p = use.object.properties.find((p: Estree) => p.type === 'Property' && !p.computed && (value ? p.value : p.key).start === start);
+		const p = use.object.properties.find((p): p is Property => p.type === 'Property' && !p.computed && (value ? p.value : p.key).start === start);
 		if (!p) continue;
 		[object, property] = [use.object, p];
 		kinds.add(use.kind);
 	}
-	if (!property) return [];
+	if (!object || !property) return [];
 
 	// A `$style` const is checked where it is declared and again for every
 	// element using it; only what is legal everywhere is offered.
@@ -65,6 +65,6 @@ export function complete(source: string, offset: number, _options: { filename?: 
 			...(quote ? {} : { insertText: `'${v}'` })
 		}));
 	}
-	const present = new Set(object.properties.filter((p: Estree) => p !== property && p.type === 'Property' && !p.computed).map(propertyName));
+	const present = new Set(object.properties.filter((p): p is Property => p !== property && p.type === 'Property' && !p.computed).map(propertyName));
 	return legal.filter((p) => !present.has(p.name)).map((p) => ({ label: p.name, kind: 'property', detail: p.hint }));
 }

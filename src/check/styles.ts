@@ -4,7 +4,7 @@
 // is certain. What is not certain is validated by the runtime with the same
 // schema.
 
-import { literal, NOT_STATIC, propertyName, unwrap, type Estree } from '../ast';
+import { literal, NOT_STATIC, propertyName, unwrap, type Estree, type ObjectExpression, type Property } from '../ast';
 import type { Bindings } from '../bind';
 import type { Reporter } from '../diagnostics';
 import { checkKey, discards, normalizeStyle, rulesFor, SHORTHANDS, styleLiterals, type ElementKind, type Style, type StyleRule } from '../schema/style';
@@ -72,7 +72,7 @@ const UNKNOWN = Symbol('unknown');
 const ANCHORED = Symbol('anchored');
 
 /** One way the style can evaluate: the entries merged (null: not visible) and the alternative taken at each choice. */
-type Combination = { entries: (Estree | null)[]; picks: Map<StyleShape, number> };
+type Combination = { entries: (ObjectExpression | null)[]; picks: Map<StyleShape, number> };
 
 function combinations(shape: StyleShape): Combination[] | null {
 	switch (shape.type) {
@@ -110,7 +110,7 @@ function combinations(shape: StyleShape): Combination[] | null {
 type Merged = { values: Map<string, unknown>; open: boolean };
 
 /** Merges entries the way `resolveStyle` does, keeping what is not visible as UNKNOWN. */
-function merge(entries: (Estree | null)[]): Merged {
+function merge(entries: (ObjectExpression | null)[]): Merged {
 	const merged: Merged = { values: new Map(), open: false };
 	const unknownAll = () => {
 		for (const key of merged.values.keys()) merged.values.set(key, UNKNOWN);
@@ -123,7 +123,7 @@ function merge(entries: (Estree | null)[]): Merged {
 		}
 		// What the entry discards from earlier ones is known absent, even when open.
 		// A position that is not visible may discard what any position does.
-		const position = entry.properties.find((p: Estree) => p.type === 'Property' && !p.computed && propertyName(p) === 'position');
+		const position = entry.properties.find((p): p is Property => p.type === 'Property' && !p.computed && propertyName(p) === 'position');
 		const mode = position ? literal(position.value) : undefined;
 		const at = (position: unknown) => discards({ position } as Style);
 		if (mode !== NOT_STATIC) for (const key of at(mode)) merged.values.set(key, undefined);

@@ -82,7 +82,7 @@ export function startLanguageServer() {
 		const document = documents.get(textDocument.uri);
 		if (!document || isPatModule(filename(document.uri))) return [];
 		try {
-			return complete(document.getText(), document.offsetAt(position), { filename: filename(document.uri) }).map((c) => ({
+			return complete(document.getText(), document.offsetAt(position)).map((c) => ({
 				label: c.label,
 				kind: c.kind === 'property' ? CompletionItemKind.Property : CompletionItemKind.Value,
 				detail: c.detail,
