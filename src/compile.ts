@@ -28,7 +28,7 @@ import { elements, fragments, type AttributeValue, type Component, type Element,
 import { lower, lowerModule } from './lower';
 import { parse } from './parse';
 import { RUNTIME } from './paths';
-import { location, moduleStateId } from './schema/path';
+import { location, moduleStateId, patImportFile } from './schema/path';
 import { collectStyles, type Styles } from './styles';
 import { domNames, globalNames, typecheck, type TemplateWrite } from './typecheck';
 
@@ -86,9 +86,9 @@ function boundElements(component: Component, bindings: Bindings): TemplateWrite[
 function componentImports(component: Component, filename: string): Map<string, { path: string; statement: any }> {
 	const out = new Map<string, { path: string; statement: any }>();
 	for (const statement of component.script?.imports ?? []) {
-		const from: string = statement.source.value;
+		const file = patImportFile(statement.source.value);
 		const local = statement.specifiers[0]?.local?.name;
-		if (/\.pat($|\?)/.test(from) && local) out.set(local, { path: resolve(dirname(resolve(filename)), from.split('?')[0]), statement });
+		if (file && local) out.set(local, { path: resolve(dirname(resolve(filename)), file), statement });
 	}
 	return out;
 }

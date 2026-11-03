@@ -55,11 +55,24 @@ export type StateInfo = {
 
 export type TemplateNode = Element | Text | If | Each | Portal | ComponentUse | Snippet | Render;
 
-/** The tags PAT supports (see `KINDS` in lower.ts). */
-export type Tag =
-	| 'main' | 'div' | 'button' | 'a' | 'nav' | 'header' | 'footer' | 'section' | 'article' | 'aside' | 'ul' | 'ol' | 'li' | 'label' | 'form'
-	| 'p' | 'span' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' | 'strong' | 'em' | 'b' | 'i' | 'code' | 'small' | 's' | 'mark'
-	| 'input' | 'textarea' | 'select' | 'option' | 'optgroup' | 'img';
+/** Containers. */
+export const FRAME_TAGS = ['main', 'div', 'button', 'a', 'nav', 'header', 'footer', 'section', 'article', 'aside', 'ul', 'ol', 'li', 'label', 'form'] as const;
+/** Text blocks; inside text, these are inline (as are <a> and <br>). */
+export const TEXT_TAGS = ['p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'b', 'i', 'code', 'small', 's', 'mark'] as const;
+const kindOf = <T extends string, const K extends string>(tags: readonly T[], kind: K) => Object.fromEntries(tags.map((t) => [t, kind])) as Record<T, K>;
+
+/** The HTML tags PAT supports and the kind of element each is. SVG is in schema/svg.ts. */
+export const TAG_KINDS = {
+	...kindOf(FRAME_TAGS, 'frame'),
+	...kindOf(TEXT_TAGS, 'text'),
+	input: 'input',
+	textarea: 'textarea',
+	select: 'select',
+	option: 'option',
+	optgroup: 'optgroup',
+	img: 'image'
+} as const satisfies Record<string, Exclude<Element['kind'], 'svg' | 'graphic'>>;
+export type Tag = keyof typeof TAG_KINDS;
 
 type ElementBase = {
 	type: 'element';

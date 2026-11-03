@@ -6,6 +6,7 @@ import type { Reporter } from '../diagnostics';
 import type { DomNames } from '../typecheck';
 import { staticValue } from './names';
 import { elements, expressions, fragments, type Component, type TemplateNode } from '../ir';
+import { RESERVED_DATA } from '../runtime/dom';
 
 const INPUT_TYPES = ['text', 'password', 'email', 'search', 'url', 'tel'];
 const BUTTON_TYPES = ['submit', 'button', 'reset'];
@@ -74,9 +75,6 @@ const ROLES = new Set(
 	search searchbox separator slider spinbutton status strong subscript suggestion superscript switch tab table tablist tabpanel
 	term textbox time timer toolbar tooltip tree treegrid treeitem`.split(/\s+/)
 );
-
-/** The data-* attributes the renderer (runtime/dom.ts) sets on its elements. */
-export const RESERVED_DATA = ['data-p', 'data-w', 'data-h', 'data-sw', 'data-sh', 'data-dir', 'data-overflow', 'data-host', 'data-anchored', 'data-mixed', 'data-run'];
 
 /** The values of global and ARIA attributes, where they are static. (Element ids are checked with portal ids, in check/names.ts.) */
 export function checkAttributes(component: Component, dom: DomNames, reporter: Reporter) {

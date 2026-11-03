@@ -5,7 +5,7 @@
 // change through a member (`a.b = c`, `delete a.b`), and every rune call.
 // Checks and code generation read these; none of them tracks scopes itself.
 
-import { children, isTypeNode, patternIdentifiers, rootOf, unwrap, type Estree } from './ast';
+import { calleeName, children, isTypeNode, patternIdentifiers, rootOf, unwrap, type Estree } from './ast';
 import type { Attribute, AttributeValue, Component, Inline, TemplateNode } from './ir';
 
 /** `prop`: declared by `$props()`. `param`: a snippet parameter. Both are read-only. */
@@ -278,13 +278,8 @@ class Binder {
 
 	private call(node: Estree, scope: Scope) {
 		const callee = node.callee;
-		const name =
-			callee.type === 'Identifier' && isRuneName(callee.name)
-				? callee.name
-				: callee.type === 'MemberExpression' && !callee.computed && callee.object.type === 'Identifier' && isRuneName(callee.object.name)
-					? `${callee.object.name}.${callee.property.name}`
-					: null;
-		if (name) this.runeCalls.push({ node, name });
+		const name = calleeName(callee);
+		if (name && isRuneName(name)) this.runeCalls.push({ node, name });
 		else this.visit(callee, scope);
 		for (const arg of node.arguments) {
 			this.visit(arg, scope);

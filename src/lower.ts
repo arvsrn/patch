@@ -6,31 +6,20 @@
 // (and, for an unsupported container, its children), so later phases only
 // ever see valid PAT and one pass surfaces as many problems as possible.
 
-import { unwrap, type Estree } from './ast';
+import { calleeName, unwrap, type Estree } from './ast';
 import type { Reporter, Span } from './diagnostics';
-import type { Attribute, AttributeValue, Component, ComponentUse, Each, Element, If, Inline, ModuleStateDecl, Render, Script, Snippet, Tag, TemplateNode } from './ir';
+import { TAG_KINDS, TEXT_TAGS, type Attribute, type AttributeValue, type Component, type ComponentUse, type Each, type Element, type If, type Inline, type ModuleStateDecl, type Render, type Script, type Snippet, type Tag, type TemplateNode } from './ir';
 import type { SvelteAst } from './parse';
+import { patImportFile } from './schema/path';
 import { PATCH_EXPORTS } from './schema/program';
 import { isSvgOnly, SVG_EXCLUDED, SVG_TAGS, SVG_TEXT } from './schema/svg';
 
 type Svelte = any;
 
-const FRAMES = ['main', 'div', 'button', 'a', 'nav', 'header', 'footer', 'section', 'article', 'aside', 'ul', 'ol', 'li', 'label', 'form'] as const;
-/** Text blocks; inside text, these are inline (as are <a> and <br>). */
-const TEXTS = ['p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'b', 'i', 'code', 'small', 's', 'mark'] as const;
-const KINDS: Record<Tag, Exclude<Element['kind'], 'svg' | 'graphic'>> = {
-	...(Object.fromEntries(FRAMES.map((t) => [t, 'frame'])) as Record<(typeof FRAMES)[number], 'frame'>),
-	...(Object.fromEntries(TEXTS.map((t) => [t, 'text'])) as Record<(typeof TEXTS)[number], 'text'>),
-	input: 'input',
-	textarea: 'textarea',
-	select: 'select',
-	option: 'option',
-	optgroup: 'optgroup',
-	img: 'image'
-};
 /** What may be nested in text. */
-const INLINE_TAGS: string[] = [...TEXTS.filter((t) => t !== 'p' && !/^h\d$/.test(t)), 'a'];
-const TAG_LIST = 'main, div, button, a, nav, header, footer, section, article, aside, ul, ol, li, label, form, p, span, h1–h6, strong, em, b, i, code, small, s, mark, input, textarea, select, img, svg';
+const INLINE_TAGS: string[] = [...TEXT_TAGS.filter((t) => t !== 'p' && !/^h\d$/.test(t)), 'a'];
+/** The tags an element can be written with outside a <select>, headings as one. */
+const TAG_LIST = [...Object.keys(TAG_KINDS).filter((t) => !/^(h[2-6]|option|optgroup)$/.test(t)), 'svg'].join(', ').replace('h1', 'h1–h6');
 /** Attributes every element accepts (not an inline <span>), besides any `aria-*` and `data-*` (see check/template.ts). */
 const UNIVERSAL_ATTRIBUTES = ['portal', 'id', 'title', 'role', 'tabindex', 'lang', 'dir'];
 const isOpenAttribute = (name: string) => name.startsWith('aria-') || name.startsWith('data-');
@@ -66,7 +55,7 @@ const UNSUPPORTED_DIRECTIVES: Record<string, string> = {
 	AnimateDirective: 'animations are not supported in v0',
 	AttachTag: '{@attach} is not supported'
 };
-const isTag = (name: string): name is Tag => name in KINDS;
+const isTag = (name: string): name is Tag => Object.hasOwn(TAG_KINDS, name);
 
 /** A node's name when it has one (elements, attributes), else the node. */
 const nameSpan = (node: Svelte): Span =>
@@ -85,14 +74,6 @@ export function lower(ast: SvelteAst, source: string, reporter: Reporter): Compo
 }
 
 // ------------------------------------------------------------------ script
-
-/** `$state`, `$derived`, `$derived.by`, … for a rune callee, else null. */
-const calleeName = (callee: Estree): string | null => {
-	if (callee.type === 'Identifier') return callee.name;
-	if (callee.type === 'MemberExpression' && !callee.computed && callee.object.type === 'Identifier')
-		return `${callee.object.name}.${callee.property.name}`;
-	return null;
-};
 
 function lowerScript(instance: Svelte, reporter: Reporter): Script {
 	const program = instance.content;
@@ -164,7 +145,7 @@ function importProblem(statement: Estree, reporter: Reporter): boolean {
 	const count = reporter.diagnostics.length;
 	if (/\.(css|scss|sass|less|styl|stylus|pcss|postcss|sss)($|\?)/.test(from))
 		reporter.report(statement.source, 'stylesheets are not supported; use style={...} with $style({...}) values');
-	else if (/\.pat($|\?)/.test(from)) {
+	else if (patImportFile(from)) {
 		const [first, ...rest] = statement.specifiers;
 		if (statement.importKind === 'type' || first?.type !== 'ImportDefaultSpecifier' || rest.length)
 			reporter.report(statement, 'a .pat file is imported as one component: import Card from "./Card.pat"');
@@ -414,7 +395,7 @@ class TemplateLowering {
 			this.reporter.report(nameSpan(node), `<${tag}> is not supported (use ${TAG_LIST})`);
 			return this.children(node.fragment.nodes);
 		}
-		const kind = KINDS[tag];
+		const kind = TAG_KINDS[tag];
 		const inSelect = this.context === 'select';
 		if ((kind === 'option' || kind === 'optgroup') !== inSelect)
 			this.reporter.report(nameSpan(node), inSelect ? `<${tag}> cannot be inside <select>; it holds <option>s and <optgroup>s` : `<${tag}> can only be inside <select>`);

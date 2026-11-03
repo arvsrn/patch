@@ -31,6 +31,9 @@ export const renderPlace = (place: Place, at: string): Place => ({ path: `${plac
 export const nodeId = (place: Place, at: string) => place.path + at + place.keys;
 export const stateId = (path: string, name: string) => path + name;
 
+/** The file an import specifier names when it is a .pat component (`./Card.pat`, `./Card.pat?raw`), else null. */
+export const patImportFile = (specifier: string): string | null => (/\.pat($|\?)/.test(specifier) ? specifier.split('?')[0] : null);
+
 /** A .pat.ts or .pat.js module: TypeScript or JavaScript that Patch compiles. */
 export const isPatModule = (file: string) => /\.pat\.[jt]s$/.test(file);
 

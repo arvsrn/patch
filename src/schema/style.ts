@@ -35,69 +35,76 @@ const isShadow = (v: any): v is Partial<Shadow> =>
 	(v.color === undefined || isColor(v.color)) &&
 	(v.inset === undefined || typeof v.inset === 'boolean');
 
-const sizeHint = 'a pixel number, "hug", "fill" or "anchor"';
-const isOverflow = oneOf('visible', 'hidden', 'auto', 'scroll');
-const OVERFLOW_HINT = '"visible", "hidden", "auto" or "scroll"';
 const CURSORS = [
 	'auto', 'default', 'pointer', 'text', 'move', 'grab', 'grabbing', 'not-allowed', 'wait', 'progress', 'help', 'crosshair',
 	'ew-resize', 'ns-resize', 'nesw-resize', 'nwse-resize', 'col-resize', 'row-resize', 'zoom-in', 'zoom-out', 'none'
 ];
-/** `oneOf` with its hint: `"a", "b" or "c"`. */
+/** `oneOf` with its hint: `"a"`, `"a" or "b"`, `"a", "b" or "c"`. */
 const choice = <const V extends string[]>(...values: V) => {
 	const quoted = values.map((v) => `"${v}"`);
-	return [oneOf(...values), `${quoted.slice(0, -1).join(', ')} or ${quoted[quoted.length - 1]}`] as const;
+	return [oneOf(...values), quoted.length > 1 ? `${quoted.slice(0, -1).join(', ')} or ${quoted[quoted.length - 1]}` : quoted[0]] as const;
 };
+/** A spec whose hint says more. */
+const noted = <F>([check, hint]: readonly [F, string], note: string) => [check, `${hint} (${note})`] as const;
 type Spec = readonly [(v: any) => boolean, string];
+const PX = [isPx, 'a pixel number'] as const;
+const OFFSET = [isNum, 'a pixel number'] as const;
+const COLOR = [isColor, 'a hex color'] as const;
+const SIZE = [isSize, 'a pixel number, "hug", "fill" or "anchor"'] as const;
+const MAX_SIZE = [isMaxSize, 'a pixel number or "available"'] as const;
+const MARGIN = [isMargin, 'a pixel number or "auto"'] as const;
+const OVERFLOW = choice('visible', 'hidden', 'auto', 'scroll');
+const SIDES_HINT = 'a pixel number, [vertical, horizontal] or [top, right, bottom, left]';
 const SPEC = {
-	display: [oneOf('flex'), '"flex" (every container is a flex container)'],
-	flexDirection: [oneOf('row', 'column'), '"row" or "column"'],
-	justifyContent: [oneOf('start', 'center', 'end', 'space-between'), '"start", "center", "end" or "space-between"'],
-	alignItems: [oneOf('start', 'center', 'end', 'baseline'), '"start", "center", "end" or "baseline" (use width/height "fill" to stretch)'],
+	display: noted(choice('flex'), 'every container is a flex container'),
+	flexDirection: choice('row', 'column'),
+	justifyContent: choice('start', 'center', 'end', 'space-between'),
+	alignItems: noted(choice('start', 'center', 'end', 'baseline'), 'use width/height "fill" to stretch'),
 	alignSelf: choice('start', 'center', 'end', 'baseline'),
-	flexWrap: [oneOf('wrap', 'nowrap'), '"wrap" or "nowrap"'],
-	gap: [isPx, 'a pixel number'],
-	width: [isSize, sizeHint],
-	height: [isSize, sizeHint],
-	minWidth: [isPx, 'a pixel number'],
-	maxWidth: [isMaxSize, 'a pixel number or "available"'],
-	minHeight: [isPx, 'a pixel number'],
-	maxHeight: [isMaxSize, 'a pixel number or "available"'],
-	paddingTop: [isPx, 'a pixel number'],
-	paddingRight: [isPx, 'a pixel number'],
-	paddingBottom: [isPx, 'a pixel number'],
-	paddingLeft: [isPx, 'a pixel number'],
-	marginTop: [isMargin, 'a pixel number or "auto"'],
-	marginRight: [isMargin, 'a pixel number or "auto"'],
-	marginBottom: [isMargin, 'a pixel number or "auto"'],
-	marginLeft: [isMargin, 'a pixel number or "auto"'],
-	position: [oneOf('absolute', 'flow'), '"absolute" or "flow"'],
-	left: [isNum, 'a pixel number'],
-	top: [isNum, 'a pixel number'],
+	flexWrap: choice('wrap', 'nowrap'),
+	gap: PX,
+	width: SIZE,
+	height: SIZE,
+	minWidth: PX,
+	maxWidth: MAX_SIZE,
+	minHeight: PX,
+	maxHeight: MAX_SIZE,
+	paddingTop: PX,
+	paddingRight: PX,
+	paddingBottom: PX,
+	paddingLeft: PX,
+	marginTop: MARGIN,
+	marginRight: MARGIN,
+	marginBottom: MARGIN,
+	marginLeft: MARGIN,
+	position: choice('absolute', 'flow'),
+	left: OFFSET,
+	top: OFFSET,
 	anchor: [isAnchorRef, 'an element from bind:this'],
 	anchorPosition: [isPlacement, PLACEMENT_HINT],
-	anchorOffset: [isNum, 'a pixel number'],
-	anchorCrossOffset: [isNum, 'a pixel number'],
-	anchorPadding: [(v: unknown): v is Sides => sides(v, false) !== null, 'a pixel number, [vertical, horizontal] or [top, right, bottom, left]'],
+	anchorOffset: OFFSET,
+	anchorCrossOffset: OFFSET,
+	anchorPadding: [(v: unknown): v is Sides => sides(v, false) !== null, SIDES_HINT],
 	anchorFallbacks: [(v: unknown): v is string[] => Array.isArray(v) && v.every(isPlacement), `an array of placements: ${PLACEMENT_HINT}`],
-	background: [isColor, 'a hex color'],
-	color: [isColor, 'a hex color'],
+	background: COLOR,
+	color: COLOR,
 	opacity: [(v: unknown): v is number => isNum(v) && v >= 0 && v <= 1, 'a number from 0 to 1'],
-	borderWidth: [isPx, 'a pixel number'],
-	borderColor: [isColor, 'a hex color'],
+	borderWidth: PX,
+	borderColor: COLOR,
 	borderRadius: [
 		(v: unknown): v is number | Sides => isPx(v) || (Array.isArray(v) && v.length === 4 && v.every(isPx)),
 		'a pixel number or [topLeft, topRight, bottomRight, bottomLeft]'
 	],
-	overflowX: [isOverflow, OVERFLOW_HINT],
-	overflowY: [isOverflow, OVERFLOW_HINT],
+	overflowX: OVERFLOW,
+	overflowY: OVERFLOW,
 	boxShadow: [(v: unknown): v is Partial<Shadow> | Partial<Shadow>[] => (Array.isArray(v) ? v.every(isShadow) : isShadow(v)), '{ x, y, blur, spread, color, inset } or an array of them'],
 	fontFamily: [(v: unknown): v is string => typeof v === 'string' && v.length > 0, 'a font family name'],
 	fontSize: [(v: unknown): v is number => isPx(v) && v > 0, 'a pixel number'],
 	fontWeight: [(v: unknown): v is number => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 1000, 'a number from 1 to 1000'],
-	fontStyle: [oneOf('normal', 'italic'), '"normal" or "italic"'],
+	fontStyle: choice('normal', 'italic'),
 	lineHeight: [(v: unknown): v is number => isPx(v) && v > 0, 'a pixel number'],
-	letterSpacing: [isNum, 'a pixel number'],
-	textAlign: [oneOf('start', 'center', 'end'), '"start", "center" or "end"'],
+	letterSpacing: OFFSET,
+	textAlign: choice('start', 'center', 'end'),
 	textDecoration: choice('none', 'underline', 'line-through'),
 	textTransform: choice('none', 'uppercase', 'lowercase', 'capitalize'),
 	textOverflow: choice('clip', 'ellipsis'),
@@ -108,7 +115,7 @@ const SPEC = {
 	pointerEvents: choice('auto', 'none'),
 	touchAction: choice('auto', 'none', 'pan-x', 'pan-y', 'manipulation'),
 	overscrollBehavior: choice('auto', 'contain', 'none'),
-	caretColor: [isColor, 'a hex color']
+	caretColor: COLOR
 } satisfies Record<string, Spec>;
 
 /** [top, right, bottom, left], or for a radius [topLeft, topRight, bottomRight, bottomLeft]. */
@@ -207,13 +214,11 @@ const sides = (v: unknown, allowAuto: boolean): unknown[] | null => {
 	if (v.length === 4) return [...v];
 	return null;
 };
-const SIDES_HINT = 'a pixel number, [vertical, horizontal] or [top, right, bottom, left]';
-
 /** How each shorthand expands to its longhands (null: invalid), and what it accepts. */
 const EXPAND: Record<string, [(v: unknown) => unknown[] | null, string]> = {
 	padding: [(v) => sides(v, false), SIDES_HINT],
 	margin: [(v) => sides(v, true), SIDES_HINT],
-	overflow: [(v) => (isOverflow(v) ? [v, v] : null), OVERFLOW_HINT]
+	overflow: [(v) => (OVERFLOW[0](v) ? [v, v] : null), OVERFLOW[1]]
 };
 
 /** Validates one style object and expands shorthands. Idempotent. Throws on invalid input. */

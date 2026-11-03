@@ -42,6 +42,8 @@ a[data-p=frame]{text-decoration:none}
 [data-p]:focus-visible{outline:2px solid #2563eb!important;outline-offset:1px!important}
 [data-host]{width:100vw;height:100vh;overflow:auto;background:#fff}
 `;
+/** The data-* attributes the renderer sets on its elements (`data-anchored`: anchoring.ts); an app cannot use them. */
+export const RESERVED_DATA = ['data-p', 'data-w', 'data-h', 'data-sw', 'data-sh', 'data-dir', 'data-overflow', 'data-host', 'data-anchored', 'data-mixed', 'data-run'];
 const STRING_BOOLEANS = (name: string) => name.startsWith('aria-') || name.startsWith('data-') || name === 'spellcheck';
 const FLEX_VALUE: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', 'space-between': 'space-between', baseline: 'baseline' };
 const px = (v: unknown) => (v === 'auto' ? 'auto' : `${v}px`);

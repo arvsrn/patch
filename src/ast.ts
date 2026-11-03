@@ -19,6 +19,13 @@ export const rootOf = (node: Estree): Estree => {
 	return node;
 };
 
+/** A callee as a name: `f` or `a.b` (how `$state` and `$derived.by` are written), else null. */
+export const calleeName = (callee: Estree): string | null => {
+	if (callee.type === 'Identifier') return callee.name;
+	if (callee.type === 'MemberExpression' && !callee.computed && callee.object.type === 'Identifier') return `${callee.object.name}.${callee.property.name}`;
+	return null;
+};
+
 /** The identifiers a declaration pattern binds. */
 export const patternIdentifiers = (p: Estree, out: Estree[] = []): Estree[] => {
 	if (!p) return out;
