@@ -158,17 +158,8 @@ export type EvaluateOptions = {
 	root?: string;
 };
 
-// Module state overrides are still set process-wide while a graph imports, so evaluations take turns.
-let queue: Promise<unknown> = Promise.resolve();
-
 /** Evaluates the app (or a page at `location`) once at its initial state with `overrides` applied. */
-export function evaluate(compiled: Compiled, overrides: StateOverrides = {}, options: EvaluateOptions = {}): Promise<Concrete[]> {
-	const run = queue.then(() => evaluateNow(compiled, overrides, options));
-	queue = run.catch(() => {});
-	return run;
-}
-
-async function evaluateNow(compiled: Compiled, overrides: StateOverrides, { location, root = appRootOf(compiled.path) }: EvaluateOptions) {
+export async function evaluate(compiled: Compiled, overrides: StateOverrides = {}, { location, root = appRootOf(compiled.path) }: EvaluateOptions = {}): Promise<Concrete[]> {
 	const ids = Object.keys(overrides);
 	if (ids.length) {
 		const files = appFiles(compiled);

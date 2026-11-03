@@ -9,19 +9,25 @@
 // path it resolves or loads from the path alone, in the registry, which holds
 // exactly the graphs that are open.
 //
+// A graph's module state starts from its overrides: in the graph, compiled
+// modules' import of runtime/module-state.ts resolves to the graph's own
+// module-state module, `<prefix>/__patch_module_state__.js`, whose source holds
+// the overrides.
+//
 // What a graph loads is compiled from source through a process-wide memo:
 // a graph consumes compiled modules, it does not own them.
 
 import { readFileSync } from 'node:fs';
 import { dirname, extname, sep } from 'node:path';
-import { compile, compileModule, type Compiled } from './compile';
-import { PATCH_SRC } from './paths';
+import { compile, compileModule, moduleStateSource, type Compiled } from './compile';
+import { PATCH_SRC, RUNTIME } from './paths';
 import * as patchModule from './runtime/context';
-import { setModuleOverrides } from './runtime/module-state';
 import { isPatModule } from './schema/path';
 import type { Program } from './schema/program';
 
 const PREFIX = /^\/__patch_eval_\d+__/;
+/** A graph's module-state module, within the graph (with an extension, which Bun needs to load it). */
+const MODULE_STATE = '/__patch_module_state__.js';
 const open = new Map<string, ModuleGraph>();
 let created = 0;
 
@@ -31,15 +37,20 @@ export class ModuleGraph {
 	readonly prefix = `/__patch_eval_${++created}__`;
 	private disposed = false;
 
+	/** Initial values of module state by id: JSON values, as the graph's module-state module holds them. */
+	readonly overrides: Readonly<Record<string, unknown>>;
+
 	/**
 	 * `entry` is loaded as already compiled; `root` is the app's root
-	 * directory, which module state ids are relative to.
+	 * directory, which module state ids are relative to. The graph keeps
+	 * `overrides` as they are now: changing the object later does not change it.
 	 */
 	constructor(
 		readonly entry: Compiled,
 		readonly root: string,
-		readonly overrides: Record<string, unknown>
+		overrides: Record<string, unknown> = {}
 	) {
+		this.overrides = Object.freeze(JSON.parse(JSON.stringify(overrides)));
 		open.set(this.prefix, this);
 	}
 
@@ -47,12 +58,7 @@ export class ModuleGraph {
 	async import(): Promise<Program> {
 		if (this.disposed) throw new Error(`module graph ${this.prefix} is disposed`);
 		registerPlugin();
-		setModuleOverrides(this.overrides);
-		try {
-			return (await import(this.prefix + this.entry.path)).default;
-		} finally {
-			setModuleOverrides({});
-		}
+		return (await import(this.prefix + this.entry.path)).default;
 	}
 
 	/** Closes the graph and lets the loader drop its modules. What was imported from it stays usable. */
@@ -89,6 +95,7 @@ const compiled = new Map<string, { source: string; root: string; module: string 
 /** A file of `graph`, as Bun loads it. */
 function load(graph: ModuleGraph, path: string): { contents: string; loader: Loader } {
 	if (path === graph.entry.path) return { contents: graph.entry.module, loader: 'js' };
+	if (path === MODULE_STATE) return { contents: moduleStateSource(graph.overrides), loader: 'js' };
 	// An image is its path (it is not drawn at design time).
 	if (IMAGES.includes(extname(path).toLowerCase())) return { contents: `export default ${JSON.stringify(path)};`, loader: 'js' };
 	const source = readFileSync(path, 'utf8');
@@ -120,6 +127,8 @@ function registerPlugin() {
 				if (PREFIX.test(args.path)) return { path: args.path };
 				const from = args.path === 'patch' ? null : graphOf(args.importer);
 				if (!from) return undefined;
+				// The graph's module-state module itself imports the shared runtime.
+				if (args.path === RUNTIME.moduleState && from.path !== MODULE_STATE) return { path: from.graph.prefix + MODULE_STATE };
 				const path = Bun.resolveSync(args.path, dirname(from.path));
 				if (!path.startsWith(sep)) return undefined;
 				return { path: ownFile(path) ? from.graph.prefix + path : path };

@@ -11,12 +11,12 @@
 // again when a page is added or removed in dev.
 //
 // .pat.ts / .pat.js modules are compiled before Vite's own TypeScript
-// transform sees them. Overrides of their module state are set by the first
-// module the entry imports, before any of the app's modules is evaluated.
+// transform sees them. Their import of the runtime's module state resolves to
+// a virtual module starting it from the overrides (`moduleStateSource`).
 
 import { resolve, sep } from 'node:path';
 import { build, createServer, type Plugin } from 'vite';
-import { compile, compileModule } from '../../compile';
+import { compile, compileModule, moduleStateSource } from '../../compile';
 import { CompileError } from '../../diagnostics';
 import { PATCH_ROOT, RUNTIME } from '../../paths';
 import { discoverRoutes, resolveApp, type App, type RouteManifest } from '../../routes';
@@ -28,8 +28,7 @@ const ENTRY = '/@pat/entry.js';
 const RESOLVED = '\0pat:entry';
 const ROUTES = '/@pat/routes.js';
 const RESOLVED_ROUTES = '\0pat:routes';
-const MODULE_OVERRIDES = '/@pat/module-overrides.js';
-const RESOLVED_MODULE_OVERRIDES = '\0pat:module-overrides';
+const RESOLVED_MODULE_STATE = '\0pat:module-state';
 
 /** The manifest as a module: each page imported, `routes` in precedence order, and `notFound`. */
 export function routesModule(manifest: RouteManifest): string {
@@ -48,20 +47,21 @@ export function patPlugin(app: App, mount: MountOptions = {}): Plugin {
 	const virtual = new Map([
 		[ENTRY, RESOLVED],
 		[ROUTES, RESOLVED_ROUTES],
-		[MODULE_OVERRIDES, RESOLVED_MODULE_OVERRIDES],
 		['patch', RUNTIME.patch]
 	]);
 	return {
 		name: 'pat',
 		enforce: 'pre',
-		resolveId: (id) => virtual.get(id),
+		resolveId(id, importer) {
+			// The app's module state starts from the overrides; the module providing it imports the runtime's.
+			if (id === RUNTIME.moduleState && importer !== RESOLVED_MODULE_STATE) return RESOLVED_MODULE_STATE;
+			return virtual.get(id);
+		},
 		load(id) {
 			if (id === RESOLVED_ROUTES && app.kind === 'pages') return routesModule(discoverRoutes(app.pages));
-			if (id === RESOLVED_MODULE_OVERRIDES)
-				return `import { setModuleOverrides } from ${JSON.stringify(RUNTIME.moduleState)};\nsetModuleOverrides(${JSON.stringify(moduleOverrides)});`;
+			if (id === RESOLVED_MODULE_STATE) return moduleStateSource(moduleOverrides);
 			if (id !== RESOLVED) return;
 			return [
-				...(Object.keys(moduleOverrides).length ? [`import ${JSON.stringify(MODULE_OVERRIDES)};`] : []),
 				app.kind === 'file' ? `import app from ${JSON.stringify(app.file)};` : `import * as app from ${JSON.stringify(ROUTES)};`,
 				`import { mount } from ${JSON.stringify(RUNTIME.dom)};`,
 				`mount(app, document.getElementById("app"), ${JSON.stringify(mount)});`

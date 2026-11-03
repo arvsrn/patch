@@ -8,31 +8,31 @@
 // assigning one replaces the value with a copy that has it. Nothing deeper is
 // tracked, so values are replaced, never changed in place (its types are
 // read-only below the first level).
+//
+// Compiled modules import `moduleState` from this file. Where module state
+// starts from overrides (a snapshot's `--state`), that import resolves to a
+// module of the graph that builds its own with `createModuleState` (see
+// `moduleStateSource` in compile.ts).
 
 import { reactive } from './reactive';
 
-let overrides: Record<string, unknown> = {};
-
-/**
- * Initial values by module state id (`src/workspace.pat.ts#workspace`) for
- * the modules evaluated next. Set before a module graph loads (a snapshot's
- * `--state`), and cleared after.
- */
-export function setModuleOverrides(values: Record<string, unknown>) {
-	overrides = values;
+/** Module state whose initial values are `overrides` where they have one, by module state id (`src/workspace.pat.ts#workspace`). */
+export function createModuleState(overrides: Record<string, unknown>) {
+	/** The facade of the module state `id`, with the properties its declaration lists. */
+	return function moduleState(id: string, keys: string[], initial: () => object): object {
+		const cell = reactive.cell<Record<string, unknown>>(Object.hasOwn(overrides, id) ? (overrides[id] as Record<string, unknown>) : (initial() as Record<string, unknown>));
+		const facade = {};
+		for (const key of keys)
+			Object.defineProperty(facade, key, {
+				enumerable: true,
+				get: () => cell.v?.[key],
+				set: (value: unknown) => {
+					cell.v = { ...reactive.untrack(() => cell.v), [key]: value };
+				}
+			});
+		return Object.preventExtensions(facade);
+	};
 }
 
-/** The facade of the module state `id`, with the properties its declaration lists. */
-export function moduleState(id: string, keys: string[], initial: () => object): object {
-	const cell = reactive.cell<Record<string, unknown>>(Object.hasOwn(overrides, id) ? (overrides[id] as Record<string, unknown>) : (initial() as Record<string, unknown>));
-	const facade = {};
-	for (const key of keys)
-		Object.defineProperty(facade, key, {
-			enumerable: true,
-			get: () => cell.v?.[key],
-			set: (value: unknown) => {
-				cell.v = { ...reactive.untrack(() => cell.v), [key]: value };
-			}
-		});
-	return Object.preventExtensions(facade);
-}
+/** Module state as the app starts. */
+export const moduleState = createModuleState({});

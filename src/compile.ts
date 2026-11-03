@@ -239,6 +239,16 @@ function checkModule(source: string, filename: string, typescript: boolean) {
 }
 
 /**
+ * Source of a module exporting `moduleState` (as runtime/module-state.ts
+ * does) that starts module state from `overrides`. An environment starting
+ * module state from overrides resolves compiled modules' import of
+ * runtime/module-state.ts to it. The overrides are written into the source:
+ * they are the values at the time it is generated.
+ */
+export const moduleStateSource = (overrides: Record<string, unknown>) =>
+	`import { createModuleState } from ${JSON.stringify(RUNTIME.moduleState)};\nexport const moduleState = createModuleState(${JSON.stringify(overrides)});\n`;
+
+/**
  * Validation only, for a .pat.ts / .pat.js module. Without `typescript`,
  * only Patch's own diagnostics: an editor whose TypeScript already checks the
  * module (with the Patch plugin) needs no second copy of its type errors.
