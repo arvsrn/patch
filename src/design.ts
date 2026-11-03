@@ -244,10 +244,13 @@ async function importProgram(compiled: Compiled, root: string, moduleValues: Sta
 	}
 	current = { root, entry: compiled };
 	setModuleOverrides(moduleValues);
+	const graph = `/__patch_eval_${++graphs}__`;
 	try {
-		return (await import(`/__patch_eval_${++graphs}__${compiled.path}`)).default;
+		return (await import(graph + compiled.path)).default;
 	} finally {
 		setModuleOverrides({});
 		current = null;
+		// The program holds what it needs; the loader would otherwise keep every graph for the life of the process.
+		for (const key of Object.keys(require.cache)) if (key.startsWith(graph + sep)) delete require.cache[key];
 	}
 }
