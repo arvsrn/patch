@@ -1,7 +1,8 @@
 // Browser navigation for an app with pages: the window's history, and which
 // link clicks become client-side navigations.
 
-import type { History } from './router';
+import type { RouteInfo } from '../schema/route';
+import type { History, Router } from './router';
 
 /** The parts of `window` navigation uses. */
 export type NavigationWindow = {
@@ -42,4 +43,31 @@ export function appLink(event: Click, anchor: Anchor, current: URL, owns: (url: 
 	if (url.origin !== current.origin || !owns(url)) return null;
 	if (url.hash && url.pathname === current.pathname && url.search === current.search) return null;
 	return url;
+}
+
+/**
+ * Hands the link clicks in `host` that the app handles, and the window's back
+ * and forward (when `win` is given: the location is the browser's), to
+ * `router`. `interact` runs first. Returns a function that stops listening.
+ */
+export function listenForNavigation(host: Element, win: NavigationWindow | null, router: Pick<Router<RouteInfo>, 'peek' | 'owns' | 'goto' | 'show'>, interact: () => void): () => void {
+	const onClick = (event: MouseEvent) => {
+		const anchor = (event.target as Element | null)?.closest?.('a');
+		if (!anchor || !host.contains(anchor)) return;
+		const url = appLink(event, anchor, router.peek().url, router.owns);
+		if (!url) return;
+		event.preventDefault();
+		interact();
+		router.goto(url);
+	};
+	const onPopState = () => {
+		interact();
+		router.show(win!.location.href);
+	};
+	host.addEventListener('click', onClick as EventListener);
+	win?.addEventListener('popstate', onPopState);
+	return () => {
+		host.removeEventListener('click', onClick as EventListener);
+		win?.removeEventListener('popstate', onPopState);
+	};
 }

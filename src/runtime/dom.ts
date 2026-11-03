@@ -9,7 +9,7 @@ import { createApi, type ApiOptions, type Instance } from './api';
 import { createAnchoring, type AnchorSpec } from './anchoring';
 import { eachPlace, instancePlace, renderPlace, ROOT_PLACE, type Place } from '../schema/path';
 import { attributeText, componentOf, eachKeys, eachList, elementStyle, plainText, portalName, renderable, toText, withId } from './evaluate';
-import { appLink, browserHistory, type NavigationWindow } from './navigation';
+import { browserHistory, listenForNavigation, type NavigationWindow } from './navigation';
 import { createPortals } from './portals';
 import { reactive, type Cell, type Owner } from './reactive';
 import { createRouter, MEMORY_HISTORY } from './router';
@@ -388,8 +388,10 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 		}
 	};
 
-	/** What mounted content belongs to: the component instance rendering it, and where it is (for ids). */
-	/** `select`: the value of the <select> being mounted into. `svg`: inside an <svg>. */
+	/**
+	 * What mounted content belongs to: the component instance rendering it, and where it is (for ids).
+	 * `select`: the value of the <select> being mounted into. `svg`: inside an <svg>.
+	 */
 	type Scope = { instance: Instance; place: Place; select?: () => unknown; svg?: boolean };
 
 	/** An <svg>: a leaf of the layout, hugging the size its attributes give (schema/svg.ts). */
@@ -639,28 +641,8 @@ export function mount(app: Program | Pages, target: HTMLElement, options: MountO
 				})
 			)
 		);
-		const onClick = (event: MouseEvent) => {
-			const anchor = (event.target as Element | null)?.closest?.('a');
-			if (!anchor || !target.contains(anchor)) return;
-			const url = appLink(event, anchor, router.peek().url, router.owns);
-			if (!url) return;
-			event.preventDefault();
-			interact();
-			router.goto(url);
-		};
-		const onPopState = () => {
-			interact();
-			router.show(win!.location.href);
-		};
-		target.addEventListener('click', onClick);
-		win?.addEventListener('popstate', onPopState);
 		if (router.peek().url.hash) scrollPending = router.peek().url;
-		within(root, null, () =>
-			onCleanup(() => {
-				target.removeEventListener('click', onClick);
-				win?.removeEventListener('popstate', onPopState);
-			})
-		);
+		within(root, null, () => onCleanup(listenForNavigation(target, win, router, interact)));
 	}
 	// Content sizes measured before a web font loads are re-measured with it.
 	document.fonts?.addEventListener('loadingdone', resizeLater);
