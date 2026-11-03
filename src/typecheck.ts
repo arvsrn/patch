@@ -15,11 +15,12 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import ts from 'typescript-api';
+import { TYPES } from './paths';
 
 export type TypeDiagnostic = { message: string; severity: 'error' | 'warning'; start: number; end: number; code: number };
 
-const declarations = (name: string) => readFileSync(resolve(import.meta.dir, 'types', name), 'utf8');
-const patchCompilerOptions: (api: typeof ts, base: ts.CompilerOptions) => ts.CompilerOptions = require('./types/compiler-options.cjs');
+const declarations = (name: string) => readFileSync(resolve(TYPES, name), 'utf8');
+const patchCompilerOptions: (api: typeof ts, base: ts.CompilerOptions) => ts.CompilerOptions = require(resolve(TYPES, 'compiler-options.cjs'));
 const RUNES = declarations('runes.d.ts');
 /** Appended to a .pat.ts module (see the file). */
 const MODULE_RUNES = '\n' + declarations('module-runes.d.ts');

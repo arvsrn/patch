@@ -28,6 +28,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, extname, resolve, sep } from 'node:path';
 import { compile, compileModule, type Compiled } from './compile';
+import { PATCH_SRC } from './paths';
 import { appRootOf } from './routes';
 import * as patchModule from './runtime/context';
 import { setModuleOverrides } from './runtime/module-state';
@@ -190,13 +191,12 @@ async function evaluateNow(compiled: Compiled, overrides: StateOverrides, { loca
 // modules are compiled as they load, the entry as already compiled.
 
 const GRAPH = /^\/__patch_eval_\d+__/;
-const RUNTIME = resolve(import.meta.dir);
 let graphs = 0;
 let current: { root: string; entry: Compiled } | null = null;
 const cache = new Map<string, { source: string; root: string; module: string }>();
 
 /** Whether `path` is the app's own (loaded in each graph) rather than a package's or Patch's. */
-const ownFile = (path: string) => path.startsWith(sep) && !path.includes(`${sep}node_modules${sep}`) && !path.startsWith(RUNTIME + sep);
+const ownFile = (path: string) => path.startsWith(sep) && !path.includes(`${sep}node_modules${sep}`) && !path.startsWith(PATCH_SRC + sep);
 
 const IMAGES = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', '.ico'];
 const LOADERS: Record<string, 'ts' | 'tsx' | 'js' | 'jsx' | 'json'> = { '.ts': 'ts', '.mts': 'ts', '.tsx': 'tsx', '.js': 'js', '.mjs': 'js', '.jsx': 'jsx', '.json': 'json' };

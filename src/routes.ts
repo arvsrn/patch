@@ -12,11 +12,12 @@
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { RUNTIME } from './paths';
 import { compareRoutes, locate, parseSegment, routeInfo, shapeOf, toUrl, type Location, type RouteInfo, type Segment } from './schema/route';
 
 export const PAGE_FILE = '+page.pat';
 export const NOT_FOUND_FILE = '+404.pat';
-export const BUILTIN_NOT_FOUND = resolve(import.meta.dir, 'runtime/not-found.pat');
+export const BUILTIN_NOT_FOUND = RUNTIME.notFound;
 
 /** A route and the file of its page. */
 export type PageFile = RouteInfo & { file: string };

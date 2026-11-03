@@ -27,6 +27,7 @@ import { TemplateEmitter } from './emit/template';
 import { elements, fragments, type AttributeValue, type Component, type Element, type StateInfo, type TemplateNode } from './ir';
 import { lower, lowerModule } from './lower';
 import { parse } from './parse';
+import { RUNTIME } from './paths';
 import { location, moduleStateId } from './schema/path';
 import { collectStyles, type Styles } from './styles';
 import { domNames, globalNames, typecheck, type TemplateWrite } from './typecheck';
@@ -218,8 +219,6 @@ export type CompiledModule = {
 	lang: 'ts' | 'js';
 };
 
-const MODULE_STATE = resolve(import.meta.dir, 'runtime/module-state.ts');
-
 /** A module through the front end and every check: its diagnostics, and what code generation needs. */
 function checkModule(source: string, filename: string, typescript: boolean) {
 	const path = resolve(filename);
@@ -285,7 +284,7 @@ export function compileModule(source: string, filename: string, root = dirname(r
 		edits.after(initial.end, ')');
 		return { name: id.name, id: stateId, keys };
 	});
-	const header = states.length ? `import { moduleState as $$moduleState } from ${JSON.stringify(MODULE_STATE)};\n` : '';
+	const header = states.length ? `import { moduleState as $$moduleState } from ${JSON.stringify(RUNTIME.moduleState)};\n` : '';
 	const module = new Bun.Transpiler({ loader: lang, target: 'browser' }).transformSync(header + edits.render(open.length, open.length + source.length));
 	const imports = new Bun.Transpiler({ loader: 'js' }).scanImports(module).map((i) => i.path);
 	return { path, module, imports, states, source, lang };

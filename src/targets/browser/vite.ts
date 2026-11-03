@@ -14,10 +14,11 @@
 // transform sees them. Overrides of their module state are set by the first
 // module the entry imports, before any of the app's modules is evaluated.
 
-import { basename, resolve, sep } from 'node:path';
+import { resolve, sep } from 'node:path';
 import { build, createServer, type Plugin } from 'vite';
 import { compile, compileModule } from '../../compile';
 import { CompileError } from '../../diagnostics';
+import { PATCH_ROOT, RUNTIME } from '../../paths';
 import { discoverRoutes, resolveApp, type App, type RouteManifest } from '../../routes';
 import type { MountOptions } from '../../runtime/dom';
 import { isPatModule, parseModuleStateId } from '../../schema/path';
@@ -29,10 +30,6 @@ const ROUTES = '/@pat/routes.js';
 const RESOLVED_ROUTES = '\0pat:routes';
 const MODULE_OVERRIDES = '/@pat/module-overrides.js';
 const RESOLVED_MODULE_OVERRIDES = '\0pat:module-overrides';
-const MODULE_STATE = resolve(import.meta.dir, '../../runtime/module-state.ts');
-const DOM = resolve(import.meta.dir, '../../runtime/dom.ts');
-export const PATCH_MODULE = resolve(import.meta.dir, '../../runtime/context.ts');
-const REPO = resolve(import.meta.dir, '../../..');
 
 /** The manifest as a module: each page imported, `routes` in precedence order, and `notFound`. */
 export function routesModule(manifest: RouteManifest): string {
@@ -52,7 +49,7 @@ export function patPlugin(app: App, mount: MountOptions = {}): Plugin {
 		[ENTRY, RESOLVED],
 		[ROUTES, RESOLVED_ROUTES],
 		[MODULE_OVERRIDES, RESOLVED_MODULE_OVERRIDES],
-		['patch', PATCH_MODULE]
+		['patch', RUNTIME.patch]
 	]);
 	return {
 		name: 'pat',
@@ -61,12 +58,12 @@ export function patPlugin(app: App, mount: MountOptions = {}): Plugin {
 		load(id) {
 			if (id === RESOLVED_ROUTES && app.kind === 'pages') return routesModule(discoverRoutes(app.pages));
 			if (id === RESOLVED_MODULE_OVERRIDES)
-				return `import { setModuleOverrides } from ${JSON.stringify(MODULE_STATE)};\nsetModuleOverrides(${JSON.stringify(moduleOverrides)});`;
+				return `import { setModuleOverrides } from ${JSON.stringify(RUNTIME.moduleState)};\nsetModuleOverrides(${JSON.stringify(moduleOverrides)});`;
 			if (id !== RESOLVED) return;
 			return [
 				...(Object.keys(moduleOverrides).length ? [`import ${JSON.stringify(MODULE_OVERRIDES)};`] : []),
 				app.kind === 'file' ? `import app from ${JSON.stringify(app.file)};` : `import * as app from ${JSON.stringify(ROUTES)};`,
-				`import { mount } from ${JSON.stringify(DOM)};`,
+				`import { mount } from ${JSON.stringify(RUNTIME.dom)};`,
 				`mount(app, document.getElementById("app"), ${JSON.stringify(mount)});`
 			].join('\n');
 		},
@@ -106,7 +103,7 @@ export async function startDevServer(input: string, port = 5173) {
 		root: app.root,
 		appType: 'custom',
 		plugins: [patPlugin(app)],
-		server: { port, fs: { allow: [app.root, REPO] } }
+		server: { port, fs: { allow: [app.root, PATCH_ROOT] } }
 	});
 	await server.listen();
 	server.printUrls();
